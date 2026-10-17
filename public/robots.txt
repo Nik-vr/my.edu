@@ -1,0 +1,11 @@
+User-agent: *
+Disallow: /panel/
+Disallow: /work/
+Disallow: /works
+Disallow: /student/
+Disallow: /register
+Disallow: /confirm/
+Disallow: /auth/
+
+# Служебные адреса закрыты не здесь, а приложением: правило отдаёт статикой
+# сам файл, и при его отсутствии запрос уходит во front controller.

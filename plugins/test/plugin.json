@@ -1,0 +1,14 @@
+{
+    "provides_tasks": true,
+    "id": "test",
+    "name": "Тест с вопросами",
+    "version": "1.0.0",
+    "description": "Классический тест: вопросы шести типов, автопроверка, критерии оценки от автора.",
+    "author": "my.edu",
+    "namespace": "MyEduPlugin\\Test",
+    "entry": "src/TestPlugin.php",
+    "url_prefix": "tests",
+    "requires": {
+        "core": "1.0"
+    }
+}

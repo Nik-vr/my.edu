@@ -1,0 +1,67 @@
+# Пример конфигурации nginx для размещения приложения.
+#
+# Вставьте в панель управления виртуальным хостингом (панели ISPmanager,
+# HestiaCP, VestaCP и подобные позволяют добавить такой блок).
+#
+# Ключевой момент — все запросы к несуществующим файлам передаются
+# в public/index.php, а сам корень сайта смотрит строго в public/.
+
+server {
+    listen 80;
+    server_name my.edu;              # замените на свой домен
+
+    root /home/u123456/public_html/my-edu/public;
+    index index.php;
+
+    # utf8mb4, а не utf-8: та же кодировка, что у базы. При расхождении nginx
+    # подставляет в заголовок ответа свой charset, и браузер может перечитать
+    # уже готовые байты, отданные PHP.
+    charset utf8mb4;
+    client_max_body_size 8m;
+
+    access_log /home/u123456/logs/my-edu.access.log;
+    error_log  /home/u123456/logs/my-edu.error.log;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # -----------------------------------------------------------------------------
+    # Каталог загруженных картинок.
+    #
+    # Правило стоит ПЕРЕД общим обработчиком .php: nginx берёт первое подошедшее
+    # регулярное выражение, и без этого файла с именем вроде pic.php попал бы
+    # в исполнение, хотя загрузка картинок проверяет содержимое. Проверка в
+    # приложении остаётся, но и сервер не должен полагаться только на неё.
+    # -----------------------------------------------------------------------------
+
+    location ~ ^/uploads/.*\.(php|phtml|phar|pl|py|cgi|asp|aspx|sh|shtml|htaccess)$ {
+        deny all;
+    }
+
+    location ~* ^/uploads/.*\.(jpg|jpeg|png|gif|webp)$ {
+        # Картинка отдаётся как картинка: без nosniff браузер при неверном
+        # заголовке попробует разобрать файл и может выполнить его содержимое.
+        add_header X-Content-Type-Options "nosniff" always;
+        expires 30d;
+        access_log off;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        # PHP-FPM должен быть версии 8.1 или новее; адрес пула зависит от хостинга.
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_read_timeout 300;
+    }
+
+    # Служебные файлы не отдаём даже при неверном root.
+    location ~ \. {
+        deny all;
+    }
+
+    # Кодировка и сжатие — необязательно, но полезно.
+    gzip on;
+    gzip_types text/plain text/css application/javascript image/svg+xml;
+    gzip_min_length 512;
+}

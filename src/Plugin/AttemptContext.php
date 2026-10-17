@@ -1,0 +1,100 @@
+<?php
+
+declare(strict_types=1);
+
+namespace MyEdu\Plugin;
+
+use MyEdu\Auth\Auth;
+use MyEdu\Auth\User;
+use MyEdu\Core\Csrf;
+use MyEdu\Core\View;
+use MyEdu\Ui\Ui;
+
+/**
+ * Что плагину известно о попытке ученика внутри работы.
+ *
+ * Отличается от EditorContext тем, что здесь есть позиция работы и номер
+ * задания в ней: ученик должен видеть, сколько ещё осталось, и навигация
+ * по последовательности принадлежит ядру.
+ */
+final class AttemptContext
+{
+    /**
+     * @param array<string,mixed> $item строка assignment_items
+     * @param array<string,mixed> $task данные задания из базы плагина
+     * @param array<string,mixed> $submittedInput ввод из неудачного сохранения;
+     *        ядро очищает токены и ограничивает объём перед повторным показом
+     */
+    public function __construct(
+        public readonly int $attemptId,
+        public readonly TaskRef $task,
+        public readonly array $item,
+        public readonly array $taskData,
+        /** Позиция по порядку, начиная с 1. */
+        public readonly int $position,
+        /** Всего заданий в работе. */
+        public readonly int $totalItems,
+        public readonly ?User $student,
+        public readonly View $view,
+        public readonly Csrf $csrf,
+        public readonly Auth $auth,
+        /** Введённые данные, которые ядро временно вернуло после ошибки сохранения. */
+        public readonly array $submittedInput = []
+    ) {
+    }
+
+    /** Вес позиции — им же пользуется сведение оценок по весам. */
+    public function weight(): float
+    {
+        return (float) ($this->item['weight'] ?? 1.0);
+    }
+
+    /**
+     * Токен попытки работы.
+     *
+     * Ядро кладёт его в позицию. Любая ссылка, которую плагин отдаёт ученику,
+     * обязана нести токен: без него страница не откроется, а с чужим токеном
+     * откроется чужая работа. Поэтому адреса собираются здесь, а не в шаблоне.
+     */
+    public function token(): string
+    {
+        return (string) ($this->item['assignment_token'] ?? '');
+    }
+
+    /**
+     * Адрес этого же задания внутри попытки.
+     *
+     * Плагин отдаёт ученику на следующее задание сам, поэтому адрес должен
+     * собираться здесь: так плагин не знает про маршруты ядра.
+     */
+    public function itemUrl(): string
+    {
+        return $this->url('work/' . $this->attemptId . '/item/' . (int) $this->item['id']);
+    }
+
+    /** Адрес попытки целиком — список заданий работы. */
+    public function attemptUrl(): string
+    {
+        return $this->url('work/attempt/' . $this->attemptId);
+    }
+
+    /** Ссылка на попытку с токеном: без него её не открыть. */
+    private function url(string $path): string
+    {
+        $token = $this->token();
+
+        return $this->view->url($path) . ($token === '' ? '' : '?t=' . rawurlencode($token));
+    }
+
+    /**
+     * Типовые элементы интерфейса — те же, что и в редакторе.
+     *
+     * Форма ответа ученика рисуется ядром и плагином одинаково: иначе один и тот
+     * же переключатель в редакторе и в прохождении работы выглядел бы по-разному,
+     * а человек это видит за один сеанс.
+     */
+    public function ui(): Ui
+    {
+        return $this->view->ui();
+    }
+}

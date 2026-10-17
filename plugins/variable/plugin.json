@@ -1,0 +1,14 @@
+{
+    "provides_tasks": true,
+    "id": "variable",
+    "name": "Вариативная задача",
+    "version": "1.0.0",
+    "description": "Задача с подставляемыми числами: у каждого ученика свои значения, ответ — число по каждой переменной.",
+    "author": "my.edu",
+    "namespace": "MyEduPlugin\\Variable",
+    "entry": "src/VariablePlugin.php",
+    "url_prefix": "variables",
+    "requires": {
+        "core": "1.0"
+    }
+}

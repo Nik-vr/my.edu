@@ -1,0 +1,3416 @@
+/* ==========================================================================
+   Система контроля знаний — оформление
+   Чистый CSS, без внешних зависимостей и сборки.
+   ========================================================================== */
+
+:root {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface-2: #f6f8fb;
+    --border: #dfe4ec;
+    --border-strong: #c3ccdb;
+    --text: #1c2434;
+    --text-muted: #63708a;
+    --accent: #2f5fd0;
+    --accent-dark: #24499f;
+    --accent-soft: #eaf0fd;
+    --good: #1a7f4b;
+    --good-soft: #e6f5ec;
+    --mid: #9a6a00;
+    --mid-soft: #fdf3dd;
+    --bad: #b3271e;
+    --bad-soft: #fdeceb;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(28, 36, 52, .06), 0 4px 14px rgba(28, 36, 52, .05);
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+h1, h2, h3 { line-height: 1.25; margin: 0 0 .5em; }
+
+a { color: var(--accent); }
+
+.visually-hidden {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; border: 0;
+    clip: rect(0 0 0 0);
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- каркас */
+
+.topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.topbar__inner {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.topbar__logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+}
+
+.topbar__mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), #6f8fe0);
+}
+
+.page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+}
+
+.page__title { font-size: 26px; margin: 0 0 4px; }
+
+.page__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+}
+
+/* ---------------------------------------------------------------- верхняя навигация */
+
+.topnav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 14px;
+}
+
+.topnav > a { color: var(--text-muted); text-decoration: none; }
+
+.topnav > a:hover { color: var(--accent); }
+
+.topnav__who {
+    display: inline-flex;
+    flex-direction: column;
+    line-height: 1.25;
+    padding-left: 16px;
+    border-left: 1px solid var(--border);
+    font-weight: 600;
+}
+
+.topnav__roles { font-weight: 400; font-size: 12px; color: var(--text-muted); }
+
+.topnav__logout { margin: 0; }
+
+/*
+ * Вкладки выбора формы входа у гостя.
+ *
+ * Выглядят как кнопки, а ведут по обычным адресам: так переключение работает и
+ * без скриптов, и адрес можно переслать. Активная вкладка помечена не только
+ * цветом, но и весом начертания — по одному цвету её не различить, а различать
+ * придётся тем, кто с трудом различает цвета.
+ */
+.topnav--tabs { gap: 8px; }
+
+/*
+ * Селектор написан как `.topnav--tabs .topnav__tab`, а не просто
+ * `.topnav__tab`: правило `.topnav > a` выше по специфичности и задавало бы
+ * серый цвет всем ссылкам шапки, включая активную вкладку.
+ */
+.topnav--tabs .topnav__tab {
+    display: inline-block;
+    padding: 7px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 14px;
+}
+
+.topnav--tabs .topnav__tab:hover { border-color: var(--accent); color: var(--accent); }
+
+.topnav--tabs .topnav__tab--active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+.topnav--tabs .topnav__tab--active:hover { color: #fff; }
+
+.btn--quiet {
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--text-muted);
+    padding: 5px 12px;
+}
+
+.btn--quiet:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+.btn--sm { padding: 6px 12px; font-size: 14px; }
+
+.btn--danger { background: var(--bad); color: #fff; }
+
+.btn--danger:hover { background: #8f1e17; }
+
+/* ---------------------------------------------------------------- страницы входа */
+
+.auth {
+    max-width: 460px;
+    margin: 24px auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 28px;
+}
+
+.auth__title { font-size: 22px; }
+
+.auth__lead { color: var(--text-muted); margin-top: -4px; }
+
+.auth__note {
+    background: #f4f6f9;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    margin: 0 0 18px;
+}
+
+.auth__note--accent { background: var(--mid-soft); }
+
+.auth__links {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 20px;
+    font-size: 14px;
+}
+
+.auth__sep { border: 0; border-top: 1px solid var(--border); margin: 22px 0 16px; }
+
+.auth__message { margin-top: 40px; }
+
+.message__icon {
+    width: 46px; height: 46px;
+    margin: 0 auto 12px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.message__icon--bad { background: var(--bad); }
+
+.actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+.actions-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.steps { margin: 0; padding-left: 20px; }
+
+.steps li { margin-bottom: 10px; }
+
+/* --------------------------------------------------------- вариативная задача */
+
+/*
+ * Таблица переменных.
+ *
+ * Строки приходят из условия, поэтому таблица не пустая «страница настроек»,
+ * а ровно то, что автор описал в тексте.
+ *
+ * Ширина задана всем четырём столбцам. Пока ширина была только у первых двух,
+ * последние делили остаток поровну, и столбец с формулой — самый длинный —
+ * уезжал за край таблицы и становился невидимым. Из-за этого же радиобатоны
+ * разных строк съезжались в один столбец и выглядели общим списком.
+ */
+.generated-vars { margin-bottom: 16px; }
+
+.generated-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.generated-table th,
+.generated-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.generated-table th { font-size: 13px; color: var(--text-muted, #5a6472); font-weight: 600; }
+
+/* Имя: короткое, поэтому колонка узкая и не забирает место у значений. */
+.generated-table th:nth-child(1), .generated-table td:nth-child(1) { width: 15%; }
+
+.generated-table th:nth-child(2), .generated-table td:nth-child(2) { width: 20%; }
+
+.generated-table th:nth-child(3), .generated-table td:nth-child(3) { width: 38%; }
+
+.generated-table th:nth-child(4), .generated-table td:nth-child(4) { width: 27%; }
+
+/*
+ * Полям задан min-width: 0 — иначе длинное перечисление распирало бы ячейку,
+ * а таблица с фиксированной разметкой расталкивала бы соседние столбцы.
+ */
+.generated-table input { width: 100%; min-width: 0; margin: 0 0 4px; }
+
+.generated-table__name code {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.generated-table__mode { width: 20%; }
+.generated-table__mode .role-check { margin-bottom: 4px; }
+.generated-table__mode input[type="radio"] { width: auto; margin: 0; }
+
+/*
+ * Столбец-подсказка в редакторе вариативной задачи.
+ *
+ * Формула одна на всю задачу и в строке ей нечего показывать — здесь стоит
+ * только напоминание, чем заполнен промежуток. Колонка прижата к левому краю и
+ * не забирает ширину у полей: соседние ячейки с числами от неё зависят больше.
+ */
+.generated-table__formula { color: var(--text-muted); font-size: 13px; white-space: nowrap; }
+
+/* Поля диапазона идут в ряд: три отдельных столбца ради трёх чисел не стоили. */
+.generated-table__values span { display: flex; gap: 6px; flex-wrap: wrap; }
+.generated-table__values span input { margin: 0; flex: 1 1 3.5rem; }
+
+/* ---------------------------------------------------------------- таблицы */
+
+.table-wrap { overflow-x: auto; }
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+}
+
+.data-table th, .data-table td {
+    text-align: left;
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+.data-table th {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+/*
+ * Фон строки задаётся переменной, а не напрямую: колонка действий прижата к
+ * правому краю и повторяет этот фон. Если красить обе части отдельно, то при
+ * добавлении нового состояния строки (выделение, чередование) забудешь про
+ * зажатую колонку — и она останется белой полосой поверх строки.
+ */
+.data-table tbody tr {
+    --row-bg: var(--surface);
+    background: var(--row-bg);
+}
+
+.data-table tr.is-owner { --row-bg: var(--mid-soft); }
+
+.data-table tr.is-current { --row-bg: var(--accent-soft); }
+
+/*
+ * Правило `.nowrap` живёт в theme.css: он подключается последним и владеет
+ * общими утилитами. Дубль здесь был бы мёртвым — при одинаковом объявлении
+ * решает файл, который подключён позже, то есть всё равно theme.css.
+ */
+
+/*
+ * Колонка действий прижата к правому краю и не уезжает за горизонтальную
+ * прокрутку: сброс пароля и блокировка нужны постоянно, и заставлять
+ * прокручивать таблицу ради одной кнопки нельзя — на ноутбуке её просто
+ * не видно.
+ */
+.data-table .col-actions {
+    position: sticky;
+    right: 0;
+    background: var(--row-bg, var(--surface));
+    box-shadow: -10px 0 10px -10px rgb(0 0 0 / .18);
+}
+
+.data-table th.col-actions { vertical-align: middle; }
+
+/*
+ * Подсказка «i»: открывается по наведению и по фокусу с клавиатуры.
+ * Сделано без JavaScript — страница работает и без него.
+ *
+ * Кнопка живёт в шапке карточки, а не в таблице: подсказка раскрывается
+ * наружу, а таблица лежит в .table-wrap с горизонтальной прокруткой, и
+ * overflow обрезал бы её по краю контейнера.
+ */
+.info-tip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-left: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    vertical-align: middle;
+}
+
+.info-tip:hover,
+.info-tip:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+    outline: none;
+}
+
+.info-tip__box {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 10px);
+    z-index: 40;
+    width: 290px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 10px 28px rgb(0 0 0 / .14);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    white-space: normal;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .12s ease;
+}
+
+.info-tip:hover .info-tip__box,
+.info-tip:focus-visible .info-tip__box {
+    opacity: 1;
+    visibility: visible;
+}
+
+.inline-form {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    margin: 0 4px 4px 0;
+}
+
+.inline-form input[type="text"] {
+    width: 96px;
+    padding: 6px 8px;
+    font-size: 14px;
+}
+
+code {
+    background: #eef1f6;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: .92em;
+}
+
+/* ---------------------------------------------------------------- роли */
+
+/*
+ * `.check` — чекбокс с подписью рядом.
+ *
+ * Имя осталось в `assignment_result.php` и других старых шаблонах: переименовать
+ * его там — значит править файлы, к выдаче работ отношения не имеющие, а
+ * оставить без стилей — значит оставить страницу без галочек. Алиас закрывает
+ * и то и другое.
+ */
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+
+.check input { width: auto; margin: 0; }
+
+.stack { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+
+.stack > button { margin-top: 6px; }
+
+.check-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px;
+    width: 100%;
+}
+
+.sep { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
+
+.split { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+
+/*
+ * Кнопка во всю ширину формы.
+ *
+ * Раньше это задавалось стилем прямо в разметке, а политика безопасности
+ * (style-src 'self') такие стили отбрасывает: страница выглядела исправной, а
+ * кнопка оказывалась по размеру своего текста и тянулась в угол формы.
+ *
+ * Правило в таблице стилей потому, что иначе пришлось бы ослаблять
+ * безопасность или оставлять кнопку кривой.
+ */
+.btn-block { width: 100%; }
+
+/*
+ * Панель входа.
+ *
+ * Ширина и поля заданы здесь, а не стилем в разметке: политика безопасности
+ * (style-src 'self') отбрасывает style в атрибутах, и без этого правила панель
+ * растягивалась на всю страницу.
+ *
+ * Отступ под вкладками больше не нужен: переключатель форм стал вкладками
+ * шаблона, а их отступ задан вместе с остальными вкладками в theme.css.
+ */
+.auth-panel { width: 100%; max-width: 440px; }
+
+.footer--center { justify-content: center; }
+
+/* Карточка полосы шагов: свои поля и убрать отступ снизу. */
+.wizard-card { margin-bottom: 20px; }
+
+.wizard-card__body { padding: 24px 16px; }
+
+/*
+ * Ссылка внутри шага.
+ *
+ * display: contents — чтобы номер и подпись легли в сетку шага, а сама ссылка
+ * не занимала отдельную строку: иначе подчёркивание и рамка фокуса тянулись
+ * через весь шаг целиком.
+ */
+.stepper { list-style: none; margin: 0; padding: 0; }
+
+.step__link { text-decoration: none; display: contents; }
+
+/*
+ * Аватар из инициалов.
+ *
+ * Цвет владельца задан классом, а не стилем в разметке: style-src 'self'
+ * отбрасывает атрибут style, и кружок оставался бы бесцветным на пустом фоне.
+ * Основной цвет и цвет владельца — токены шаблона, они меняются вместе с темой.
+ */
+.cell-avatar { background: var(--primary); }
+
+.cell-avatar--owner { background: var(--purple); }
+
+/* Подпись под именем в таблице пользователей. */
+.cell-subtext { font-size: 11.5px; color: var(--text-muted); }
+
+/* Даты в таблице пользователей: приглушены, чтобы спорить не с именем. */
+.cell-muted { font-size: 12.5px; color: var(--text-muted); }
+
+/* Ряд верхних показателей: отступ снизу, как у соседних блоков. */
+.stats-row { margin-bottom: 16px; }
+
+/* ---------------------------------------------------------------- показатели */
+
+/*
+ * Показатели названы metric, а не stat.
+ *
+ * У шаблона gentelella есть свой .stat — это блок внутри карточки, без фона и
+ * рамки. Прежние показатели проекта были отдельными плитками со своей рамкой и
+ * подложкой, и одно имя значило два разных оформления: на странице журнала
+ * плитки получали белый фон посреди тёмной темы, а на странице пользователей
+ * шаблонный блок получал лишнюю подложку и выглядел вложенной карточкой в
+ * карточке.
+ *
+ * Разводить их переименованием дешевле и надёжнее, чем правилами по контексту:
+ * здесь показатели, там — шаблон.
+ */
+.metric-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.metric {
+    background: var(--bg-surface-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    text-align: center;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: var(--shadow-card);
+}
+
+.metric--warn { border-color: var(--yellow); }
+
+.metric-value { display: block; font-size: 26px; font-weight: 700; color: var(--text); }
+
+/*
+ * Оценка своим цветом на странице результата.
+ *
+ * Тот самый цвет, который автор выбрал для этой оценки в шкале: журнал и
+ * результат читаются одинаково, и ученик видит ту же краску, которую видел
+ * у учителя. Раньше под цифрой стояло слово из шкалы, и его надо было
+ * прочитать — цвет читается сам.
+ *
+ * Четыре класса, а не стиль в разметке: значение приходит из базы, и
+ * произвольная строка в атрибуте `style` там была бы дырой.
+ */
+.grade--success { color: var(--grade-success); }
+.grade--primary { color: var(--grade-primary); }
+.grade--warning { color: var(--grade-warning); }
+.grade--danger  { color: var(--grade-danger); }
+
+.metric-label { font-size: 13px; color: var(--text-muted); }
+
+.chip-list { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+
+.chip--link { text-decoration: none; display: inline-flex; gap: 8px; align-items: baseline; }
+
+.chip--link:hover { border-color: var(--accent); }
+
+.chip__note { font-size: 12px; color: var(--text-muted); }
+
+.chip__count { font-size: 12px; color: var(--accent-dark); font-weight: 600; }
+
+.badge--bad { background: var(--bad-soft); color: var(--bad); }
+
+.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good); }
+
+.issue-list { margin: 0; padding-left: 20px; font-size: 14px; }
+
+.issue-list li { margin-bottom: 4px; }
+
+/* ---------------------------------------------------------------- лист выдачи */
+
+/*
+ * Таблица учеников: шрифт чуть крупнее прежнего и строки ниже.
+ *
+ * Шаблон рассчитан на 13px — на них нарисованы все его таблицы. Здесь список
+ * учеников читают и называют друг другу вслух, поэтому 14px: разница в один
+ * пункт, а длинные фамилии перестают слипаться. Высота строк при этом уменьшена
+ * вдвое по вертикали: двадцать пять учеников должны помещаться на один экран
+ * без прокрутки, а не растягивать таблицу на два.
+ */
+.credential-table { font-size: 14px; }
+
+.credential-table th, .credential-table td {
+    border: 1px solid var(--border-strong);
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+.credential {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+.sign-cell { min-width: 140px; background: #fcfdff; }
+
+.footer {
+    border-top: 1px solid var(--border);
+    padding: 18px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.footer p { margin: 0; }
+
+.muted { color: var(--text-muted); }
+
+/* ------------------------------------------------------------- работы */
+
+/* Разбор позиции работы: заголовок, метаданные и строки «ответ — правильный». */
+.work-review {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  background: #fff;
+}
+.work-review--good { border-left-color: var(--good); }
+.work-review--mid  { border-left-color: var(--mid); }
+.work-review--bad  { border-left-color: var(--bad); }
+
+.work-review__head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.work-review__position {
+  min-width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-weight: 700;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/*
+ * Заголовок задания вместе со значками.
+ *
+ * Стоит рядом с номером в шапке карточки, которая — flex. Без этого блока
+ * заголовок и список значков стали бы двумя соседями флекса: значки прижались
+ * бы к правому краю, а заголовок ужался до половины строки и переносился по
+ * словам там, где можно было уместить его в одну.
+ */
+.work-review__heading { flex: 1 1 auto; min-width: 0; }
+
+.work-review__title { font-size: 17px; margin: 0 0 4px; }
+.work-review__meta { margin: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.work-review__list { list-style: none; margin: 0; padding: 0; }
+.work-review__item {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.work-review__prompt { margin: 0 0 8px; font-weight: 600; }
+.work-review__number {
+  display: inline-block;
+  min-width: 22px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.work-review__body { margin: 0; display: grid; gap: 6px; }
+.work-review__row { display: grid; grid-template-columns: 160px 1fr; gap: 10px; }
+.work-review__row dt { color: var(--text-muted); font-size: 14px; }
+.work-review__row dd { margin: 0; }
+
+/* Ответ ученика на экране ручной проверки учителя. */
+.submitted { display: grid; gap: 12px; }
+.submitted__item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+.submitted__prompt { margin: 0 0 6px; font-weight: 600; }
+.submitted__number { color: var(--text-muted); font-weight: 400; }
+.submitted__answer {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--accent-soft);
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+/* Позиция работы на экране проверки: ответ учителя и его балл рядом. */
+.card--review { margin: 14px 0; background: #fbfcfe; }
+.answer-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.card--review .actions-row { align-items: flex-end; }
+
+/* Место между кнопками «назад» и «дальше» в форме задания. */
+.actions-row__spacer { flex: 1 1 auto; }
+.actions-row > label.field,
+.actions-row > .field { margin: 0; }
+
+/* ---------------------------------------------------------------- блоки */
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 20px;
+}
+
+.card__title { font-size: 26px; margin-top: 0; }
+
+.card__lead { color: var(--text-muted); margin-top: -4px; }
+
+.section-title { font-size: 18px; margin: 26px 0 12px; }
+
+.card .section-title:first-of-type { margin-top: 18px; }
+
+.hero { margin-bottom: 24px; }
+
+.hero__title { font-size: 30px; margin-bottom: 6px; }
+
+.hero__text { color: var(--text-muted); margin: 0; max-width: 60ch; }
+
+.breadcrumbs {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.breadcrumbs a { color: var(--text-muted); }
+
+.alert {
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin: 0 0 16px;
+    border: 1px solid transparent;
+    font-size: 15px;
+}
+
+.alert--error { background: var(--bad-soft); border-color: #f3c6c3; color: var(--bad); }
+
+.alert--warn { background: var(--mid-soft); border-color: #efdda9; color: var(--mid); }
+
+.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good); }
+
+/* Убираем повтор: ниже, в разделе показателей, описание .stat__label.
+   Здесь нужен только цвет текста предупреждения внутри карточки. */
+.alert code { background: rgba(0, 0, 0, .06); }
+
+/* ---------------------------------------------------------------- список тестов */
+
+.test-list { list-style: none; margin: 0; padding: 0; }
+
+.test-card {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    margin-bottom: 14px;
+}
+
+/*
+ * Тело карточки работы: заголовок, описание и метаданные одним блоком.
+ *
+ * Без этого блока .test-card (flex) раскладывал бы все четыре элемента в ряд
+ * по одному — заголовок, описание, список метаданных и кнопка, — и карточка
+ * растягивалась на всю ширину экрана одной строкой. Обёртка собирает левую
+ * часть в колонку, а кнопка справа остаётся на уровне середины карточки.
+ */
+.test-card__body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.test-card__title { font-size: 20px; margin-bottom: 6px; }
+
+.test-card__title a { color: var(--text); text-decoration: none; }
+
+.test-card__title a:hover { color: var(--accent); }
+
+.test-card__desc { color: var(--text-muted); margin: 0 0 10px; }
+
+.test-card__meta {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 0;
+    padding: 0;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------- переключатель */
+
+/*
+ * Форма переключателя плагина: переключатель и кнопка в одну строку.
+ *
+ * Отдельным блоком, а не дописыванием к .switch из шаблона: ряд в таблице
+ * должен остаться в одну высоту, а блок с формой по умолчанию растягивается
+ * на всю ширину ячейки и кнопку уносит под переключатель.
+ *
+ * Кнопка не прячется стилями: без скриптов это единственный способ
+ * отправить форму, и прятать её оттуда нельзя.
+ */
+.plugin-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+}
+
+.plugin-switch-save { white-space: nowrap; }
+
+/*
+ * Переключатель, который нельзя сдвинуть: общий «Тест» в глазах учителя.
+ *
+ * Без приглушения он выглядит как обычный доступный, и человек нажимал бы его
+ * и удивлялся, что ничего не происходит. Он и правда ничего не делает — но
+ * человеку об этом должен говорить вид, а не подпись под таблицей.
+ */
+.plugin-switch--locked {
+    opacity: .55;
+    cursor: default;
+}
+
+.plugin-switch--locked .switch {
+    cursor: default;
+}
+
+/* ------------------------------------------------------------- профиль человека */
+
+/*
+ * Шапка профиля по образцу gentelella/profile.html: кружок слева, справа имя,
+ * роли и форма загрузки.
+ *
+ * На узком экране колонка одна: кружок сверху, форма под ним — иначе форма
+ * для выбора файла сжимается до нескольких пикселей и по ней невозможно
+ * попасть.
+ */
+.profile-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+}
+
+.profile-avatar {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--bg-surface-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Кружок с инициалами: заливка та же, что у аватара сотрудника в таблице. */
+.profile-avatar--initials {
+    background: var(--purple-lt);
+    border-color: transparent;
+}
+
+.profile-avatar__initials {
+    font-size: 40px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+}
+
+.profile-head__text { min-width: 0; flex: 1 1 auto; }
+
+.profile-head__text .card-title { margin: 0; }
+
+.profile-head__text .muted { margin: 4px 0 16px; }
+
+.profile-avatar-form { max-width: 420px; }
+
+.profile-avatar-form__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+@media (max-width: 640px) {
+    .profile-head { flex-direction: column; align-items: center; text-align: center; }
+
+    .profile-avatar-form { max-width: none; width: 100%; }
+
+    .profile-avatar-form__actions { justify-content: center; }
+}
+
+/* ---------------------------------------------------------------- факты, чипы */
+
+.facts { margin: 18px 0 0; }
+
+.facts__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.facts__row:last-child { border-bottom: 0; }
+
+.facts dt { color: var(--text-muted); }
+
+.facts dd { margin: 0; font-weight: 600; text-align: right; }
+
+/*
+ * Ссылка на профиль ВКонтакте. Значок рисуется цветным квадратом с буквами
+ * VK: подключать логотип картинкой ради одной ссылки нечем, а собственные
+ * стили не зависят от внешних файлов.
+ */
+.vk-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.vk-link__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: #0077ff;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .5px;
+}
+
+.vk-link:hover .vk-link__icon { background: #0066d8; }
+
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+
+.chip {
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 13px;
+}
+
+.badge {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge--muted { background: #eef1f6; color: var(--text-muted); }
+
+.badge--warn { background: var(--mid-soft); color: var(--mid); }
+
+/* ---------------------------------------------------------------- формы */
+
+.form { max-width: 460px; }
+
+/*
+ * Скрытие по атрибуту hidden.
+ *
+ * Без этого правила атрибут не работает: браузер прячет элемент правилом
+ * [hidden] { display: none } из своих умолчаний, а авторские стили таблицы
+ * сильнее умолчаний браузера. Правило `.field { display: block }` ниже
+ * перебивало скрытие — и редактор задания показывал поля всех типов
+ * вопросов, потому что скрипт их прятал, а стиль показывал обратно.
+ *
+ * !important здесь не перестраховка, а единственный способ выиграть у
+ * display: block в правиле класса.
+ */
+[hidden] { display: none !important; }
+
+/*
+ * Переключатель режима оценивания на шаге «Результат».
+ *
+ * Показывается набор отмеченной радиокнопки, и всё правило — здесь, целиком.
+ * Раньше этим занимался скрипт, и страница от него зависела: если скрипт не
+ * выполнился — заглушка расширения, запрет в настройках браузера, копия
+ * проекта, где правки ещё не доехали, — форма выглядела исправной и молча
+ * ничего не переключала. Видимость не является данными: её незачем ни
+ * хранить в разметке, ни прятать скриптом, и по этой же причине не отключаются
+ * невидимые наборы — сервер берёт границы по именам полей того режима,
+ * который отмечен.
+ *
+ * :has() — единственное, что здесь нужно: правило видит саму отмеченную
+ * кнопку в общем контейнере с наборами. Браузер без него покажет оба набора
+ * разом — форма останется рабочей, а не станет вводить в заблуждение, как
+ * это делает невыполнившийся скрипт.
+ */
+[data-scale-switch] [data-scale-set="score"] { display: none; }
+[data-scale-switch]:has(#criteria_mode_score:checked) [data-scale-set="score"] { display: block; }
+[data-scale-switch]:has(#criteria_mode_score:checked) [data-scale-set="percent"] { display: none; }
+
+.field { display: block; margin-bottom: 18px; }
+
+.field__label { display: block; font-weight: 600; margin-bottom: 6px; }
+
+.field__hint { display: block; color: var(--text-muted); font-size: 13px; margin-top: 6px; }
+
+/*
+ * Перечислены все типы полей, которыми пользуется сайт. Раньше здесь был
+ * только input[type="text"], и поля e-mail и пароль выходили системными,
+ * заметно отличаясь от остальных: на странице входа и регистрации одинаковые
+ * по смыслу поля выглядели по-разному.
+ */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="number"],
+input[type="date"],
+input[type="file"],
+select,
+textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font: inherit;
+    color: inherit;
+    background: var(--surface);
+}
+
+/* У файла своя рамка внутри общей: иначе двойной контур выглядит ошибкой. */
+input[type="file"] {
+    padding: 8px 10px;
+    background: var(--surface-alt, var(--surface));
+    cursor: pointer;
+}
+
+/*
+ * Ошибка ввода видна на любом поле, а не только на оформленных по образцу.
+ *
+ * В сборке правило привязано к .form-control, а в панели большинство полей идут
+ * без этого класса: проверка обязательного поля и формата обязана выглядеть
+ * одинаково везде, иначе на половине форм она просто не заметна.
+ *
+ * Селектор перечисляет и .form-control.is-invalid, и .is-invalid: у первого
+ * специфичность выше, и без перечисления он перебил бы это правило из app.css.
+ */
+input.is-invalid,
+select.is-invalid,
+textarea.is-invalid,
+.form-control.is-invalid {
+    border-color: var(--bad);
+}
+
+input.is-invalid:focus,
+select.is-invalid:focus,
+textarea.is-invalid:focus,
+.form-control.is-invalid:focus {
+    box-shadow: 0 0 0 3px var(--bad-soft);
+}
+
+/*
+ * Сводка перед формой.
+ *
+ * Нужна, когда форма длинная: первая ошибка на экране — это то поле, которого
+ * человек не видит, потому что он нажал кнопку внизу страницы.
+ */
+.form-summary {
+    margin: 0 0 16px;
+}
+
+input[type="file"]::file-selector-button {
+    margin-right: 10px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    font: inherit;
+    color: inherit;
+    background: var(--surface);
+    cursor: pointer;
+}
+
+textarea { resize: vertical; min-height: 84px; }
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="search"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+input[type="file"]:focus,
+select:focus,
+textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+}
+
+input[type="file"]::file-selector-button:hover {
+    border-color: var(--accent);
+}
+
+.btn {
+    display: inline-block;
+    padding: 10px 18px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    background: #eef1f6;
+    color: var(--text);
+}
+
+.btn--primary { background: var(--accent); color: #fff; }
+
+.btn--primary:hover { background: var(--accent-dark); }
+
+.btn--lg { padding: 13px 26px; font-size: 16px; }
+
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.code {
+    background: #1c2434;
+    color: #e7ecf5;
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 14px;
+    text-align: left;
+}
+
+/* ---------------------------------------------------------------- прохождение */
+
+.attempt__bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 12px 18px;
+    margin-bottom: 18px;
+}
+
+.attempt__bar-left { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+
+.attempt__who { font-weight: 600; }
+
+.attempt__progress { color: var(--text-muted); font-size: 14px; }
+
+.attempt__score { color: var(--text-muted); font-size: 14px; }
+
+/* --------------------------------------------------------- раскладка «список + задание» */
+
+.attempt__layout {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.attempt__stage { min-width: 0; }
+
+.qnav {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+    position: sticky;
+    top: 96px;
+}
+
+.qnav__title {
+    margin: 0 0 12px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-muted);
+}
+
+.qnav__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+    gap: 8px;
+}
+
+.qnav__item {
+    width: 100%;
+    aspect-ratio: 1;
+    min-height: 38px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: #f7f9fc;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.qnav__item:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+/* Отвеченное задание: заливка синим и галочка. */
+.qnav__item.is-answered {
+    background: var(--accent-soft);
+    border-color: #b9cbf3;
+    color: var(--accent-dark);
+}
+
+.qnav__item.is-answered::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--good);
+}
+
+.qnav__item.is-current {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 0 2px rgba(47, 95, 208, .22);
+}
+
+.qnav__item.is-current.is-answered::after { background: #fff; }
+
+.qnav__hint {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin: 12px 2px 0;
+}
+
+.qnav-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.qnav-controls__spacer { flex: 1 1 auto; }
+
+/* Форма отправляется: блокируем клики через pointer-events, а не через disabled,
+   потому что у отключённой кнопки отправки пропадает пара name/value и сервер
+   не понял бы, было нажато «Завершить тест» или «Далее». */
+.attempt--sending .qnav-controls,
+.attempt--sending .question__body { pointer-events: none; opacity: .6; }
+
+.btn--ghost {
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--text-muted);
+}
+
+.btn--ghost:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+.timer {
+    font-variant-numeric: tabular-nums;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    border-radius: 999px;
+    padding: 4px 14px;
+    font-size: 14px;
+}
+
+.timer--warn { background: var(--mid-soft); color: var(--mid); }
+
+.timer--danger { background: var(--bad-soft); color: var(--bad); animation: pulse 1s ease-in-out infinite; }
+
+@keyframes pulse { 50% { opacity: .6; } }
+
+.question {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 22px;
+    margin-bottom: 18px;
+}
+
+.question__head { display: flex; gap: 14px; align-items: flex-start; }
+
+.question__number {
+    flex: 0 0 auto;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.question__heading { flex: 1 1 auto; min-width: 0; }
+
+.question__prompt { font-size: 18px; margin-bottom: 8px; }
+
+.question__meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+
+.question__hint { color: var(--text-muted); font-size: 14px; margin: 16px 0 10px; }
+
+.question__body { margin-top: 16px; }
+
+/* ---------------------------------------------------------------- варианты ответа */
+
+.options { display: flex; flex-direction: column; gap: 8px; }
+
+.option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    background: var(--surface);
+}
+
+.option:hover { border-color: var(--border-strong); background: #fafbfd; }
+
+.option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+
+.option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.option input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.option__mark {
+    flex: 0 0 auto;
+    width: 20px; height: 20px;
+    margin-top: 2px;
+    border: 2px solid var(--border-strong);
+    border-radius: 50%;
+    position: relative;
+}
+
+.option__mark--box { border-radius: 5px; }
+
+/*
+ * Текст варианта ответа.
+ *
+ * .option — flex, и .option__mark перед этим элементом задаёт его ширину.
+ * Тексту нужен min-width: 0, иначе длинный вариант не ужимается, а распирает
+ * строку: флекс по умолчанию не даёт содержимому сжиматься сильнее его
+ * содержимого, и карточка вопроса уезжала бы за пределы экрана.
+ */
+.option__text { min-width: 0; overflow-wrap: anywhere; }
+
+.option input:checked + .option__mark { border-color: var(--accent); background: var(--accent); }
+
+.option input:checked + .option__mark::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    background: #fff;
+    border-radius: 50%;
+}
+
+.option input:checked + .option__mark--box::after { border-radius: 2px; inset: 4px; }
+
+/*
+ * Строка варианта в редакторе.
+ *
+ * Это блок, а не .option: у .option все поля внутри спрятаны под нарисованную
+ * метку — так сделано для ответа ученика, где рядом с переключателем лежит
+ * готовый текст. В редакторе рядом с переключателем находится поле ввода, и
+ * прятать его нельзя: иначе в вариант ответа невозможно вписать ничего.
+ *
+ * Отметка справа от текста, а не слева: так её не спутать с началом строки, а
+ * главное — она не стоит между полем ввода и номером варианта.
+ */
+.option-rows { display: flex; flex-direction: column; gap: 8px; }
+
+.option-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+}
+
+.option-row:hover { border-color: var(--border-strong); }
+.option-row:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.option-row > input[type="text"] { flex: 1 1 auto; margin: 0; }
+
+/*
+ * Отметка — обычный переключатель браузера, а не нарисованный значок.
+ *
+ * Раньше строка целиком подсвечивалась при выборе, и это читалось как «нажато
+ * само поле»: человек ждал галочку или точку в кружке и не находил её.
+ * Теперь видно привычную отметку, а строка остаётся нейтральной.
+ */
+.option-row__pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    cursor: pointer;
+    padding: 4px 2px;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.option-row__pick input[type="radio"],
+.option-row__pick input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.option-row__pick input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/*
+ * Крестик удаления варианта.
+ *
+ * Узкая кнопка у края строки, а не иконка в углу поля: варианты удаляют
+ * часто и не глядя, и кнопка должна попадать под курсор с первого раза.
+ * Цвет — тот же приглушённый, что у кнопок-призраков в списках, и красный
+ * только при наведении: удаление одного варианта не должно выглядеть так,
+ * будто сейчас исчезнет всё задание.
+ */
+.option-row__drop {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.option-row__drop:hover {
+    color: var(--bad);
+    border-color: var(--border-strong);
+}
+
+.option-row__drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.option-rows__actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin: 12px 0 0;
+}
+
+/* ---------------------------------------------------------------- правка имени */
+
+/*
+ * Карандаш и дискета рядом с именем и в форме правки.
+ *
+ * Кнопки без подписи: в строке таблицы подпись «Правка имени» занимала больше
+ * места, чем само действие, и её легко было спутать с соседним «Заблокировать».
+ * Смысл считывается по значку и подсказке, а для чтения с экрана у каждой
+ * кнопки есть скрытая подпись.
+ */
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-muted, #5a6472);
+    cursor: pointer;
+}
+
+.icon-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.icon-btn svg { width: 18px; height: 18px; }
+
+/* Дискета — действие, которое меняет данные: выглядит заметнее отмены. */
+.icon-btn--save { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+.icon-btn--save:hover { background: var(--accent); color: #fff; }
+
+.inline-value { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+/*
+ * Поле правки занимает всю ширину ячейки.
+ *
+ * Раньше оно было по размеру содержимого, и у разных фамилий поля выходили
+ * разной длины: таблица выглядела неровно, а короткое поле не давало исправить
+ * ошибку в длинном имени, не переставляя курсор. min-width: 0 нужен, чтобы
+ * flex-поле могло сжиматься и не распирало ячейку.
+ */
+.inline-form { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+
+.inline-form > input[type="text"] { flex: 1 1 auto; width: 100%; min-width: 0; margin: 0; }
+
+/* Кнопки правки стоят у правого края своей ячейки, а не сдвинуты по размеру поля. */
+.inline-form > .icon-btn { flex: 0 0 auto; }
+
+/*
+ * Колонка ученика забирает остаток ширины: логины и пароли — короткие строки,
+ * а фамилия и поле правки имени тянутся. Без этого таблица отдавала лишнее
+ * место колонке действий, и правка имени ужималась.
+ */
+.credential-table__name { width: auto; min-width: 14rem; }
+
+/*
+ * Номер строки: узкая колонка, прижатая вправо.
+ *
+ * Числа выравниваются по правому краю — так их видно с одного взгляда, а не
+ * «1, 10, 2». Колонка узкая, потому что номер занимает одну-две цифры и не
+ * должен отбирать место у фамилии.
+ */
+.credential-table__num {
+    width: 1%;
+    padding-right: 12px;
+    color: var(--adm-muted, var(--text-muted));
+    font-size: 13px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/*
+ * Колонка отметки «взять в работу».
+ *
+ * Узкая, как и колонка номера: флажок занимает одну ячейку и не должен отбирать
+ * ширину у фамилии. Ячейка выровнена по центру — отметка относится ко всей
+ * строке, а не к имени, и прижатая влезу метка читалась бы как часть фамилии.
+ */
+.credential-table__pick {
+    width: 1%;
+    padding-right: 12px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+/*
+ * Фамилия ученика в строке.
+ *
+ * Ширину задаёт .credential-table__name, здесь только вертикальное выравнивание:
+ * имя с карандашом должно сидеть по центру строки, как и остальные её ячейки.
+ */
+.inline-cell { vertical-align: middle; }
+
+/*
+ * Текст значения внутри .inline-value.
+ *
+ * .inline-value — flex, и без этого правила имя занимало бы всю оставшуюся
+ * ширину и прижимало карандаш к противоположному краю ячейки вместо того,
+ * чтобы стоять сразу после фамилии.
+ */
+.inline-value__text { min-width: 0; }
+
+/*
+ * Сообщение о сохранении имени живёт в ячейке ученика, а не во всплывающем
+ * окне: после сохранения форма закрывается, и человеку нужно видеть рядом с
+ * именем, что правка ушла. Без сообщения он нажал бы кнопку второй раз.
+ */
+.inline-status {
+    margin: 6px 0 0;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+/*
+ * Действия в строке — одно меню, а не ряд значков.
+ *
+ * Ячейка шириной по содержимому, поэтому колонка действий у всех строк
+ * одинаковая, а таблица не разъезжается.
+ *
+ * Имя общее, а не про учеников: таким же меню открываются классы и
+ * сотрудники, и три почти одинаковых правила под тремя именами разъехались
+ * бы при первом же изменении.
+ */
+.row-actions { width: 1%; white-space: nowrap; text-align: end; }
+
+/*
+ * Меню построено на <details>: раскрывается без скриптов, и все пункты
+ * остаются рабочими без них. Собственный маркер браузера убирается, а вид
+ * кнопки берётся из шаблона (.card-opt-btn).
+ */
+.row-menu { position: relative; display: inline-block; }
+
+.row-menu > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+.row-menu > summary::-webkit-details-marker { display: none; }
+
+.row-menu > summary::marker { content: ''; }
+
+/*
+ * Меню смены роли в строке таблицы пользователей.
+ *
+ * Кнопка меню показывает текущую роль: роль — это то, ради чего меню открывают,
+ * и по одному значку её не увидеть. Свой вид задан этому классу, а не всем
+ * пунктам меню: в последнем столбце кнопка остаётся значком, и два значка в
+ * одной строке путались бы.
+ */
+.row-menu__current {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.row-menu__current::-webkit-details-marker { display: none; }
+
+.row-menu__current::marker { content: ''; }
+
+.row-menu__current > svg { width: 14px; height: 14px; opacity: .7; }
+
+/* Меню смены роли: подсказка «это меню» — та же, что у значка действий. */
+.row-menu--role .menu-popover { min-width: 180px; }
+
+/*
+ * Меню без скриптов.
+ *
+ * Пока скрипт не вмешался, меню просто разворачивается внутри ячейки: строка
+ * таблицы станет выше, зато каждый пункт виден и нажимается. Это запасной
+ * путь, а не основной вид — основной вид даёт скрипт, который переносит меню
+ * над таблицей.
+ *
+ * Ширина задана явно: без неё блок занял бы всю ширину ячейки, а ячейка
+ *actions узкая, и пункты растянулись бы по всему экрану.
+ */
+.row-menu .menu-popover {
+    position: static;
+    display: block;
+    width: 200px;
+    text-align: start;
+    margin-top: 4px;
+}
+
+/*
+ * Меню на скрипте.
+ *
+ * Класс ставит скрипт, когда он посчитал координаты: до этого меню остаётся
+ * развёрнутым в ячейке, и переезжать на «плавающее» положение незачем.
+ *
+ * Ширина — по содержимому и с потолком: меню из трёх пунктов обязано быть
+ * узким, а длинное название действия не должно растягивать его во весь экран.
+ * Обе границы (left и right) здесь не задаются намеренно — при position: fixed
+ * заданные с двух сторон отступы растянули бы меню на всё окно.
+ */
+.row-menu .menu-popover.is-positioned {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: max-content;
+    min-width: 200px;
+    max-width: 280px;
+    margin-top: 0;
+    z-index: 1100;
+}
+
+/*
+ * Пункт, который удаляет. Отличается цветом от соседей: меню, где одна
+ * кнопка удаляет, а соседние просто меняют состояние, читается как меню
+ * из двух равноправных пунктов, и промах обходится дорого.
+ */
+.menu-item--danger { color: var(--bad); }
+
+.menu-item--danger:hover,
+.menu-item--danger:focus-visible {
+    background: var(--bad-soft, rgba(214, 57, 57, 0.12));
+    color: var(--bad);
+}
+
+/*
+ * Форма внутри меню не должна занимать строку: иначе между пунктами появляется
+ * разрыв, хотя на деле это один список. Пункт занимает всю ширину меню — иначе
+ * нажатие приходилось бы точно по тексту.
+ */
+.row-menu .menu-popover form { margin: 0; }
+
+.row-menu .menu-popover .menu-item {
+    display: block;
+    width: 100%;
+    text-align: start;
+}
+
+.icon-btn--danger { color: var(--bad); }
+.icon-btn--danger:hover { border-color: var(--bad); background: var(--bad); color: #fff; }
+
+/* Карандаш заметен только при наведении на строку: в покое он не спорит с именем. */
+.inline-value .icon-btn { opacity: 0; transition: opacity .12s ease; }
+.inline-value:hover .icon-btn,
+.inline-value .icon-btn:focus-visible { opacity: 1; }
+
+/* Без наведения найти карандаш нельзя, а это плохо для сенсорных экранов. */
+@media (hover: none) {
+    .inline-value .icon-btn { opacity: 1; }
+}
+
+/* ---------------------------------------------------------------- последовательность */
+
+.ordering { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.ordering__item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+}
+
+.ordering__handle {
+    flex: 0 0 auto;
+    width: 22px; height: 22px;
+    cursor: grab;
+    background: repeating-linear-gradient(90deg, var(--border-strong) 0 3px, transparent 3px 6px);
+    background-size: 6px 14px;
+    background-position: center;
+    background-repeat: no-repeat;
+    border-radius: 3px;
+}
+
+.ordering__position {
+    flex: 0 0 auto;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ordering__text { flex: 1 1 auto; }
+
+.ordering__select { flex: 0 0 132px; }
+
+.ordering__select select { padding: 6px 8px; font-size: 14px; }
+
+.ordering__item--dragging { opacity: .5; border-style: dashed; }
+
+/* Когда перетаскивание активно, списки позиций мешают — прячем их.
+   Без JavaScript остаётся обычный выбор позиции вручную. */
+.ordering--sortable .ordering__select { display: none; }
+
+/* ---------------------------------------------------------------- соответствие */
+
+.matching { display: flex; flex-direction: column; gap: 10px; }
+
+.matching__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr);
+    gap: 12px;
+    align-items: center;
+}
+
+.matching__left { font-weight: 500; }
+
+/*
+ * Правая половина пары в задании на соответствие.
+ *
+ * Сетка .matching__row раскладывает строку на три части: левая сторона пары,
+ * стрелка и правая. Правая — это флажок со своим текстом, и он должен тянуться
+ * на всю свою колонку: иначе при длинном тексте варианта флажок прижимался бы
+ * к краю и между ним и подписью появлялся бы зазор, зависящий от длины текста.
+ */
+.matching__right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.matching__arrow { color: var(--text-muted); }
+
+@media (max-width: 760px) {
+    .attempt__layout { grid-template-columns: minmax(0, 1fr); }
+
+    .qnav { position: static; }
+
+    .qnav__list { grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); }
+}
+
+/* ---------------------------------------------------------------- результат */
+
+.result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 26px;
+    margin-bottom: 20px;
+}
+
+.result-head__label { margin: 0; color: var(--text-muted); font-size: 14px; }
+
+.result-head__name { font-size: 26px; margin: 2px 0; }
+
+.result-head__test { margin: 0; color: var(--text-muted); }
+
+.result-head__grade {
+    flex: 0 0 auto;
+    width: 120px; height: 120px;
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+}
+
+.result-head__grade--good { background: var(--good); }
+.result-head__grade--mid { background: var(--mid); }
+.result-head__grade--bad { background: var(--bad); }
+
+.result-head__grade-value { font-size: 52px; font-weight: 700; line-height: 1; }
+
+.result-head__grade-label { font-size: 12px; opacity: .9; text-align: center; padding: 0 8px; }
+
+.score-board {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.score-board__item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+}
+
+.score-board__value { display: block; font-size: 24px; font-weight: 700; }
+
+.score-board__of { font-size: 14px; font-weight: 400; color: var(--text-muted); }
+
+.score-board__label { font-size: 13px; color: var(--text-muted); }
+
+.scale-table { width: 100%; border-collapse: collapse; }
+
+.scale-table th, .scale-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+
+.scale-table th { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+
+.scale-table tr.is-current { background: var(--accent-soft); font-weight: 600; }
+
+/* ---------------------------------------------------------------- разбор */
+
+.review {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow);
+}
+
+.review--good { border-left-color: var(--good); }
+.review--mid { border-left-color: var(--mid); }
+.review--bad { border-left-color: var(--bad); }
+
+.review__head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+
+.review__number {
+    flex: 0 0 auto;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: #eef1f6;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.review--good .review__number { background: var(--good-soft); color: var(--good); }
+.review--bad .review__number { background: var(--bad-soft); color: var(--bad); }
+
+.review__heading { flex: 1 1 auto; min-width: 0; }
+
+.review__prompt { font-size: 16px; margin-bottom: 6px; }
+
+.review__meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+
+.review__row {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 14px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+}
+
+.review__row dt { color: var(--text-muted); }
+
+.review__row dd { margin: 0; }
+
+.result__actions { text-align: center; margin-top: 26px; }
+
+/* ---------------------------------------------------------------- ошибка */
+
+.error__code { font-size: 64px; font-weight: 700; color: var(--border-strong); margin: 0; }
+
+.error__title { font-size: 22px; }
+
+/* ---------------------------------------------------------------- адаптив */
+
+@media (max-width: 620px) {
+    .matching__row { grid-template-columns: minmax(0, 1fr); }
+
+    .matching__arrow { display: none; }
+
+    .review__row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+
+    .ordering__select { flex-basis: 100%; }
+
+    .result-head__grade { width: 96px; height: 96px; }
+}
+
+@media print {
+    .topbar, .footer, .attempt__bar, .qnav, .qnav-controls, .result__actions { display: none; }
+
+    body { background: #fff; }
+
+    .review, .card, .result-head { box-shadow: none; break-inside: avoid; }
+}
+/* ==========================================================================
+   Панель управления
+   Оболочка по образцу: тёмная шапка, меню слева, карточки в светлой области.
+
+   Отдельный блок, а не продолжение общих .topbar и .nav: у панели другая
+   сетка — фиксированная шапка и колонка, которая тянется на всю высоту, —
+   и смешивать её с узкой колонкой обычных страниц означало бы переписывать
+   одни и те же правила дважды.
+   ========================================================================== */
+
+:root {
+    --adm-dark: #1f2733;
+    --adm-dark-2: #2b3542;
+    --adm-dark-text: #b9c2cd;
+    --adm-accent: #2f6fd0;
+    --adm-page: #eef1f6;
+
+    /* Границы и приглушённый текст мастера. Раньше границы брались по месту
+       и каждое правило повторяло свой оттенок; вынесено сюда, потому что
+       экраны мастера и панели должны выглядеть одной системой. */
+    --adm-line: #dde3ea;
+    --adm-muted: #6c7787;
+    --adm-accent-soft: #f2f7ff;
+}
+
+/* --- шапка --------------------------------------------------------------- */
+
+.adm-top {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 52px;
+    padding: 0 14px;
+    background: var(--adm-dark);
+    color: #fff;
+}
+
+.adm-top__brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.adm-top__home { display: inline-flex; text-decoration: none; }
+
+.adm-top__mark {
+    display: grid;
+    place-items: center;
+    width: 30px; height: 30px;
+    border-radius: 6px;
+    background: #fff;
+    color: var(--adm-dark);
+    font-weight: 700;
+}
+
+.adm-top__title {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Ссылки-действия в шапке: без подчёркивания, с подсветкой при наведении. */
+
+.adm-top__actions { display: flex; align-items: center; gap: 4px; margin-left: 6px; }
+
+.adm-top__action,
+.adm-top__add {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 6px;
+    color: #e7ecf2;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.adm-top__action:hover,
+.adm-top__add:hover { background: var(--adm-dark-2); color: #fff; }
+
+.adm-top__action--alert { color: #ffd9a8; }
+
+/* Число в кружке рядом со значком — как счётчик непрочитанного. */
+
+.adm-top__count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 19px;
+    padding: 0 5px;
+    border-radius: 10px;
+    background: #d63638;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.adm-top__user {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/*
+ * Выход — справа от имени, в одном блоке с ним.
+ *
+ * Отдельная плашка в конце шапки читалась как ещё одна кнопка верхней панели, а
+ * в свёрнутом меню та же кнопка была неотличима от разворота меню: одинаковая
+ * рамка и одинокая стрелка. Теперь у выхода свой вид и подпись, и стоит он рядом
+ * с человеком, а не между флажками и кнопкой добавления.
+ */
+.adm-top__logout { display: inline-flex; }
+
+.adm-top__logout-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #e7ecf2;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.adm-top__logout-btn:hover { background: var(--adm-dark-2); color: #fff; border-color: var(--adm-dark-2); }
+
+.adm-top__logout-btn:focus-visible { outline: 2px solid var(--adm-accent); outline-offset: 1px; }
+
+.adm-top__logout-label { white-space: nowrap; }
+
+/* На узких экранах подпись мешает: остаётся значок, но с названием для чтения с экрана. */
+@media (max-width: 720px) {
+    .adm-top__logout-label { display: none; }
+}
+
+.adm-top__hello {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: #e7ecf2;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.adm-top__hello:hover { background: var(--adm-dark-2); color: #fff; }
+
+.adm-top__avatar {
+    display: grid;
+    place-items: center;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--adm-accent);
+    color: #fff;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.adm-top__greeting { white-space: nowrap; }
+
+/* Имя и роли в одну колонку: иначе приветствие и роли расходятся по ширине. */
+.adm-top__who { display: inline-flex; flex-direction: column; line-height: 1.2; text-align: left; }
+
+.adm-top__roles { color: #a9b4c1; font-size: 12px; }
+
+/*
+* Выход в шапке. С формой, а не ссылкой: выход меняет состояние на сервере
+* и делается только POST, иначе достаточно было бы одной ссылки в истории
+* браузера, чтобы выкинуть человека из системы.
+*/
+.adm-top__logout { display: inline-flex; margin-left: 6px; }
+.adm-top__logout .adm-top__action { cursor: pointer; border: 0; font: inherit; }
+
+/* --- значки -------------------------------------------------------------- */
+
+/*
+* Ширина фиксированная, иначе соседние пункты прыгали бы при появлении
+* счётчика.
+*/
+
+.adm-ico { display: inline-flex; width: 18px; height: 18px; flex: none; }
+.adm-ico svg { width: 100%; height: 100%; }
+
+/* --- тело: меню и содержимое -------------------------------------------- */
+
+/*
+* Тело растянуто на всю высоту окна, а тёмная колонка тянется вместе с ним.
+* Иначе на короткой странице меню заканчивается там, где кончился его
+* список, и под ним остаётся светлый просвет — «дыра» между меню и подвалом.
+* Именно колонка, а не само меню: меню липкое и должно скроллиться внутри,
+* фон колонки — нет.
+*/
+body.adm { display: flex; flex-direction: column; min-height: 100vh; background: var(--adm-page); }
+
+.adm-body { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
+
+.adm-side {
+    flex: none;
+    width: 226px;
+    background: var(--adm-dark);
+    color: var(--adm-dark-text);
+}
+
+.adm-nav {
+    position: sticky;
+    top: 52px;
+    max-height: calc(100vh - 52px);
+    overflow-y: auto;
+    padding: 12px 0 20px;
+}
+
+.adm-nav__group {
+    margin: 14px 0 6px;
+    padding: 0 14px;
+    color: #8d97a4;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.adm-nav__item,
+.adm-nav__collapse {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 14px;
+    border: 0;
+    background: none;
+    color: var(--adm-dark-text);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.adm-nav__item:hover,
+.adm-nav__collapse:hover { background: var(--adm-dark-2); color: #fff; }
+
+/* Активный пункт — заливка во всю ширину строки, как в образце. */
+
+.adm-nav__item.is-current {
+    background: var(--adm-accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+.adm-nav__item--button { border-radius: 0; }
+
+.adm-nav__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.adm-nav__badge {
+    margin-left: auto;
+    display: inline-grid;
+    place-items: center;
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: #3d4756;
+    color: #e7ecf2;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.adm-nav__item.is-current .adm-nav__badge { background: rgba(255, 255, 255, .25); color: #fff; }
+
+.adm-nav__collapse { margin-top: 14px; color: #8d97a4; }
+
+.adm-nav__toggle { display: none; }
+
+/* Свёрнутое меню: подписи и счётчики спрятаны, остаются значки. */
+
+.adm-nav-toggle:checked ~ .adm-body .adm-side { width: 58px; }
+.adm-nav-toggle:checked ~ .adm-body .adm-nav__label,
+.adm-nav-toggle:checked ~ .adm-body .adm-nav__group { display: none; }
+.adm-nav-toggle:checked ~ .adm-body .adm-nav__item,
+.adm-nav-toggle:checked ~ .adm-body .adm-nav__collapse { justify-content: center; padding: 9px 0; }
+
+/* Подпись «Свернуть меню» в свёрнутом виде превращается в значок. */
+
+.adm-nav-toggle:checked ~ .adm-body .adm-nav__collapse .adm-ico { transform: rotate(180deg); }
+
+/* Меню этапов мастера редактора работы. */
+
+.wizard {
+    flex: none;
+    width: 232px;
+    padding: 20px 12px 24px;
+    background: var(--adm-dark-2);
+    color: #cfd7e0;
+    overflow-y: auto;
+}
+
+.wizard__title {
+    margin: 0 10px 14px;
+    color: #7d8a99;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+
+.wizard__steps { display: flex; flex-direction: column; gap: 2px; }
+
+.wizard__step {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px 10px;
+    border-radius: 6px;
+    color: #cfd7e0;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.wizard__step:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+
+.wizard__step.is-current {
+    background: rgba(255, 255, 255, .13);
+    color: #fff;
+    font-weight: 600;
+}
+
+.wizard__step .adm-ico { color: #93a0af; }
+
+.wizard__step.is-current .adm-ico { color: #fff; }
+
+/*
+ * Пройденный этап помечен точкой: по трём шагам видно, где работа уже
+ * готова, а где ещё предстоит. Без отметки пройденный этап не отличался бы
+ * от непройденного, и весь порядок пришлось бы держать в голове.
+ */
+.wizard__step.is-done .adm-ico::after {
+    content: '';
+    display: block;
+    width: 5px;
+    height: 5px;
+    margin: 13px 0 0 auto;
+    border-radius: 50%;
+    background: #58a55c;
+}
+
+.wizard__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Визуальный редактор текста вопроса. */
+
+.ql-host { margin-bottom: 4px; }
+
+.ql-editor-host {
+    min-height: 96px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: 15px;
+}
+
+.ql-editor-host.ql-blank::before {
+    left: 12px;
+    right: 12px;
+}
+
+.ql-editor-host img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+.ql-upload-note {
+    margin-top: 6px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.ql-upload-note--error { color: var(--red, #b42318); }
+
+/* Список заданий мастера. */
+
+.wizard__group { margin: 0 0 18px; }
+
+/*
+ * Подпись группы и кнопки вида задания берут цвета из токенов темы.
+ *
+ * Раньше здесь стояли собственные значения (`#7d8a99`, белый фон, свой цвет
+ * рамки): в тёмной теме светлые кнопки на тёмной странице выглядели
+ * погашенными — как отключённые, хотя нажимались. Токены темы переключают
+ * вид вместе с остальной страницей, а свои цвета остаются только там, где
+ * это действительно часть оформления.
+ */
+.wizard__group-title {
+    margin: 0 0 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.task-kind {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 11px;
+    margin-bottom: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms;
+}
+
+.task-kind:hover { border-color: var(--primary); background: var(--primary-lt); }
+
+.task-kind__label { flex: 1 1 auto; min-width: 0; }
+
+.task-kind__add {
+    flex: none;
+    color: var(--primary);
+    font-size: 20px;
+    line-height: 1;
+}
+
+/* Доска заданий работы: строки, варианты и палитра. */
+
+.work-board {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    margin-top: 18px;
+}
+
+.work-board__main { flex: 1 1 auto; min-width: 0; }
+
+.work-rows { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+
+.board-row {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    overflow: hidden;
+}
+
+.board-row__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-muted, #f7f8fa);
+}
+
+.board-row__num {
+    flex: none;
+    width: 26px;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: right;
+}
+
+.board-row__meta {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.board-row__price { font-weight: 600; }
+.board-row__variants { color: var(--text-muted); }
+.board-row__actions { flex: none; display: flex; gap: 4px; }
+
+.board-row__cells {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px 12px 12px;
+}
+
+.work-cell {
+    min-height: 74px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    padding: 6px;
+    display: flex;
+}
+
+.work-cell--empty { background: rgba(0, 0, 0, .015); }
+
+/* Ячейка под курсором в момент перетаскивания: видно, куда встанет карточка. */
+.work-cell.is-over {
+    border-color: var(--primary);
+    background: var(--primary-lt, rgba(0, 123, 255, .06));
+}
+
+/*
+ * Пустая строка в конце доски — место для нового задания.
+ *
+ * Нарисована чуть иначе, чем занятые строки: у неё нет цены, вариантов и
+ * кнопок, и она всегда одна. Иначе её не отличить от строки, в которую
+ * забыли положить задание, — а забытая строка возможна только в базе,
+ * пришедшей из чужой установки.
+ */
+.board-row--spare {
+    border-style: dashed;
+    background: transparent;
+}
+
+.board-row--spare .board-row__head {
+    background: transparent;
+    border-bottom-style: dashed;
+}
+
+.board-row__spare {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.work-cell--spare {
+    align-items: center;
+    justify-content: center;
+}
+
+.work-cell__plus {
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 1;
+    user-select: none;
+}
+
+.work-card {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--bg-surface);
+    cursor: grab;
+}
+
+.work-card--open { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-lt, rgba(0, 123, 255, .15)); }
+.work-card--broken { border-style: dashed; }
+.work-card.is-dragging { opacity: .5; }
+
+.work-card__title { font-weight: 600; overflow-wrap: anywhere; }
+.work-card__kind { color: var(--text-muted); font-size: 13px; }
+
+/*
+ * Значок с восклицательным знаком и подсказкой при наведении.
+ *
+ * Предупреждение о публикации повторяется на каждой странице редактора, и
+ * баннер отодвигал форму всё ниже, ничего не сообщая нового. Значок занимает
+ * место знака, а полный текст остаётся под курсором.
+ *
+ * Подсказка нарисована псевдоэлементом и показывается по наведению и по
+ * фокусу с клавиатуры. Скрипт не нужен: без него страница всё равно должна
+ * объяснять, о чём предупреждение, — иначе значок молчал бы там, где скрипты
+ * запрещены.
+ */
+.hint-warn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--grade-warning);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    vertical-align: middle;
+}
+
+.hint-warn:hover::after,
+.hint-warn:focus-visible::after {
+    content: attr(data-hint);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 40;
+    width: max-content;
+    max-width: 260px;
+    padding: 8px 10px;
+    border-radius: var(--radius, 4px);
+    background: #333;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    white-space: normal;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
+}
+
+.hint-warn:hover::after,
+.hint-warn:focus-visible::after {
+    display: block;
+}
+
+/* У шапки подсказка уходила бы за край окна, поэтому прижимается вправо. */
+.hint-warn--end:hover::after,
+.hint-warn--end:focus-visible::after {
+    left: auto;
+    right: 0;
+}
+
+/*
+ * Карандаш в углу карточки.
+ *
+ * Раньше вход в задание был только ссылкой на его текст, и задание без текста
+ * оказывалось недостижимым: не на что было нажать, и правка задания становилась
+ * невозможной навсегда. Кнопка стоит всегда, а текст остаётся ссылкой там,
+ * где он есть, — нажатие на текст работает так же, как раньше.
+ */
+/*
+ * Кнопки значков карточки.
+ *
+ * Класс `.btn` темы сюда не подключается намеренно: он рассчитан на кнопки с
+ * текстом — с крупными внутренними отступами и своим размером шрифта, — и на
+ * квадратной кнопке 24×24 эти отступы съедали содержимое, из-за чего значок
+ * пропадал, а сама кнопка оставалась. Здесь всё, что нужно значку, описано
+ * ниже, и тема в это не вмешивается.
+ */
+.work-card__tools {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 4px;
+}
+
+.work-card__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    line-height: 0;
+    text-decoration: none;
+    cursor: pointer;
+    opacity: .65;
+    transition: opacity .12s ease, background-color .12s ease, color .12s ease;
+}
+
+.work-card__btn svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+    flex: none;
+}
+
+/*
+ * Карандаш прижат вправо: удаление слева, правка справа — две стороны карточки
+ * читаются как два разных действия, и обе остаются на одной высоте.
+ */
+.work-card__edit { margin-left: auto; }
+
+/*
+ * Подсвечивается та кнопка, над которой стоит мышь, а не обе сразу.
+ *
+ * Раньше правило было «подсветить кнопки при наведении на карточку», и оно
+ * ловило оба значка, стоит только подвести мышь к любому из них: наведение
+ * на кнопку — это тоже наведение на карточку. Выглядело это так, будто обе
+ * кнопки нажаты, хотя нажималась одна.
+ */
+.work-card__btn:hover,
+.work-card__btn:focus-visible {
+    opacity: 1;
+    background: rgba(127, 127, 127, .16);
+    color: var(--text);
+}
+
+/* Удаление выглядит опаснее правки даже до наведения: им не точат по карточке. */
+.work-card__btn--danger:hover,
+.work-card__btn--danger:focus-visible {
+    background: var(--bad-soft);
+    color: var(--bad);
+}
+
+/*
+ * Палитра видов заданий.
+ *
+ * Липкая: доска бывает длинной, а добавить задание нужно в любой её части.
+ * На узком экране липкой панели быть не может — она переезжает под доску и
+ * остаётся на своём месте.
+ */
+.work-board__side {
+    flex: none;
+    width: 288px;
+    position: sticky;
+    top: 16px;
+}
+
+.work-palette {
+    padding: 18px 16px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+}
+
+.work-palette__form { margin: 0; }
+
+@media (max-width: 900px) {
+    .work-board { flex-direction: column; }
+    .work-board__side { width: 100%; position: static; }
+    .work-palette { max-height: none; }
+    .board-row__cells { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------------------------ дерево работ */
+
+/*
+ * Папка параллели.
+ *
+ * Список `details` вместо вложенных списков и своя отрисовка стрелки: вложенный
+ * список показывал бы вложенность размером отступа, а её здесь нет — папка
+ * стоит рядом с другими, и разница только в подписи.
+ */
+.work-folder { margin-bottom: 10px; }
+
+.work-folder__box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.work-folder__title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface-2, #f6f8fb);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+}
+
+.work-folder__title::-webkit-details-marker { display: none; }
+
+.work-folder__title::before {
+    content: '▸';
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.work-folder__box[open] > .work-folder__title::before { content: '▾'; }
+
+.work-folder__count {
+    color: var(--text-muted);
+    font-weight: 400;
+    font-size: 13px;
+}
+
+/*
+ * Строка дерева и шапка колонок.
+ *
+ * Шапка — сетка с теми же колонками, что и строка: иначе подписи плыли бы
+ * мимо своих чисел, а в дереве это читается особенно плохо — строки идут подряд
+ * и глаз цепляется за вертикальные линии.
+ */
+.work-list { margin: 0; padding: 0; list-style: none; }
+
+.work-list__head,
+.work-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 110px 70px 96px 96px 110px auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+}
+
+.work-list__head {
+    color: var(--text-muted);
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.work-row + .work-row { border-top: 1px solid var(--border); }
+.work-row:hover { background: var(--surface-2, #f9fafc); }
+
+.work-row__body { min-width: 0; }
+.work-row__stat { color: var(--text-muted); font-size: 14px; }
+.work-row__actions { display: flex; gap: 4px; justify-content: flex-end; }
+
+/*
+ * Строка, выбираемая на первом шаге мастера выдачи.
+ *
+ * Курсор и вся строка кликабельны: выбирать работу приходится в середине
+ * списка, и тянуть точку в кружке неудобно. Кружок при этом остаётся
+ * единственным источником правды — нажатие на строку его ставит, но не
+ * отправляет форму сама по себе.
+ */
+.work-row--selectable { cursor: pointer; }
+.work-row--selectable:has(.work-row__pick:checked) {
+    background: var(--accent-soft, #eef4ff);
+}
+
+.work-row__pick { margin: 0; width: 18px; height: 18px; accent-color: var(--accent); }
+
+/* Значок «требует проверки»: лист с карандашом, подпись обязательна. */
+.needs-review { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+@media (max-width: 900px) {
+    .work-list__head { display: none; }
+
+    .work-row { grid-template-columns: auto minmax(0, 1fr); row-gap: 6px; }
+
+    .work-row__state,
+    .work-row__stat,
+    .work-row__actions { grid-column: 2; justify-content: flex-start; }
+}
+
+/*
+ * Редактор задания открыт поверх доски.
+ *
+ * Отступ снизу нужен форме плагина: её кнопки идут в самом низу, и без него
+ * окно прижимало бы их к самому краю.
+ */
+.task-editor { padding-bottom: 14px; }
+
+/*
+ * Этап мастера: основная часть и каталог рядом.
+ *
+ * Каталог прижат к правому краю и не тянется: он список кнопок, и растянутый
+ * на всю высоту блок пустоты под ним выглядел бы недоделанным разделом.
+ *
+ * Имя блока — `wizard-page`, а не `wizard-step`, хотя блок называют этапом
+ * мастера. В шаблоне gentelella `.wizard-step` — это отдельный кружок в полосе
+ * шагов, и он гасится до `opacity: 0.6`, пока шаг не пройден. Общее имя
+ * применяло это гашение ко всему содержимому этапа: редактор задания целиком
+ * выглядел «затенённым», и это выглядело как поломка оформления, а не как
+ * конфликт имён. Общие с шаблоном имена в этом проекте не используются.
+ */
+
+.wizard-page {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    margin-top: 18px;
+}
+
+.wizard-page__main { flex: 1 1 auto; min-width: 0; }
+
+.wizard-page__side {
+    flex: none;
+    width: 288px;
+    padding: 18px 16px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+}
+
+.wizard-page__nav {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 22px;
+}
+
+@media (max-width: 900px) {
+    .wizard-page { flex-direction: column; }
+    .wizard-page__side { width: 100%; }
+    .wizard { width: 100%; }
+}
+
+.adm-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 24px 26px 40px;
+    background: var(--adm-page);
+}
+
+.adm-foot {
+    flex: none;
+    padding: 14px 26px;
+    background: var(--adm-dark-2);
+    color: #93a0af;
+    font-size: 13px;
+}
+
+.adm-foot p { margin: 0; }
+
+/* --- содержимое панели ---------------------------------------------------- */
+
+/*
+* Внутри панели карточка — блок с шапкой, как в образце. Отступы уже, чем у
+* обычных страниц: колонка шире, и воздуха там и так достаточно.
+*/
+
+.adm-main .card { padding: 0; overflow: hidden; }
+
+.adm-main .card__title,
+.adm-main .card__lead,
+.adm-main .card > .facts,
+.adm-main .card > .form,
+.adm-main .card > .stat-row,
+.adm-main .card > .chip-list,
+.adm-main .card > p,
+.adm-main .card > .check-list,
+.adm-main .card > .table-wrap { margin-left: 20px; margin-right: 20px; }
+
+.adm-main .card__title {
+    padding-top: 18px;
+    padding-bottom: 4px;
+    margin-bottom: 0;
+    font-size: 20px;
+}
+
+.adm-main .card__lead { margin-top: 0; margin-bottom: 14px; }
+
+.adm-main .card > :last-child { margin-bottom: 18px; }
+
+.adm-main .table-wrap { padding: 0 0 6px; }
+
+.adm-main .page__title { margin-bottom: 16px; }
+.adm-main .section-title { margin-top: 22px; }
+
+/*
+ * Ячейка с действиями и текст для программ чтения с экрана.
+ *
+ * sr-only — не украшение доступности, а требование: иконка ручной проверки
+ * без подписи для чтения с экрана осталась бы просто иконкой, и человек,
+ * который не видит картинок, не узнал бы, что это проверка.
+ */
+.adm-main .data-table td:last-child { text-align: right; white-space: nowrap; }
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/*
+ * Подписи и значения в блоке «свойства» работы.
+ *
+ * Раньше эти два класса использовались в восьми шаблонах и не были описаны ни
+ * в одной строке таблицы стилей: подпись и значение вставали в одну строку
+ * слитно. Правка здесь закрывает их разом — иначе каждая страница с
+ * «свойствами» продолжала бы выглядеть недоделанной.
+ *
+ * Цвета берутся из токенов, а не заданы числами: раньше здесь стояли #6b7280 и
+ * #111827 — на тёмной теме подпись и значение гасли одинаково и блок
+ * «свойства» становился нечитаемым.
+ */
+.facts__label {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-right: 6px;
+}
+
+.facts__value { color: var(--text); }
+
+/*
+ * Зелёный значок: «опубликована», «сдано», «включён». Отдельный от
+ * .badge--warn, потому что смысл противоположный: не «требует внимания», а
+ * «в порядке».
+ */
+.badge--ok {
+    background: #dcfce7;
+    color: #14532d;
+}
+
+/*
+ * Шаги мастера выдачи — короткая полоса «1. Работа · 2. Классы …» на
+ * каждом из четырёх экранов. Положение подсвечивается классом is-current,
+ * а не начертанием: иначе текущий шаг пришлось бы искать глазами.
+ */
+.steps-inline {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin: 0;
+    padding: 0;
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.steps-inline .is-current {
+    color: #111827;
+    font-weight: 600;
+}
+
+.steps-inline .is-current::after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 2px;
+    margin-top: 4px;
+    background: #2563eb;
+}
+
+/* Название папки в дереве работ — то, что человек ищет, а не счётчик. */
+.work-folder__name { font-weight: 600; }
+
+/*
+ * Строка шкалы оценивания.
+ *
+ * Читается слева направо и не требует перевода взгляда: граница, цвет, стрелка
+ * и сама оценка крупно той же краской. Раньше оценка стояла узкой цифрой
+ * слева от полей, а под словами жила отдельная подпись, и между «от 85
+ * процентов» и тем, что это пятёрка, приходилось переводить взгляд через
+ * всю строку.
+ *
+ * Поля границ выровнены колонками, иначе при четырёх строках глаза
+ * сравнивали бы числа по разным местам страницы.
+ *
+ * Строка — сетка, а не флекс: колонки границ, цвета, стрелки и оценки должны
+ * совпадать у всех четырёх строк, а не подгоняться по содержимому каждой.
+ * Флекс здесь давал «лесенку»: подпись переносилась на вторую строку, поле под
+ * ней опускалось, и соседняя граница оказывалась на другой высоте.
+ */
+.scale-row {
+    /*
+     * Место под подпись поля границы. Объявлено здесь, потому что им пользуются
+     * три правила: полем (резервирует место), подписью (висит наверху поля) и
+     * стрелкой с оценкой (сдвигается на это же расстояние). Править размер
+     * подписи в одном месте, а не в трёх.
+     */
+    --scale-label-space: 27px;
+
+    /*
+     * Высота поля. Объявлена здесь по той же причине, что и место под подпись:
+     * ею пользуются четыре правила — полем, надписью у двойки и ящиком стрелки
+     * с оценкой. Правка высоты в одном месте, а не в четырёх.
+     */
+    --scale-field-height: 42px;
+
+    display: grid;
+    /*
+     * Колонки не тянутся: в сетке `auto` занимает всю свободную ширину, и поля
+     * разъезжались по всему экрану — между границей и цветом зияла пустота в
+     * пол-экрана. `max-content` меряет по содержимому, а `justify-content:
+     * start` прижимает набор к левому краю.
+     */
+    grid-template-columns: max-content max-content max-content max-content;
+    justify-content: start;
+    /*
+     * Выравнивание по верху, а не по центру строки.
+     *
+     * Центр строки не равно центру поля: у строки с подсказкой под полем есть
+     * ещё 26 пикселей, и центрирование уводило стрелку с оценкой ровно на
+     * половину этой добавки — на 13 пикселей ниже поля. Раньше это маскировалось
+     * сдвигом `margin-top`, но он рассчитан на строку без подсказки и потому
+     * годнился только ей. Теперь все четыре элемента начинаются с одной линии,
+     * а «место под подпись» одинаково резервируют сами — поэтому цифра стоит
+     * на одной высоте с полем в любой строке.
+     */
+    align-items: start;
+    gap: 10px 18px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.scale-row:last-child { border-bottom: 0; }
+
+/* Набор границ одного режима. Между наборами — отступ, а не пустая строка. */
+.scale-set + .scale-set { margin-top: 18px; }
+
+/*
+ * Границы: одна колонка в процентах, две в баллах.
+ *
+ * Собственный контейнер с фиксированной шириной полей держит пару рядом при
+ * любой ширине окна: отдельными элементами строки флекс раскладывал их по
+ * одной, и в балловом режиме строка вырастала втрое.
+ *
+ * Растягиваться он не должен: пока контейнер занимал всю свободную ширину,
+ * между границами и цветом зияла пустота в пол-экрана, а границы прижимались к
+ * левому краю. Теперь блок занимает ровно столько, сколько занимают поля, и
+ * цвет, стрелка и оценка идут сразу за ними.
+ */
+.scale-row__bounds {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+/*
+ * Поле границы: подпись и подсказка сняты с потока.
+ *
+ * Пока подпись лежала в потоке, блок поля был выше самого поля ввода, и
+ * выравнивание по центру блока сажало стрелку и оценку выше ввода — на половину
+ * высоты подписи. Читалось как «оценка не та». Теперь блок поля равен полю
+ * ввода, и стрелка с оценкой встают ровно по его центру.
+ *
+ * Место под подпись резервируется padding-top: строка от этого высоты не
+ * теряет, подписи всех строк остаются на одной линии.
+ */
+.scale-field {
+    position: relative;
+    display: block;
+    margin: 0;
+    flex: 0 0 10.5rem;
+    padding-top: var(--scale-label-space);
+}
+
+.scale-row__bounds input { width: 100%; }
+
+/*
+ * Место поля у двойки: надпись «Считается автоматически».
+ *
+ * Это текст, а не поле: рамки и заливки у него нет, иначе человек ждёт, что
+ * в него впишут число, — и не находит, куда вписать. Высота и отступы
+ * повторяют поле, иначе ряд двойки окажется ниже остальных, а цвет, стрелка и
+ * цифра уедут с ним: четыре строки шкалы снова читались бы по наклонной.
+ * Место под подпись резервируется тем же, что и у поля, поэтому все четыре
+ * элемента начинаются с одной линии.
+ */
+.scale-auto {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: var(--scale-field-height);
+    padding: 0 2px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/*
+ * Стрелка и оценка — по центру поля ввода.
+ *
+ * Раньше строка выравнивалась по верху, и стрелка с цифрой вставали вровень с
+ * подписью поля, а сами поля — ниже: взгляд шёл по наклонной, и оценка
+ * читалась не с той цифры, к которой относилась.
+ *
+ * Центрирование здесь своё, а не `align-self: center` от строки: строка с
+ * подсказкой выше поля на те самые 26 пикселей, и общий центр уводил бы
+ * стрелку вниз. Место под подпись резервируется тем же отступом, что и у поля,
+ * поэтому обе линии совпадают независимо от наличия подсказки.
+ */
+.scale-row__arrow,
+.scale-row__grade {
+    display: flex;
+    align-items: center;
+    align-self: start;
+    /*
+     * Высота ящика — подпись плюс высота поля, а не просто высота поля: при
+     * `box-sizing: border-box` отступ входит в высоту, и ящик в 42 пикселя
+     * оставлял под стрелкой 15, из-за чего она вставала на 13 пикселей выше
+     * поля. Теперь центры совпадают.
+     */
+    min-height: calc(var(--scale-label-space) + var(--scale-field-height));
+    padding-top: var(--scale-label-space);
+}
+
+/*
+ * Подпись поля границы в одну строку.
+ *
+ * Перенос подписи сдвигал поле под ней и тянул за собой всю строку: четыре
+ * строки шкалы выстраивались «лесенкой», и числа приходилось сравнивать не по
+ * одной линии. Единица измерения названа один раз над набором, поэтому
+ * подписи короткие и в колонке помещаются.
+ */
+.scale-field__label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    white-space: nowrap;
+}
+
+/*
+ * Подпись «Цвет» — абсолютная, как и подпись границы.
+ *
+ * Иначе она занимала место в потоке и список уезжал на 11 пикселей ниже
+ * поля: у границы подпись висит над полем и в высоту блока не входит, а у
+ * цвета стояла строкой. Слева вверху получалась ступенька, и четыре строки
+ * шкалы снова не выстраивались в одну линию — ровно то, что было до
+ * переработки.
+ */
+.scale-field--color > .form-label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    white-space: nowrap;
+}
+
+/*
+ * Подсказка «85% — 25,5 из 30 баллов».
+ *
+ * Под полем, а не соседним элементом строки: рядом с границей она занимала бы
+ * место в ряду и сдвинула цвет, стрелку и оценку вправо относительно
+ * соседних строк. Вне потока — по той же причине, что и подпись: блок поля
+ * должен остаться равен полю ввода.
+ */
+.scale-row__points {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin: 0;
+    margin-top: 3px;
+    font-style: italic;
+    /*
+     * Мелким шрифтом и в одну строку. Ширины поля (10.5rem) хватает под
+     * «85% — 25,5 из 30 баллов» только мелким шрифтом: в прежней формулировке
+     * подсказка переносилась на вторую строку и налезала на разделитель строки,
+     * а четыре строки шкалы снова разъезжались. Слова «баллов из … возможных»
+     * убраны — «из 30 баллов» значит то же самое и помещается в поле.
+     */
+    font-size: 0.8125rem;
+    line-height: 1.25;
+    white-space: nowrap;
+}
+
+/*
+ * Строке с подсказкой нужно место под неё, иначе она налезала бы на
+ * следующую строку. `:not(:empty)` обязателен: подсказка есть в разметке
+ * всегда, пока не заданы цены заданий, и без этого условия пустая подсказка
+ * раздвигала бы строку ни на пиксель, отчего ряд с двойкой оседал ниже
+ * остальных.
+ */
+.scale-row:has(.scale-row__points:not(:empty)) { padding-bottom: 26px; }
+
+/*
+ * Пустая подсказка не должна занимать место: до ввода порога пересчитывать
+ * нечего, и строка без подсказки встала бы выше соседних.
+ */
+.scale-row__points:empty { display: none; }
+
+/*
+ * Цвет: квадрат рядом со списком.
+ *
+ * Квадрат рисуется краской, а не картинкой: иначе в тёмной теме он остался бы
+ * белым, а рядом с ним — тот же, что выбрал автор. Само значение приходит
+ * списком, поэтому квадрат показывает сохранённый цвет, а скрипт
+ * `scale-color.js` подтягивает его на глаз при выборе нового.
+ */
+.scale-field--color { flex: 0 0 auto; }
+
+.scale-color { display: flex; align-items: center; gap: 8px; }
+
+.scale-color__chip {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border: 1px solid rgba(0, 0, 0, .25);
+    border-radius: 3px;
+    background: var(--grade-primary);
+}
+
+.scale-color__chip--success { background: var(--grade-success); }
+.scale-color__chip--primary { background: var(--grade-primary); }
+.scale-color__chip--warning { background: var(--grade-warning); }
+.scale-color__chip--danger  { background: var(--grade-danger); }
+
+.scale-color__select { width: auto; min-width: 9rem; }
+
+/* Стрелка — приглашение смотреть вправо, а не разделитель колонок. */
+.scale-row__arrow {
+    align-self: center;
+    padding-bottom: 0;
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 1;
+}
+
+/*
+ * Оценка крупно и в её цвете.
+ *
+ * Это ровно тот вид, которым оценка покажется в журнале и на странице
+ * результата: учитель выбирает цвет здесь и видит его тем же, каким увидит
+ * ученик, а не гадает, как пятёрка будет выглядеть там.
+ */
+.scale-row__grade {
+    align-self: center;
+    padding-bottom: 0;
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.scale-row__grade--success { color: var(--grade-success); }
+.scale-row__grade--primary { color: var(--grade-primary); }
+.scale-row__grade--warning { color: var(--grade-warning); }
+.scale-row__grade--danger  { color: var(--grade-danger); }
+
+/* Ошибка границы помечает строку целиком: чинить надо диапазон, не одно поле. */
+.scale-row--error { background: rgba(214, 57, 57, .05); }
+
+/*
+ * Узкий экран: четыре колонки в ряд не помещаются, и строка съезжала бы за
+ * край. Границы занимают всю ширину, цвет и оценка встают под ними.
+ *
+ * Подписи здесь переносятся обратно: колонка уже не фиксированной ширины, и
+ * запрет переноса приводил бы к обрезанному тексту вместо аккуратных двух
+ * строк. Вертикальное смещение полей этому не мешает — на такой ширине шкала
+ * читается сверху вниз, а не по колонкам.
+ */
+@media (max-width: 760px) {
+    .scale-row {
+        grid-template-columns: 1fr auto;
+        gap: 10px 12px;
+    }
+
+    .scale-row__bounds { grid-column: 1 / -1; }
+    .scale-field { flex: 1 1 0; min-width: 0; }
+    .scale-field__label { white-space: normal; }
+
+    /*
+     * Подсказке перенос тоже нужен: поле тут во всю ширину, но на узком
+     * экране строки подсказки всё равно не помещаются, и запрет переноса
+     * выталкивал бы её за край страницы.
+     */
+    .scale-row__points { white-space: normal; }
+    .scale-field--color { grid-column: 1; }
+    .scale-row__arrow { display: none; }
+    .scale-row__grade { grid-column: 2; justify-self: end; }
+}
+
+/*
+ * Поле с ошибкой.
+ *
+ * Красная рамка, а не только красный текст: человек узнаёт, что чинить, по
+ * границе вокруг самого поля, и не по тому, что текст под ним мелкий.
+ * aria-invalid нужен для программ чтения с экрана — цветом об отметке об
+ * ошибке скринридер не сообщает.
+ */
+.field--error input,
+.field--error select,
+.field--error textarea {
+    border-color: var(--bad);
+    background: var(--bad-soft);
+}
+
+.field--error .field__label { color: var(--bad); }
+
+/* Заголовок внутри блока ошибки — чтобы «что не так» читалось первым. */
+.alert__title { font-weight: 600; margin: 0 0 6px; }
+
+/* --- узкие экраны --------------------------------------------------------- */
+
+@media (max-width: 860px) {
+    .adm-side { width: 58px; }
+    .adm-nav__label,
+    .adm-nav__group { display: none; }
+    .adm-nav__item,
+    .adm-nav__collapse { justify-content: center; padding: 9px 0; }
+    .adm-top__greeting { display: none; }
+    .adm-main { padding: 16px 14px 32px; }
+}
+
+@media print {
+    .adm-top, .adm-side, .adm-foot { display: none; }
+
+    body.adm { display: block; }
+    .adm-body, .adm-main { display: block; padding: 0; background: #fff; }
+}
