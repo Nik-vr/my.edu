@@ -560,10 +560,31 @@ $staffRoles = [
     'ученик' => 'student',
 ];
 
+/*
+ * Роль завучщего называется в README двумя словами: «заведующий» и «завуч».
+ *
+ * Оба слова правильные, и какое из них употребить — дело автора текста. Проверка
+ * следит за смыслом (роль названа, роль есть в коде), а не за слово: требование
+ * одного написания ломало бы правку формулировки, ничего не проверяя по делу.
+ */
+$roleSpellings = [
+    'заведующ' => ['заведующ', 'завуч'],
+];
+
 $roleProblems = [];
 
 foreach ($staffRoles as $russian => $code) {
-    if (!str_contains($readme, $russian)) {
+    $spellings = $roleSpellings[$russian] ?? [$russian];
+    $named = false;
+
+    foreach ($spellings as $spelling) {
+        if (str_contains($readme, $spelling)) {
+            $named = true;
+            break;
+        }
+    }
+
+    if (!$named) {
         $roleProblems[] = 'в README нет «' . $russian . '»';
     }
 

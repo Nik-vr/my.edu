@@ -154,7 +154,19 @@ private readonly SubjectRepository $subjects,
              * ?edit=<id> теперь и есть состояние строки, а скриптов на странице
              * нет вовсе.
              */
-'editStudentId' => (int) $request->queryParam('edit', '0'),
+            'editStudentId' => (int) $request->queryParam('edit', '0'),
+            /*
+             * Пароли, выданные недавно, — чтобы они были видны в таблице.
+             *
+             * Лист с паролями уходит на печать и закрывает вкладку, а учитель
+             * часто не печатает: он идёт по классу и диктует пароль ученику.
+             * Таблица — место, где человек ищет логины и пароли.
+             *
+             * В базе пароля нет, он лежит хешем, и второй раз его не достать —
+             * только выдать заново. Поэтому здесь лежат только что выданные, и
+             * только до следующей выдачи.
+             */
+            'issuedPasswords' => $this->session->get('issued_passwords', []),
             'old'       => $this->session->pull('class_edit_old', []),
             'studentAddOld' => $this->session->pull('student_add_old', ''),
             'studentRenameOld' => $this->session->pull('student_rename_old', []),

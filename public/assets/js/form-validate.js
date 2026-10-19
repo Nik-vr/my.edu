@@ -115,7 +115,36 @@
     }
 
     function isBlank(field) {
-        if (field.type === 'checkbox' || field.type === 'radio') {
+        if (field.type === 'checkbox') {
+            return !field.checked;
+        }
+
+        if (field.type === 'radio') {
+            /*
+             * Радиокнопка — это группа: обязательна одна из них, а не
+             * конкретная.
+             *
+             * Иначе выбранная вторая кнопка не спасает форму: обязательной
+             * помечена первая, она пуста, и человек получает отказ по полю,
+             * которое он как раз заполнил. HTML здесь ведёт себя правильно
+             * (достаточно отметить любую кнопку группы), и проверка обязана
+             * вести себя так же.
+             */
+            var radios = field.form
+                ? Array.prototype.filter.call(
+                    field.form.querySelectorAll('input[type="radio"]'),
+                    function (radio) {
+                        return radio.name === field.name;
+                    }
+                )
+                : [];
+
+            if (radios.length > 1) {
+                return !radios.some(function (radio) {
+                    return radio.checked;
+                });
+            }
+
             return !field.checked;
         }
 

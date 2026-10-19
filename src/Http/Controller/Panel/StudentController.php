@@ -153,6 +153,8 @@ $existing = $this->students->findByName($fullName);
          * остаётся. Если человек его не записал — пароль можно выдать заново
          * из меню ученика, и это честнее, чем держать чужие пароли в сессии.
          */
+        $this->rememberIssuedPassword((int) $created['id'], (string) $created['password']);
+
         return $this->credentialsSheet($class, [
             [
                 'id'        => (int) $created['id'],
@@ -423,6 +425,8 @@ $existing = $this->students->findByName($fullName);
                     $this->students->generatePassword(),
                     $classId
                 );
+                $this->rememberIssuedPassword((int) $created['id'], (string) $created['password']);
+
                 $issued[] = [
                     // Номер обязателен: он связывает карточку листа с учеником в
                     // базе, по нему же проверяется, что пароль выдан тому, кому
@@ -605,6 +609,8 @@ $existing = $this->students->findByName($fullName);
             'password'  => $password,
         ];
 
+        $this->rememberIssuedPassword($studentId, $password);
+
         /*
          * Лист и таблица показывали один и тот же пароль, поэтому он клался в
          * сессию и держался там до печати. Теперь таблица паролей не существует,
@@ -620,7 +626,33 @@ $existing = $this->students->findByName($fullName);
      * @param array<string,mixed>            $class
      * @param list<array<string,mixed>>      $rows
      */
-    private function credentialsSheet(array $class, array $rows): Response
+    /**
+ * Запомнить выданный пароль, чтобы он был виден в таблице класса.
+ *
+ * Лист с паролями уходит на печать, а учитель часто не печатает: он идёт по
+ * классу и диктует пароль ученику. Таблица — место, где человек ищет логины и
+ * пароли, и пустым паролем в ней быть не должно.
+ *
+ * В базе пароля нет, он лежит хешем, и второй раз его не достать — только
+ * выдать заново. Поэтому здесь лежат только что выданные, и только до следующей
+ * выдачи.
+ */
+private function rememberIssuedPassword(int $studentId, string $password): void
+{
+    if ($password === '') {
+        return;
+    }
+
+    $shown = $this->session->get('issued_passwords', []);
+    $shown[(string) $studentId] = [
+        'id'       => $studentId,
+        'password' => $password,
+    ];
+
+    $this->session->set('issued_passwords', array_slice($shown, -200, null, true));
+}
+
+private function credentialsSheet(array $class, array $rows): Response
     {
         return Response::html($this->view->render('panel/credentials_print', [
             'title'     => 'Логины и пароли — ' . $class['name'],
@@ -672,6 +704,7 @@ $existing = $this->students->findByName($fullName);
             }
 
             $password = $this->students->generatePassword();
+            $this->rememberIssuedPassword($studentId, $password);
 
             try {
                 $this->students->changePassword($studentId, $password);

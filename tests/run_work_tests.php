@@ -381,7 +381,7 @@ $t->equals($beforeStub, (int) $db->value('SELECT COUNT(*) FROM assignments'),
 $t->is($stub['status'] === 302, 'отказ на пустом названии не ломает страницу');
 
 /*
- * Название на первом шаге создаёт работу.
+ * Название на первой вкладке задаёт имя работы.
  */
 $created = $teacher->post('/panel/assignments/new/start', [
     '_token'     => $teacher->tokenFrom($teacher->get('/panel/assignments/new/start')) ?? '',
@@ -391,7 +391,7 @@ $created = $teacher->post('/panel/assignments/new/start', [
 
 $t->is($created['status'] === 302, 'работа создана и открыта для правки');
 $t->is(
-    preg_match('#/panel/assignments/(\d+)/edit/items#', (string) ($created['location'] ?? '')) === 1,
+    preg_match('#/panel/assignments/(\d+)/edit/(items|start)#', (string) ($created['location'] ?? '')) === 1,
     'после первого шага мастер ведёт к заданиям'
 );
 

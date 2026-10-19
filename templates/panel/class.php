@@ -311,7 +311,24 @@ class="inline-form"
  <?= $view->raw($nameBlock) ?>
  <?php endif; ?>
  </td>
-<td><code><?= $view->e($student['login']) ?></code></td>
+<td><code><?= $view->e($student['login']) ?></code>
+<?php
+/*
+ * Выданный пароль виден в строке.
+ *
+ * Лист с паролями уходит на печать, а учитель часто не печатает: он идёт по
+ * классу и диктует пароль ученику. Таблица — место, где человек ищет логины и
+ * пароли, и пустым паролем в ней быть не должно.
+ *
+ * Показывается только тот, что выдан недавно: в базе пароля нет, он лежит
+ * хешем, и второй раз его не достать — только выдать заново.
+ */
+$issuedPassword = (string) (($issuedPasswords[(string) $studentId]['password'] ?? ''));
+?>
+<?php if ($issuedPassword !== ''): ?>
+<br><code class="issued-password"><?= $view->e($issuedPassword) ?></code>
+<?php endif; ?>
+</td>
   <td>
  <?php if ($student['status'] === 'blocked'): ?>
  <span class="status status-red">заблокирован</span>

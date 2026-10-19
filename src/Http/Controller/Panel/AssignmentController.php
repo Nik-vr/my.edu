@@ -169,44 +169,44 @@ public function create(Request $request): Response
  * по обычным адресам с номером.
  */
 public function editNewStart(Request $request): Response
-{
-    /*
-     * Название пустое, а не «Новая работа».
-     *
-     * Заглушка была значением поля, и сохранение без правки создавало работу,
-     * которая так и называлась. Человек нажал «Сохранить» на пустом шаге — и
-     * получил черновик с чужим именем вместо напоминания ввести своё.
-     */
-    $empty = [
-        'id'           => 0,
-        'title'        => '',
-        'description'  => '',
-        'subject_id'   => null,
-        'parallel'     => null,
-        'time_limit'   => null,
-        'show_results' => 1,
-    ];
-
-    $view = $this->wizardView($empty, 'start', [
-        'subjects'   => $this->subjects(),
-        'parallel'   => null,
-        'hasPlugins' => $this->plugins->all() !== [],
+    {
         /*
-         * Введённое на этом же шаге, если сервер отказал: без него человек
-         * потерял бы остальные поля из-за пустого названия.
+         * Название пустое, а не «Новая работа».
+         *
+         * Заглушка была значением поля, и сохранение без правки создавало работу,
+         * которая так и называлась. Человек нажал «Сохранить» на пустом шаге — и
+         * получил черновик с чужим именем вместо напоминания ввести своё.
          */
-        'old' => $this->session->pull('assignment_start_old', []),
-    ]);
+        $empty = [
+            'id'           => 0,
+            'title'        => '',
+            'description'  => '',
+            'subject_id'   => null,
+            'parallel'     => null,
+            'time_limit'   => null,
+            'show_results' => 1,
+        ];
 
-    /*
-     * Шаги и адрес формы у несохранённой работы свои: пока номера нет, вести
-     * её дальше некуда, и ссылки на «Задания» должны вести обратно сюда же,
-     * а не в пустоту.
-     */
-    $view['isNew'] = true;
+        $view = $this->wizardView($empty, 'start', [
+            'subjects'   => $this->subjects(),
+            'parallel'   => null,
+            'hasPlugins' => $this->plugins->all() !== [],
+            /*
+             * Введённое на этом же шаге, если сервер отказал: без него человек
+             * потерял бы остальные поля из-за пустого названия.
+             */
+            'old' => $this->session->pull('assignment_start_old', []),
+        ]);
 
-    return $this->render('panel/assignment_start', $view);
-}
+        /*
+         * Шаги и адрес формы у несохранённой работы свои: пока номера нет, вести
+         * её дальше некуда, и ссылки на «Задания» должны вести обратно сюда же,
+         * а не в пустоту.
+         */
+        $view['isNew'] = true;
+
+        return $this->render('panel/assignment_start', $view);
+    }
 
 /**
  * Первое сохранение: здесь и появляется работа.
