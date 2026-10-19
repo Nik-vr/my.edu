@@ -640,17 +640,40 @@ if ($NoPush) {
     Write-Note '-NoPush: отправка пропущена'
 } elseif (-not ((Get-Remotes) -contains $Remote)) {
     Write-WarnMsg 'remote не настроен — отправка не выполнена'
-} elseif ($remoteState -and $remoteState.Exists -and (-not $remoteState.Related -or $remoteState.Behind -gt 0)) {
-    if ($remoteState.Related) {
-        Write-WarnMsg "на GitHub в ветке $Branch есть $($remoteState.Behind) коммитов, которых нет локально"
-        Write-Host '   продолжить историю:' -ForegroundColor Yellow
-        Write-Host "        git -C `"$($script:Root)`" pull --rebase $($Remote) $Branch" -ForegroundColor Yellow
-    } else {
-        Write-WarnMsg "история на GitHub другая: общих коммитов с веткой $Branch нет"
-        Write-Host '   Локальная история полнее (в ней первый релиз и все исправления),' -ForegroundColor Yellow
-        Write-Host '   поэтому её нужно отправить с перезаписью. Старый коммит останется' -ForegroundColor Yellow
-        Write-Host "   доступен по своему хешу $($remoteState.Tip.Substring(0, 7))." -ForegroundColor Yellow
-    }
+} elseif ($remoteState -and $remoteState.Exists -and $remoteState.Related -and $remoteState.Behind -gt 0) {
+    /*
+     * На сервере есть коммиты, которых нет локально.
+     *
+     * Их нельзя терять: перезапись удалила бы их, и человек, который их
+     * сделал, не узнал бы, что его работа исчезла. Поэтому здесь — только
+     * подсказка, и перезапись здесь не помогает.
+     */
+    Write-WarnMsg "на GitHub в ветке $Branch есть $($remoteState.Behind) коммитов, которых нет локально"
+    Write-Host '   продолжить историю:' -ForegroundColor Yellow
+    Write-Host "        git -C `"$($script:Root)`" pull --rebase $($Remote) $Branch" -ForegroundColor Yellow
+
+    $script:ResumeHint = "powershell -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -SkipTests"
+    Write-Host ''
+    Write-Host '   ОТПРАВКА НЕ ВЫПОЛНЕНА: сначала забрать изменения с сервера.' -ForegroundColor Red
+    Write-Host ''
+} elseif ($remoteState -and $remoteState.Exists -and -not $remoteState.Related -and -not $ForceSync) {
+    /*
+     * Истории разные: на сервере нет ни одного нашего коммита.
+     *
+     * Обычная отправка тут невозможна — git отвечает «non-fast-forward», и
+     * правильно: он не знает, что терять. Но терять тут нечего: серверная
+     * история — это чужой коммит (обычно пустой репозиторий с одним файлом), а
+     * локальная содержит весь проект. Отправка идёт с перезаписью, и «lease»
+     * защищает и её: если на сервере после нашей проверки что-то изменилось,
+     * отправка не пройдёт.
+     *
+     * Без ключа -ForceSync скрипт только объясняет, что делать, и ничего не
+     * отправляет: перезапись истории — решение человека, а не скрипта.
+     */
+    Write-WarnMsg "история на GitHub другая: общих коммитов с веткой $Branch нет"
+    Write-Host '   Локальная история полнее (в ней первый релиз и все исправления),' -ForegroundColor Yellow
+    Write-Host '   поэтому её нужно отправить с перезаписью. Старый коммит останется' -ForegroundColor Yellow
+    Write-Host "   доступен по своему хешу $($remoteState.Tip.Substring(0, 7))." -ForegroundColor Yellow
 
     $script:ResumeHint = "powershell -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -ForceSync -SkipTests"
     Write-Host ''
