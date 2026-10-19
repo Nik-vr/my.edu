@@ -710,7 +710,36 @@ if ($NoPush) {
         if ($ForceSync) { Write-WarnMsg 'перезапись истории на GitHub (--force-with-lease)' }
         Invoke-Git $pushArgs | ForEach-Object { Write-Note $_ }
         $script:Pushed = $true
-        Write-Ok "ветка $Branch и теги отправлены в $Remote"
+        Write-Ok "ветка $Branch отправлена в $Remote"
+    }
+}
+
+# Тег отправляется отдельно и его приход проверяется.
+#
+# `--follow-tags` отправляет только аннотированные теги, а существующий тег
+# может быть облегчённым: его создали раньше, и пересоздавать скрипт не
+# торопится. Тогда ветка уезжает, тег остаётся на месте, а скрипт радостно
+# пишет «теги отправлены» — а тега на сервере нет. Так и вышло: версия
+# 0.2 beta осталась без метки, и релиз на GitHub нельзя было выбрать.
+#
+# Поэтому тег отправляется явной ссылкой на ref, а после отправки скрипт
+# спрашивает у сервера, есть ли он, и говорит правду.
+if ($script:Pushed -and $tag -and -not $WhatIfPreference) {
+    $tagRef = "refs/tags/$tag"
+
+    try {
+        Invoke-Git @('push', $Remote, $tagRef) | ForEach-Object { Write-Note $_ }
+    } catch {
+        Write-WarnMsg "тег $tag не отправлен: $($_.Exception.Message)"
+    }
+
+    $remoteTags = @(Invoke-GitRaw @('ls-remote', '--tags', $Remote))
+    $onServer = @($remoteTags | Where-Object { $_ -match "refs/tags/$tag(\^\{\})?$" })
+
+    if ($onServer.Count -gt 0) {
+        Write-Ok "тег $tag есть на сервере"
+    } else {
+        Write-WarnMsg "тега $tag на сервере нет — выбрать версию в Releases будет нечем"
     }
 }
 
