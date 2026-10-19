@@ -17,9 +17,11 @@
       делает это ДО коммита, а не после: удалить ключ из истории уже нельзя
       простым коммитом;
     * при первой публикации сам создаёт репозиторий: git init, ветка main,
-      remote. Адрес передаётся ключом -RepoUrl или спрашивается, и вшивать его
-      в скрипт нельзя — зашитый адрес разъезжается с реальным репозиторием
-      молча.
+      remote. Адрес репозитория задан в самом скрипте: он один и тот же, и
+      спрашивать его перед каждой публикацией — значит переписывать одно и то
+      же. Сменить репозиторий можно ключом -RepoUrl, например на свой форк.
+      Расхождение с тем, что уже настроено, не остаётся молча: скрипт говорит
+      о нём словами.
 
 .EXAMPLE
     .\publish.ps1 -WhatIf
@@ -35,8 +37,9 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    # Адрес репозитория. При пустом значении и отсутствии remote спрашивается
-    # один раз и запоминается как origin.
+    # Адрес репозитория. Пустое значение — взять адрес по умолчанию из
+    # $script:DefaultRepoUrl; задать свой можно этим ключом, например для
+    # форка.
     [string]$RepoUrl = '',
 
     # Имя удалённого репозитория
@@ -63,6 +66,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $script:Root = $PSScriptRoot
+
+# Адрес репозитория, куда отправляются коммиты.
+#
+# Один и тот же из года в год, и спрашивать его перед каждой публикацией —
+# значит переписывать одно и то же. Поэтому адрес задан здесь и только здесь:
+# поменять репозиторий — одна правка этой строки или ключ -RepoUrl.
+#
+# Расхождение с тем, что уже настроено в git, скрипт не оставляет молча: он
+# называет прежний адрес и новый и приводит remote к заданному. Молчаливый
+# разъезд — это отправка кода не туда.
+$script:DefaultRepoUrl = 'https://github.com/Nik-vr/my.edu'
 
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
@@ -398,12 +412,19 @@ function Initialize-Repository {
 function Ensure-Remote {
     $remotes = Get-Remotes
 
+    # Ключ -RepoUrl — это явное «хочу вот сюда». Без него действует адрес по
+    # умолчанию: он и есть адрес этого проекта.
+    $wanted = if ($RepoUrl) { $RepoUrl.Trim() } else { $script:DefaultRepoUrl }
+
     if ($remotes -contains $Remote) {
         $current = Get-GitLine -GitArgs @('remote', 'get-url', $Remote)
 
-        if ($RepoUrl -and $current -ne $RepoUrl) {
-            if ($PSCmdlet.ShouldProcess($Remote, "обновить адрес на $RepoUrl")) {
-                Invoke-Git @('remote', 'set-url', $Remote, $RepoUrl) | Out-Null
+        if ($wanted -and $current -ne $wanted) {
+            Write-WarnMsg "адрес $Remote другой: $current"
+            Write-Note "приводим к заданному: $wanted"
+
+            if ($PSCmdlet.ShouldProcess($Remote, "обновить адрес на $wanted")) {
+                Invoke-Git @('remote', 'set-url', $Remote, $wanted) | Out-Null
                 Write-Ok "адрес $Remote обновлён"
             }
         } else {
@@ -413,22 +434,14 @@ function Ensure-Remote {
         return
     }
 
-    if (-not $RepoUrl) {
-        if (-not $Host.UI -or -not $Host.UI.RawUI) { return }
-
-        $answer = Read-Host "    Адрес репозитория (например https://github.com/владелец/имя.git)"
-
-        if (-not $answer) {
-            Write-WarnMsg 'адрес не задан — отправка невозможна'
-            return
-        }
-
-        $script:RepoUrl = $answer.Trim()
+    if (-not $wanted) {
+        Write-WarnMsg 'адрес репозитория не задан — отправка невозможна'
+        return
     }
 
-    if ($PSCmdlet.ShouldProcess($Remote, "добавить адрес $RepoUrl")) {
-        Invoke-Git @('remote', 'add', $Remote, $RepoUrl) | Out-Null
-        Write-Ok "remote $Remote добавлен: $RepoUrl"
+    if ($PSCmdlet.ShouldProcess($Remote, "добавить адрес $wanted")) {
+        Invoke-Git @('remote', 'add', $Remote, $wanted) | Out-Null
+        Write-Ok "remote $Remote добавлен: $wanted"
     }
 }
 
@@ -460,7 +473,7 @@ function Get-RemoteBranchState {
 Write-Host ''
 Write-Host '  Публикация my.edu' -ForegroundColor White
 Write-Host "  папка:       $script:Root" -ForegroundColor DarkGray
-Write-Host "  репозиторий: $(if ($RepoUrl) { $RepoUrl } else { 'будет спрошен' })" -ForegroundColor DarkGray
+Write-Host "  репозиторий: $(if ($RepoUrl) { $RepoUrl } else { $script:DefaultRepoUrl })" -ForegroundColor DarkGray
 Write-Host ''
 
 Write-Step 'Инструменты'
