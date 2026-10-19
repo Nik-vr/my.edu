@@ -338,6 +338,35 @@ function Test-ChangelogEntry {
     Write-Ok "changelog.md: раздел $($script:Version) на месте"
 }
 
+function Test-ProjectFiles {
+    # Основные файлы на месте.
+    #
+    # Скрипт коммитит дерево как есть, и удалённый файл уезжает на GitHub
+    # молча: в коммите он просто отсутствует, а человек узнаёт об этом, когда
+    # что-то не работает. Особенно это касается документов — они не входят в
+    # приложение, и без них тишина полная.
+    $required = @(
+        'README.md',
+        'LICENSE',
+        'changelog.md',
+        'config\config.php',
+        'database\schema.sql',
+        'public\index.php',
+        'src\Core\App.php',
+        'docs\журнал-разработки-до-первого-релиза.md'
+    )
+
+    $missing = @($required | Where-Object { -not (Test-Path (Join-Path $script:Root $_)) })
+
+    if ($missing.Count -gt 0) {
+        Fail ("В проекте нет основных файлов: $($missing -join ', ').`n" +
+              "Восстановите их (git checkout -- <файл>) и повторите.`n" +
+              "Молчаливая потеря файла доходит до GitHub и обнаруживается позже.")
+    }
+
+    Write-Ok 'основные файлы на месте'
+}
+
 # -------------------------------------------------------- README и changelog
 
 function Sync-Readme {
@@ -509,6 +538,7 @@ Initialize-Repository
 Test-NoSecrets
 Test-PhpSyntax
 Test-ChangelogEntry
+Test-ProjectFiles
 Test-Tests
 
 Write-Step 'Репозиторий'
