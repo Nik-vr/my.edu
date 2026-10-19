@@ -37,7 +37,7 @@ echo   my.edu - publishing
 echo   ================================================
 echo    1  check only, change nothing
 echo    2  commit + tag + push
-echo    3  same, but ask nothing and skip tests
+echo    3  commit + tag, WITHOUT sending to GitHub (tests are skipped)
 echo    4  overwrite GitHub history (--force-with-lease)
 echo.
 set /p CHOICE="   Choose 1-4 (Enter = 2): "
