@@ -328,6 +328,45 @@ $t->contains($newPage['body'], 'name="title"', 'на первом шаге ср�
 $t->notContains($newPage['body'], 'Создать черновик', 'промежуточной кнопки создания нет');
 
 /*
+ * Ссылка «Составить работу» открывает тот же редактор, что и «Редактировать».
+ *
+ * Редактор у работы один, и он вкладчатый. Раньше для новой работы был
+ * отдельный первый шаг мастера со своей формой, и у проекта оказывалось два
+ * редактора с разными интерфейсами: по ссылке «Составить работу» — один, из
+ * списка работ — другой.
+ *
+ * Работа появляется сразу, а название задаётся на первой вкладке: пустая
+ * строка в списке видна как «Без названия» и не выглядит забытой работой.
+ */
+$composeLink = $teacher->get('/panel/assignments');
+
+$t->is(
+    str_contains((string) ($composeLink['body'] ?? ''), 'panel/assignments/new'),
+    'в списке работ есть ссылка «Составить работу»'
+);
+
+$createdByLink = $teacher->get('/panel/assignments/new');
+
+$t->is($createdByLink['status'] === 302, 'ссылка «Составить работу» уводит в редактор');
+$t->is(
+    preg_match('#/panel/assignments/(\d+)/edit/start#', (string) ($createdByLink['location'] ?? '')) === 1,
+    'открывается вкладчатый редактор, а не отдельный первый шаг'
+);
+
+$composedId = (int) (preg_match('#/panel/assignments/(\d+)/edit/start#', (string) ($createdByLink['location'] ?? ''), $composedMatch) === 1
+    ? $composedMatch[1]
+    : 0);
+
+$composedEditor = $teacher->get('/panel/assignments/' . $composedId . '/edit/start');
+
+$t->is($composedEditor['status'] === 200, 'редактор новой работы открывается');
+$t->contains($composedEditor['body'], 'name="title"', 'название спрашивается в редакторе');
+$t->is(
+    preg_match('#name="title"[^>]*value=""#', (string) ($composedEditor['body'] ?? '')) === 1,
+    'поле названия пустое, а не подставлено заглушкой'
+);
+
+/*
  * Поле названия пустое, а не подставленное.
  *
  * Было «Новая работа» — и сохранение без правки создавало работу с этим

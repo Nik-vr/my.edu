@@ -64,7 +64,7 @@ $view->crumbs([
 
 <div class="card">
  <div class="page-actions">
- <a class="btn btn-primary btn-lg" href="<?= $view->e($view->url('panel/assignments/new/start')) ?>">
+ <a class="btn btn-primary btn-lg" href="<?= $view->e($view->url('panel/assignments/new')) ?>">
  Составить работу
  </a>
  <a class="btn btn-lg" href="<?= $view->e($view->url('panel/issues/new')) ?>">
