@@ -19,6 +19,7 @@ use MyEdu\Core\Csrf;
 use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\View;
+use MyEdu\Ui\Messages;
 
 /**
  * Регистрация, подтверждение адреса, вход и профиль.
@@ -348,13 +349,32 @@ public function showLogin(Request $request): Response
 
     // ---------------------------------------------------------------- смена пароля
 
-    public function showReset(Request $request): Response
+    /*
+ * Токен смены пароля не должен возвращаться в `Location`.
+ *
+ * Ссылка из письма приходит с токеном в адресе — иначе её не открыть, и первая
+ * страница отдаёт её как было. Дальше токен живёт в сессии: при возврате на
+ * форму после ошибки он больше не подставляется в адрес, а значит, не попадает
+ * в историю браузера, в журналы сервера и прокси и в заголовок `Referer`.
+ * Из адресной строки его убирает скрипт `token-in-url.js`.
+ */
+private const RESET_TOKEN = 'reset_token';
+
+public function showReset(Request $request): Response
     {
+        $token = (string) $request->queryParam('token', '');
+
+        if ($token !== '') {
+            $this->session->set(self::RESET_TOKEN, $token);
+        }
+
         return $this->render('auth/reset', [
             'title'  => 'Новый пароль',
             'error'  => $this->session->pull('flash_error'),
             'notice' => $this->session->pull('flash_notice'),
-            'token'  => (string) $request->queryParam('token', ''),
+            'token'  => $token !== ''
+                ? $token
+                : (string) $this->session->get(self::RESET_TOKEN, ''),
             'minLen' => $this->auth->minPasswordLength(),
         ]);
     }
@@ -370,7 +390,7 @@ public function showLogin(Request $request): Response
         if ($password !== $password2) {
             $this->session->set('flash_error', 'Пароли не совпадают');
 
-            return $this->redirect('auth/reset?token=' . urlencode($token));
+            return $this->rememberResetToken($token);
         }
 
         $result = $this->service->resetPasswordWithToken($token, $password);
@@ -378,13 +398,16 @@ public function showLogin(Request $request): Response
         if (($result['ok'] ?? false) !== true) {
             $this->session->set('flash_error', (string) $result['error']);
 
-            return $this->redirect(
-                !empty($result['retryable'])
-                    ? 'auth/reset?token=' . urlencode($token)
-                    : 'login'
-            );
+            if (!empty($result['retryable'])) {
+                return $this->rememberResetToken($token);
+            }
+
+            $this->session->remove(self::RESET_TOKEN);
+
+            return $this->redirect('login');
         }
 
+        $this->session->remove(self::RESET_TOKEN);
         $this->session->set(
             'flash_notice',
             !empty($result['blocked'])
@@ -393,6 +416,22 @@ public function showLogin(Request $request): Response
         );
 
         return $this->redirect('login');
+    }
+
+    /**
+     * Вернуть человека к форме, не называя токен в адресе.
+     *
+     * Токен кладётся в сессию, и следующая страница подставит его в скрытое
+     * поле формы. В `Location` его нет — а значит, нет и в истории браузера,
+     * и в журнале, и в `Referer` следующего запроса.
+     */
+    private function rememberResetToken(string $token): Response
+    {
+        if ($token !== '') {
+            $this->session->set(self::RESET_TOKEN, $token);
+        }
+
+        return $this->redirect('auth/reset');
     }
 
     public function profile(Request $request): Response
@@ -466,15 +505,15 @@ public function showLogin(Request $request): Response
         // Без отчества можно обойтись, без фамилии и имени — нет: на них
         // строится всё остальное, включая логины учеников.
         if ($last === '') {
-            return $fail('Укажите фамилию', 'last_name');
+            return $fail(Messages::requiredText('фамилию'), 'last_name');
         }
 
         if ($first === '') {
-            return $fail('Укажите имя', 'first_name');
+            return $fail(Messages::requiredText('имя'), 'first_name');
         }
 
         if (mb_strlen(UserRepository::composeName($last, $first, $middle), 'UTF-8') > 191) {
-            return $fail('Слишком длинное имя');
+            return $fail(Messages::maxLength(191));
         }
 
         $cleanDate = null;
@@ -483,7 +522,7 @@ public function showLogin(Request $request): Response
             $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $birthDate);
 
             if ($parsed === false || $parsed->format('Y-m-d') !== $birthDate) {
-                return $fail('Дата рождения указана неверно', 'birth_date');
+                return $fail(Messages::DATE, 'birth_date');
             }
 
             // Дата в будущем — опечатка, а не дата рождения.
@@ -585,7 +624,8 @@ public function showLogin(Request $request): Response
         $result = $this->service->changeOwnPassword(
             (int) $this->auth->id(),
             (string) $request->postParam('current_password', ''),
-            (string) $request->postParam('new_password', '')
+            (string) $request->postParam('new_password', ''),
+            $request->ip()
         );
 
         $ok = ($result['ok'] ?? false) === true;

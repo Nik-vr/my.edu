@@ -21,6 +21,7 @@ use MyEdu\Core\Session;
 use MyEdu\Core\Settings;
 use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
+use MyEdu\Ui\Messages;
 
 /**
  * Управление пользователями, ролями и настройками сайта.
@@ -154,6 +155,22 @@ final class UserController
 
         if (!in_array($role, Role::assignable(), true)) {
             $this->session->set('flash_error', 'Такой роли нет');
+
+            return $this->redirect('panel/users');
+        }
+
+        /*
+         * Ученику роль не выдаётся и не снимается.
+         *
+         * Форма умела поставить ученику любую назначаемую роль: роль «Учитель»
+         * проходила проверку списка, и человек одной кнопкой делал из ученика
+         * администратора — со всеми правами и доступом к списку сотрудников.
+         *
+         * Отказ здесь тот же, что и в блокировке: ученики живут в своём классе,
+         * а правами человека, заведённого как ученик, управляет не форма ролей.
+         */
+        if ($this->isStudent($target)) {
+            $this->session->set('flash_error', 'Учениками управляют в списке класса');
 
             return $this->redirect('panel/users');
         }
@@ -319,13 +336,13 @@ public function saveAvatar(Request $request, array $params): Response
         };
 
         if ($last === '' || $first === '') {
-            return $fail('Укажите фамилию и имя');
+            return $fail(Messages::requiredText('фамилию и имя'));
         }
 
         $fullName = UserRepository::composeName($last, $first, $middle);
 
         if (mb_strlen($fullName, 'UTF-8') > 191) {
-            return $fail('Слишком длинное имя');
+            return $fail(Messages::maxLength(191));
         }
 
         $cleanDate = null;
@@ -334,7 +351,7 @@ public function saveAvatar(Request $request, array $params): Response
             $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $birthDate);
 
             if ($parsed === false || $parsed->format('Y-m-d') !== $birthDate) {
-                return $fail('Дата рождения указана неверно');
+                return $fail(Messages::DATE);
             }
 
             // Дата в будущем — опечатка, а не дата рождения.
@@ -345,13 +362,35 @@ public function saveAvatar(Request $request, array $params): Response
             $cleanDate = $birthDate;
         }
 
-        $cleanEmail = null;
+/*
+ * Пустой адрес — не «очистить поле», а «оставить как есть».
+ *
+ * Раньше пустое поле молча ставило NULL: адрес исчезал вместе со всеми
+ * письмами, что на него приходили, а «восстановить пароль по почте» после
+ * этого переставал работать навсегда. Вернуть адрес можно было только вручную в
+ * базе, и человек узнавал об этом не сразу, а на первом «забыли пароль».
+ *
+ * Убирать адрес нельзя, а оставлять можно: человек, который его заводил,
+ * вправе перестать им пользоваться. Поэтому пустое поле у человека без адреса
+ * (ученик, сотрудник, которого завели без почты) — обычное дело, и оно
+ * проходит молча.
+ */
+$currentEmail = trim((string) ($target['email'] ?? ''));
 
-        if ($email !== '') {
+if ($email === '' && $currentEmail !== '') {
+    return $fail(
+        'Нельзя убрать адрес почты: по нему восстанавливается пароль. '
+        . 'Если адрес сменился, напишите новый — письмо для подтверждения придёт на него'
+    );
+}
+
+$cleanEmail = null;
+
+if ($email !== '') {
             $cleanEmail = mb_strtolower($email);
 
             if (!filter_var($cleanEmail, FILTER_VALIDATE_EMAIL)) {
-                return $fail('Адрес почты указан неверно');
+                return $fail(Messages::EMAIL);
             }
 
             // Адрес уникален: без проверки смена почты падала бы на ошибке

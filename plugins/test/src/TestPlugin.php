@@ -6,7 +6,7 @@ namespace MyEduPlugin\Test;
 
 use MyEdu\Auth\Auth;
 use MyEdu\Auth\Role;
-use MyEdu\Core\App;
+use MyEdu\Plugin\PluginServices;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
 use MyEdu\Core\Database;
@@ -26,6 +26,7 @@ use MyEduPlugin\Test\Repository\TestRepository;
 use MyEduPlugin\Test\Repository\WorkItemRepository;
 use MyEduPlugin\Test\Work\WorkItemHandler;
 use MyEdu\Plugin\AssessmentPlugin;
+use MyEdu\Plugin\ClassAwarePlugin;
 use MyEdu\Plugin\AttemptContext;
 use MyEdu\Plugin\EditorContext;
 use MyEdu\Plugin\ItemGrade;
@@ -35,6 +36,7 @@ use MyEdu\Plugin\PortablePlugin;
 use MyEdu\Plugin\TaskKind;
 use MyEdu\Plugin\TaskRef;
 use RuntimeException;
+use Throwable;
 
 /**
  * Плагин «Тест с вопросами».
@@ -46,7 +48,7 @@ use RuntimeException;
  * тестов и попыток, экраны учителя и ученика. Ядро о тесте не знает — оно
  * видит только объявленные виды заданий и результат проверки.
  */
-final class TestPlugin implements AssessmentPlugin, PortablePlugin
+final class TestPlugin implements AssessmentPlugin, PortablePlugin, ClassAwarePlugin
 {
     /** Вид задания, который видит учитель в списке типов. */
     public const KIND = 'test';
@@ -81,24 +83,34 @@ final class TestPlugin implements AssessmentPlugin, PortablePlugin
 
     private ?WorkItemRepository $workItems = null;
 
-    public function __construct(private readonly App $app)
-    {
-    }
+/**
+ * Идентификатор, известный классу.
+ *
+ * Одно значение, ради которого плагин узнаёт себя в манифесте: название и
+ * версию он берёт оттуда и не повторяет здесь. Повторение расходилось с
+ * `plugin.json` при первом же переименовании, и расхождение было тихим:
+ * обновление приходило по одной версии, а плагин называл себя по другой.
+ */
+private const PLUGIN_ID = 'test';
 
-    public function id(): string
-    {
-        return 'test';
-    }
+public function __construct(private readonly PluginServices $services)
+{
+}
 
-    public function name(): string
-    {
-        return 'Тест с вопросами';
-    }
+public function id(): string
+{
+    return self::PLUGIN_ID;
+}
 
-    public function version(): string
-    {
-        return '1.0.0';
-    }
+public function name(): string
+{
+    return $this->services->manifest()?->name ?? self::PLUGIN_ID;
+}
+
+public function version(): string
+{
+    return $this->services->manifest()?->version ?? '0.0.0';
+}
 
     /**
      * @return list<TaskKind>
@@ -215,7 +227,11 @@ final class TestPlugin implements AssessmentPlugin, PortablePlugin
      */
 public function install(): void
     {
-        $dir = $this->app->rootDir() . '/plugins/' . self::id() . '/migrations';
+        $dir = $this->services->ownPlugin(self::id())->migrationsDir();
+
+        if ($dir === null) {
+            throw new RuntimeException('Каталог плагина не найден на диске — миграции применить некуда');
+        }
 
         /*
          * Сервис копии передаётся обязательно: install() вызывается при первом
@@ -227,7 +243,7 @@ public function install(): void
             $this->database(),
             self::id(),
             $dir,
-            $this->app->get(DatabaseDump::class)
+            $this->services->dump()
         ))->apply();
     }
 
@@ -572,6 +588,39 @@ public function canManageTask(TaskRef $task, int $userId): bool
         return $this->taskPreviewCache[$id] = TextFragment::from($questions[0]->prompt);
     }
 
+
+    /**
+     * Класс удалён: тесты этого класса остались жить уже ни в чьём классе.
+     *
+     * Привязка обнуляется самим внешним ключом (`ON DELETE SET NULL`), и
+     * поэтому ничего чинить не нужно — но плагин об этом узнаёт только здесь.
+     * Без уведомления он молчал бы про данные, которые остались сиротами: тест
+     * есть, ученик есть, класса нет, и почему так вышло — неизвестно.
+     *
+     * Удалять тесты здесь нельзя: они могут стоять в работах, выданных другим
+     * классам, и класс — не единственный, кто на них ссылается.
+     *
+     * @param array{classId:int, className:string, studentIds:list<int>} $removal
+     *
+     * @return list<string>
+     */
+    public function onClassRemoved(array $removal): array
+    {
+        $orphaned = (int) $this->database()->value(
+            'SELECT COUNT(*) FROM tests WHERE class_id IS NULL',
+            []
+        );
+
+        if ($orphaned === 0) {
+            return [];
+        }
+
+        return [
+            'Тесты класса «' . $removal['className'] . '» остались в списке без класса ('
+            . $orphaned . ' шт.) — привяжите их к новому классу или удалите',
+        ];
+    }
+
     /**
      * Удаление теста.
      *
@@ -658,7 +707,7 @@ public function canManageTask(TaskRef $task, int $userId): bool
 
     public function view(): View
     {
-        return $this->app->get(View::class);
+        return $this->services->view();
     }
 
     /**
@@ -667,17 +716,17 @@ public function canManageTask(TaskRef $task, int $userId): bool
      */
     private function urlPrefix(): string
     {
-        return $this->app->get(PluginManager::class)->urlPrefix(self::id());
+        return $this->services->ownPlugin(self::id())->url();
     }
 
     private function editor(): TestEditorController
     {
         return $this->editorController ??= new TestEditorController(
-            $this->app,
+            $this->services->database(),
             $this->view(),
-            $this->app->get(Session::class),
-            $this->app->get(Csrf::class),
-            $this->app->get(Auth::class),
+            $this->services->session(),
+            $this->services->csrf(),
+            $this->services->auth(),
             $this->config(),
             $this->registry(),
             $this->urlPrefix()
@@ -705,7 +754,7 @@ public function canManageTask(TaskRef $task, int $userId): bool
 
     private function database(): Database
     {
-        return $this->app->get(Database::class);
+        return $this->services->database();
     }
 
     /**
@@ -782,7 +831,31 @@ public function canManageTask(TaskRef $task, int $userId): bool
         $test = is_array($data['test'] ?? null) ? $data['test'] : [];
         $db = $this->database();
 
-        return $db->transaction(function (Database $db) use ($test, $data, $authorId, $subjectId): int {
+        /*
+         * Пакет проверяется до первой записи.
+         *
+         * Раньше `type` и `config` брались из файла как есть. Чужой пакет мог
+         * принести вопрос с типом, которого нет в реестре, — и такой тест
+         * проходил импорт, а падал при первой же попытке ученика, то есть на
+         * живой работе, уже после того, как учитель увидел «импорт завершён».
+         * `config` приходил строкой: мусор в нём всплывал при разборе ответа,
+         * тоже в момент попытки.
+         *
+         * Ошибка бросается с текстом: ядро ловит исключение плагина, откатывает
+         * вставку и пишет позицию в отчёт как «плагин не смог создать задание» —
+         * то есть импорт одного плохого задания не отменяет остальные.
+         */
+        $questions = [];
+
+        foreach ($data['questions'] ?? [] as $index => $question) {
+            if (!is_array($question)) {
+                throw new RuntimeException('вопрос #' . ((int) $index + 1) . ' в пакете не является объектом');
+            }
+
+            $questions[] = $this->validateImportedQuestion($question, (int) $index + 1);
+        }
+
+        return $db->transaction(function (Database $db) use ($test, $questions, $authorId, $subjectId): int {
             $testId = (int) $db->insert('tests', [
                 'subject_id'        => $subjectId,
                 'author_id'         => $authorId,
@@ -801,34 +874,29 @@ public function canManageTask(TaskRef $task, int $userId): bool
                 'updated_at'        => date('Y-m-d H:i:s'),
             ]);
 
-            foreach ($data['questions'] ?? [] as $question) {
-                if (!is_array($question)) {
-                    continue;
-                }
+            foreach ($questions as $question) {
+                $config = $question['config'];
+                $options = $question['options'];
 
                 $questionId = (int) $db->insert('questions', [
                     'test_id'     => $testId,
-                    'type'        => mb_substr((string) ($question['type'] ?? 'text'), 0, 32),
-                    'prompt'      => (string) ($question['prompt'] ?? ''),
-                    'position'    => (int) ($question['position'] ?? 0),
-                    'weight'      => (float) ($question['weight'] ?? 1),
-                    'is_required' => (int) ($question['is_required'] ?? 1),
-                    'explanation' => (string) ($question['explanation'] ?? ''),
-                    'config'      => (string) ($question['config'] ?? ''),
+                    'type'        => $question['type'],
+                    'prompt'      => $question['prompt'],
+                    'position'    => $question['position'],
+                    'weight'      => $question['weight'],
+                    'is_required' => $question['is_required'],
+                    'explanation' => $question['explanation'],
+                    'config'      => $config,
                 ]);
 
-                foreach ($question['options'] ?? [] as $option) {
-                    if (!is_array($option)) {
-                        continue;
-                    }
-
+                foreach ($options as $option) {
                     $db->insert('question_options', [
                         'question_id' => $questionId,
-                        'kind'        => (string) ($option['kind'] ?? 'text'),
-                        'value_key'   => (string) ($option['value_key'] ?? ''),
-                        'text'        => (string) ($option['text'] ?? ''),
-                        'position'    => (int) ($option['position'] ?? 0),
-                        'pair_key'    => $option['pair_key'] ?? null,
+                        'kind'        => $option['kind'],
+                        'value_key'   => $option['value_key'],
+                        'text'        => $option['text'],
+                        'position'    => $option['position'],
+                        'pair_key'    => $option['pair_key'],
                     ]);
                 }
             }
@@ -837,8 +905,82 @@ public function canManageTask(TaskRef $task, int $userId): bool
         });
     }
 
+    /**
+     * Вопрос из чужого пакета приводится к тому, чему готовы остальные части.
+     *
+     * Проверяется не только имя типа: правильный ответ лежит в `config`, и без
+     * него вопрос не проверяем — ученик ответит верно, а балл не начислится.
+     * Считать это рабочим заданием нельзя, и `validateConfig()` типа об этом
+     * говорит прямо.
+     *
+     * @param  array<string,mixed> $question
+     * @return array<string,mixed>
+     */
+    private function validateImportedQuestion(array $question, int $number): array
+    {
+        $type = mb_substr((string) ($question['type'] ?? ''), 0, 32);
+        $registry = $this->registry();
+
+        if ($type === '' || !$registry->has($type)) {
+            throw new RuntimeException(sprintf(
+                'вопрос #%d: типа «%s» нет, известны: %s',
+                $number,
+                $type === '' ? 'пусто' : $type,
+                implode(', ', $registry->keys())
+            ));
+        }
+
+        $rawConfig = $question['config'] ?? [];
+
+        if (is_string($rawConfig)) {
+            $decoded = json_decode($rawConfig, true);
+            $rawConfig = is_array($decoded) ? $decoded : null;
+        }
+
+        if (!is_array($rawConfig)) {
+            throw new RuntimeException(sprintf(
+                'вопрос #%d: настройки типа «%s» не читаются — это должен быть JSON',
+                $number,
+                $type
+            ));
+        }
+
+        $options = [];
+
+        foreach ($question['options'] ?? [] as $position => $option) {
+            if (!is_array($option)) {
+                throw new RuntimeException(sprintf('вопрос #%d: вариант #%d не является объектом', $number, (int) $position + 1));
+            }
+
+            $options[] = [
+                'kind'      => mb_substr((string) ($option['kind'] ?? ''), 0, 32),
+                'value_key' => mb_substr((string) ($option['value_key'] ?? ''), 0, 191),
+                'text'      => (string) ($option['text'] ?? ''),
+                'position'  => (int) ($option['position'] ?? $position),
+                'pair_key'  => $option['pair_key'] ?? null,
+            ];
+        }
+
+        try {
+            $registry->get($type)->validateConfig($rawConfig, $options);
+        } catch (Throwable $e) {
+            throw new RuntimeException(sprintf('вопрос #%d: %s', $number, $e->getMessage()), 0, $e);
+        }
+
+        return [
+            'type'        => $type,
+            'prompt'      => (string) ($question['prompt'] ?? ''),
+            'position'    => (int) ($question['position'] ?? $number - 1),
+            'weight'      => (float) ($question['weight'] ?? 1),
+            'is_required' => (int) ($question['is_required'] ?? 1),
+            'explanation' => (string) ($question['explanation'] ?? ''),
+            'config'      => (string) json_encode($rawConfig, JSON_UNESCAPED_UNICODE),
+            'options'     => $options,
+        ];
+    }
+
     private function config(): Config
     {
-        return $this->app->get(Config::class);
+        return $this->services->config();
     }
 }

@@ -29,6 +29,7 @@ declare(strict_types=1);
  * @var list<int> $picked
  * @var list<array{student_id:int,full_name:string,class_id:int,class_name:string}> $students
  * @var array<string,string> $old что вводилось на этом шаге до отказа сервера
+ * @var string $once одноразовый пропуск формы: выдача создаётся один раз
  */
 
 $assignmentId = (int) $assignment['id'];
@@ -76,13 +77,18 @@ $view->crumbs([
  <h2 class="card-title">Кому выдаётся</h2>
 
  <p class="form-help">
- <?= $view->e(count($names)) ?>
- <?= $view->e($view->plural(count($names), 'ученик', 'ученика', 'учеников')) ?>:
+<?= $view->e($view->count((int) (count($names)),  'ученик', 'ученика', 'учеников')) ?>:
  <?= $view->e(implode(', ', $names)) ?>
  </p>
 
  <form method="post" action="<?= $view->e($view->url('panel/issues/' . $assignmentId . '/period')) ?>">
  <?= $view->raw($view->csrfField()) ?>
+ <?php /*
+  * Одноразовый пропуск: форма выдаёт работу один раз, и второй отправкой
+  * (двойной клик, возврат из истории) сервер откажет, а не создаст вторую
+  * выдачу — иначе лимит попыток у ученика взялся бы из случайной половины.
+  */ ?>
+ <input type="hidden" name="once_issue" value="<?= $view->e($once) ?>">
 
  <?php foreach ($classIds as $classId): ?>
  <input type="hidden" name="classes" value="<?= $view->e($classId) ?>">

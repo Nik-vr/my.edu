@@ -126,6 +126,8 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/assignments/{id}/edit/items/row/{position}', [$c->assignments, 'moveRowInWork'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/edit/items/{itemId}', [$c->assignments, 'updateItemInWork'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/edit/items/{itemId}/delete', [$c->assignments, 'destroyItemInWork'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->assignments, 'itemDraft'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->assignments, 'saveItemDraft'], Role::TESTS_MANAGE);
         $router->get('/panel/assignments/{id}/edit/result', [$c->assignments, 'editResult'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/edit/result', [$c->assignments, 'saveResult'], Role::TESTS_MANAGE);
         $router->get('/panel/assignments/{id}/edit/publish', [$c->assignments, 'editPublish'], Role::TESTS_MANAGE);

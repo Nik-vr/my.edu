@@ -50,7 +50,7 @@ $view->crumbs([
                         <th scope="col">Учеников</th>
                         <th scope="col">Предметов</th>
                         <th scope="col">Учителей</th>
-                        <th scope="col"></th>
+                        <th scope="col" data-orderable="false"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -94,7 +94,7 @@ $view->crumbs([
                                         <a class="menu-item menu-item--danger" role="menuitem"
                                            href="<?= $view->e($view->url('classes/' . $classId . '/delete')) ?>"
                                            data-confirm="Удалить класс <?= $view->e($class['name']) ?>?"
-                                           data-confirm-body="Вместе с классом будут удалены его ученики, логины и сданные работы. Восстановить это нельзя."
+                                           data-confirm-body="<?= $view->e($view->classRemovalWarning((int) $class['student_count'])) ?>"
                                            data-confirm-yes="Удалить класс">
                                             Удалить класс
                                         </a>

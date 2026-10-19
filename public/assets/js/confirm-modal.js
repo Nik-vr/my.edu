@@ -25,6 +25,27 @@
 
     var openBackdrop = null;
     var previousFocus = null;
+    var pendingResult = null;
+
+    /*
+     * Ответ окна тому, кто его открыл.
+     *
+     * Кнопка «да» и любой другой способ закрытия — это разные ответы, и
+     * различать их приходится здесь. Раньше окно умело только отправить форму,
+     * поэтому скрипты, которым нужно было спросить и продолжить по-разному
+     * (завершить работу, закрыть редактор), писали window.confirm: чужое окно
+     * браузера посреди сайта, и отменить его, не отменив отправку формы, нельзя.
+     * Теперь у них одно окно на двоих.
+     */
+    function finish(value) {
+        var done = pendingResult;
+
+        pendingResult = null;
+
+        if (typeof done === 'function') {
+            done(value);
+        }
+    }
 
     function closeModal() {
         if (!openBackdrop) {
@@ -51,6 +72,13 @@
 
         openBackdrop = null;
         previousFocus = null;
+
+        /*
+         * Закрытие — это тоже ответ. Без этой строки скрипт, спросивший окно,
+         * ждал бы обещание вечно: «Отмена», крестик, Escape и щелчок по фону
+         * уводили бы окно, ничего не сообщив спросившему.
+         */
+        finish(false);
     }
 
     function icon(name) {
@@ -78,6 +106,8 @@
      */
     function showConfirm(opts) {
         closeModal();
+
+        pendingResult = typeof opts.onResult === 'function' ? opts.onResult : null;
 
         previousFocus = document.activeElement;
 
@@ -110,32 +140,44 @@
         var body = document.createElement('div');
         body.className = 'modal-body';
 
-        var form = document.createElement('form');
-        form.method = 'post';
-        form.action = opts.action;
-
-        var token = document.querySelector('meta[name="csrf-token"]');
-
-        if (token) {
-            var hidden = document.createElement('input');
-            hidden.type = 'hidden';
-            hidden.name = '_token';
-            hidden.value = token.getAttribute('content') || '';
-            form.appendChild(hidden);
-        }
-
-        (opts.fields || []).forEach(function (pair) {
-            var field = document.createElement('input');
-            field.type = 'hidden';
-            field.name = pair[0];
-            field.value = pair[1];
-            form.appendChild(field);
-        });
-
         var text = document.createElement('p');
         text.textContent = opts.body || '';
-        form.appendChild(text);
-        body.appendChild(form);
+
+        /*
+         * Форма нужна окну, которое отправляет действие серверу. Окно, которое
+         * спрашивает скрипт (window.MyEduConfirm.open), отправлять нечего:
+         * ему нужен только ответ, и пустая форма была бы лишней разметкой и
+         * лишним обходом сервера при нажатии «да».
+         */
+        var form = opts.action ? document.createElement('form') : null;
+
+        if (form) {
+            form.method = 'post';
+            form.action = opts.action;
+
+            var token = document.querySelector('meta[name="csrf-token"]');
+
+            if (token) {
+                var hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = '_token';
+                hidden.value = token.getAttribute('content') || '';
+                form.appendChild(hidden);
+            }
+
+            (opts.fields || []).forEach(function (pair) {
+                var field = document.createElement('input');
+                field.type = 'hidden';
+                field.name = pair[0];
+                field.value = pair[1];
+                form.appendChild(field);
+            });
+
+            form.appendChild(text);
+            body.appendChild(form);
+        } else {
+            body.appendChild(text);
+        }
 
         var foot = document.createElement('div');
         foot.className = 'modal-footer';
@@ -151,7 +193,19 @@
         confirm.className = 'btn ' + (opts.danger === false ? 'btn-primary' : 'btn-danger');
         confirm.textContent = opts.confirm || 'Удалить';
         confirm.addEventListener('click', function () {
-            form.submit();
+            if (form) {
+                form.submit();
+
+                return;
+            }
+
+            /*
+             * Спросил скрипт, а не сервер: сначала отвечаем ему и только потом
+             * закрываем окно. Порядок важен — закрытие тоже сообщает ответ, и
+             * без finish(true) первым ушло бы «нет».
+             */
+            finish(true);
+            closeModal();
         });
 
         foot.appendChild(cancel);
@@ -290,6 +344,29 @@
             });
         });
     }
+
+    /*
+     * Спросить из скрипта и получить ответ.
+     *
+     * Для случаев, где вопрос возникает не из разметки. Раньше такие места
+     * пользовались window.confirm: вопрос появлялся посреди сайта чужим
+     * окном браузера, и отменить его, не отменив отправку формы, было нельзя —
+     * приходилось отменять отправку и начинать её заново.
+     *
+     * Возвращает обещание: «да» — иначе «нет». Закрытие любым способом
+     * считается отказом, потому что отказом оно и ощущается.
+     */
+    window.MyEduConfirm = {
+        open: function (opts) {
+            return new Promise(function (resolve) {
+                var options = opts || {};
+
+                options.onResult = resolve;
+
+                showConfirm(options);
+            });
+        }
+    };
 
     bind();
 }());

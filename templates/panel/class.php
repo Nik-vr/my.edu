@@ -368,7 +368,11 @@ action="<?= $view->e($view->url('classes/' . $classId . '/students/status')) ?>"
 <?= $view->raw($view->csrfField()) ?>
 <input type="hidden" name="student_id" value="<?= $view->e($studentId) ?>">
 <input type="hidden" name="status" value="blocked">
-<button type="submit" class="menu-item" role="menuitem">
+<button type="submit" class="menu-item menu-item--danger" role="menuitem"
+data-confirm="Заблокировать <?= $view->e($student['full_name']) ?>?"
+data-confirm-body="Человек не сможет войти на сайт, пока
+блокировку не снимут. Логины, пароли и история попыток останутся на месте."
+data-confirm-yes="Заблокировать">
 Заблокировать ученика
 </button>
 </form>
@@ -413,9 +417,24 @@ data-confirm-yes="Убрать из класса">
   выдачи. Теперь лист появляется один раз, сразу при выдаче, и печатать
   задним числом нечего: кнопка «Печать паролей» была бы обещанием, которое
   система не выполняет.
+
+  Подтверждение здесь обязательно: кнопка необратимо меняет пароли всех
+  отмеченных учеников и сразу уходит на печать. Отметили случайно всех вместо
+  одного — прежние пароли уже не работают, а новый лист на руках.
+
+  Адрес указан явно через data-confirm-action: кнопка отправляет форму
+  `roster-pick` на другой адрес, и окно подтверждения без этой подсказки
+  отправило бы её туда, откуда форма и так уходит, — то есть просто перезаписало
+  бы отметки.
   */ ?>
   <button type="submit" class="btn btn-primary" form="roster-pick"
-  formaction="<?= $view->e($view->url('classes/' . $classId . '/credentials/reveal')) ?>">
+  formaction="<?= $view->e($view->url('classes/' . $classId . '/credentials/reveal')) ?>"
+  data-confirm="Выдать новые пароли отмеченным ученикам?"
+  data-confirm-body="Прежние пароли перестанут работать, а новый лист
+сразу уйдёт на печать. Ученикам, которых отметили случайно, придётся
+получить пароль заново."
+  data-confirm-action="<?= $view->e($view->url('classes/' . $classId . '/credentials/reveal')) ?>"
+  data-confirm-yes="Выдать пароли">
   Выдать новые пароли
   </button>
   </div>

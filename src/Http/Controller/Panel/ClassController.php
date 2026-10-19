@@ -20,6 +20,8 @@ use MyEdu\Core\Session;
 use MyEdu\Core\Settings;
 use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
+use MyEdu\Plugin\ClassAwarePlugin;
+use MyEdu\Plugin\PluginManager;
 
 /**
  * Классы: список, создание, предметы и учителя.
@@ -44,7 +46,8 @@ final class ClassController
 private readonly SubjectRepository $subjects,
         private readonly UserRepository $users,
         private readonly StudentRepository $students,
-        private readonly Settings $settings
+        private readonly Settings $settings,
+        private readonly PluginManager $plugins
     ) {
     }
 
@@ -207,6 +210,41 @@ private readonly SubjectRepository $subjects,
     }
 
     /**
+     * Выгрузка данных класса перед удалением.
+     *
+     * Отдельный адрес, а не кнопка на странице подтверждения, потому что файл
+     * должен забрать ДО удаления, и сделать это можно независимо: учитель мог
+     * уже стереть класс и только потом понять, что учеников в нём были
+     * десять человек с логинами и паролями.
+     *
+     * Файл — обычный CSV в UTF-8 с BOM: русский Excel открывает его без плясок
+     * с кодировкой, а такой файл учитель без всяких правок вносит обратно в
+     * список класса.
+     */
+    public function exportForRemoval(Request $request, array $params): Response
+    {
+        $class = $this->loadClass($this->intParam($params, 'id'));
+
+        $rows = $this->classes->exportForRemoval((int) $class['id']);
+
+        $csv = "\xEF\xBB\xBF" . 'Фамилия;Логин;Почта;Попыток;Сумма баллов' . "\r\n";
+
+        foreach ($rows as $row) {
+            $csv .= implode(';', [
+                (string) $row['full_name'],
+                (string) $row['login'],
+                (string) ($row['email'] ?? ''),
+                (string) $row['attempts'],
+                $row['score'] === null ? '' : rtrim(rtrim(number_format((float) $row['score'], 2, '.', ''), '0'), '.'),
+            ]) . "\r\n";
+        }
+
+        $name = 'klassa-' . preg_replace('/[^0-9A-Za-zА-Яа-я_-]+/u', '-', (string) $class['name']) . '.csv';
+
+        return Response::download($csv, $name, 'text/csv; charset=utf-8');
+    }
+
+    /**
      * Удаление класса вместе с его учениками.
      */
     public function destroy(Request $request, array $params): Response
@@ -218,6 +256,41 @@ private readonly SubjectRepository $subjects,
 
         $result = $this->classes->deleteWithStudents((int) $class['id']);
 
+        /*
+         * Плагины узнают об удалении после того, как оно состоялось.
+         *
+         * Их данные живут отдельно: тест, заведённый под классом, при удалении
+         * класса теряет привязку и остаётся жить уже ни в чьём классе. Ядро об
+         * этом знает по своей схеме, плагин — нет: без уведомления он молча
+         * оставляет данные сиротами, и понять, что класс больше не существует,
+         * он сможет только по косвенным признакам.
+         *
+         * Заметки плагинов показываются в сообщении об удалении: хук, о котором
+         * никто не сказал, хуже отсутствия хука — он выглядит как «плагин всё
+         * обработал», даже если ничего не сделал.
+         */
+        $notes = [];
+
+        foreach ($this->plugins->all() as $plugin) {
+            if (!$plugin instanceof ClassAwarePlugin) {
+                continue;
+            }
+
+            try {
+                $notes = array_merge($notes, $plugin->onClassRemoved([
+                    'classId'    => (int) $class['id'],
+                    'className'  => $name,
+                    'studentIds' => $result['studentIds'],
+                ]));
+            } catch (\Throwable $e) {
+                // Упавший плагин не должен отменять уже состоявшееся удаление:
+                // класс уже снесён, а возврат ошибки здесь означал бы «ничего не
+                // удалено», что неправда. Сбой попадает в список сбоев плагинов.
+                $this->plugins->recordRuntimeFailure($plugin->id(), $e);
+                $notes[] = 'Плагин «' . $plugin->name() . '» не обработал удаление класса';
+            }
+        }
+
         $this->session->set(
             'flash_notice',
             'Класс ' . $name . ' удалён'
@@ -228,6 +301,7 @@ private readonly SubjectRepository $subjects,
             . ($result['keptStudents'] > 0
                 ? '. Учеников, состоящих в других классах, оставлено: ' . $result['keptStudents']
                 : '')
+            . ($notes === [] ? '' : '. ' . implode('. ', $notes))
         );
 
         return $this->redirect('classes');

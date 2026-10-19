@@ -232,17 +232,172 @@ final class Request
      */
     public function wantsJson(): bool
     {
-        if ($this->header('X-Requested-With') === 'XMLHttpRequest') {
+        return self::wantsJsonRequest($this->server);
+    }
+
+    /**
+     * Хочет ли клиент данные вместо страницы — по тем же заголовкам.
+     *
+     * Правило одно на всё ядро, и метод статический не по прихоти: обработчик
+     * ошибок разбирает запрос, когда объект запроса ещё не собран, и раньше
+     * повторял правило у себя. Повторение разошлось с оригиналом — в одном
+     * месте «text/html» в Accept отменял ответ данными, в другом нет, — и
+     * человек получал то страницу ошибки, то данные, в зависимости от того, где
+     * именно ошибка случилась.
+     *
+     * @param array<string,mixed> $server
+     */
+    public static function wantsJsonRequest(array $server): bool
+    {
+        if (strtolower((string) ($server['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest') {
             return true;
         }
 
-        return str_contains((string) $this->header('Accept'), 'application/json');
+        return str_contains(strtolower((string) ($server['HTTP_ACCEPT'] ?? '')), 'application/json');
     }
 
-    public function ip(): string
-    {
-        return (string) ($this->server['REMOTE_ADDR'] ?? '0.0.0.0');
+/*
+ * Адрес клиента.
+ *
+ * За `REMOTE_ADDR` стоит обратный прокси, а не человек: за ним все клиенты
+ * выглядят одним адресом. Наивное чтение `X-Forwarded-For` без белого списка
+ * хуже отсутствия поддержки прокси вообще — заголовок подделывает кто угодно,
+ * и человек подставлял бы себе чужие адреса, обходя лимиты на неудачные входы.
+ *
+ * Поэтому заголовок читается только когда соединение действительно пришло от
+ * адреса, которому владелец разрешил доверять. Список пуст по умолчанию: без
+ * явного решения адрес всегда тот, кто подключился.
+ */
+/**
+ * Адреса, которым можно верить насчёт клиента.
+ *
+ * Задаётся один раз при разборе конфигурации: подставлять список в
+ * конструктор нельзя, объект запроса создаётся и в тестах, и в проверках
+ * маршрутов, где конфигурации может не быть вовсе.
+ *
+ * @var list<string>
+ */
+private static array $trustedProxies = [];
+
+public static function setTrustedProxies(array $proxies): void
+{
+    $clean = [];
+
+    foreach ($proxies as $proxy) {
+        $proxy = trim((string) $proxy);
+
+        if ($proxy !== '') {
+            $clean[] = $proxy;
+        }
     }
+
+    self::$trustedProxies = $clean;
+}
+
+public function ip(): string
+{
+    $remote = (string) ($this->server['REMOTE_ADDR'] ?? '0.0.0.0');
+
+    if (!self::isTrusted($remote, self::$trustedProxies)) {
+        return $remote;
+    }
+
+    /*
+     * В цепочке `X-Forwarded-For` адреса идут от клиента к прокси, а прокси,
+     * получив заголовок, дописывает в конец того, кто пришёл к нему. Значит
+     * слева стоит то, что клиент написал сам, и доверять этому нельзя: правая
+     * часть добавлена тем, кому мы доверяем.
+     *
+     * Поэтому цепочка читается справа налево: пропускаются адреса, которые сами
+     * стоят в списке доверенных (внутренняя цепочка из нескольких прокси), и
+     * берётся первый недоверенный. Это и есть адрес человека.
+     */
+    foreach (['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CF_CONNECTING_IP'] as $header) {
+        $value = (string) ($this->server[$header] ?? '');
+
+        if ($value === '') {
+            continue;
+        }
+
+        $chain = array_reverse(array_map('trim', explode(',', $value)));
+
+        foreach ($chain as $candidate) {
+            if ($candidate === '' || filter_var($candidate, FILTER_VALIDATE_IP) === false) {
+                continue;
+            }
+
+            if (!self::isTrusted($candidate, self::$trustedProxies)) {
+                return $candidate;
+            }
+        }
+    }
+
+    return $remote;
+}
+
+/**
+ * Сравнение адреса с записью из списка.
+ *
+ * Запись может быть адресом целиком или сетью: `10.0.0.0/8`. Сравнение строк
+ * здесь было бы обманчивым — `10.0.0.1` и `10.0.0.10` начинаются одинаково, и
+ * доверие к одному выдалось бы другому.
+ */
+private static function isTrusted(string $remote, array $proxies): bool
+{
+    if (filter_var($remote, FILTER_VALIDATE_IP) === false) {
+        return false;
+    }
+
+    foreach ($proxies as $proxy) {
+        if (str_contains($proxy, '/')) {
+            if (self::inSubnet($remote, $proxy)) {
+                return true;
+            }
+
+            continue;
+        }
+
+        if (filter_var($proxy, FILTER_VALIDATE_IP) !== false
+            && inet_pton($proxy) === inet_pton($remote)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/** Попадает ли адрес в сеть: поддерживаются IPv4 и IPv6. */
+private static function inSubnet(string $ip, string $cidr): bool
+{
+    [$network, $bits] = array_pad(explode('/', $cidr, 2), 2, null);
+
+    if ($bits === null || !is_numeric($bits)) {
+        return false;
+    }
+
+    $ipBin = @inet_pton($ip);
+    $netBin = @inet_pton((string) $network);
+
+    if ($ipBin === false || $netBin === false || strlen($ipBin) !== strlen($netBin)) {
+        return false;
+    }
+
+    $bits = (int) $bits;
+    $bytes = intdiv($bits, 8);
+    $rest = $bits % 8;
+
+    if ($bytes > 0 && strncmp($ipBin, $netBin, $bytes) !== 0) {
+        return false;
+    }
+
+    if ($rest === 0) {
+        return true;
+    }
+
+    $mask = chr((0xFF << (8 - $rest)) & 0xFF);
+
+    return ($ipBin[$bytes] & $mask) === ($netBin[$bytes] & $mask);
+}
 
     public function isLoopback(): bool
     {

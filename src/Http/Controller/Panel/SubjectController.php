@@ -13,6 +13,7 @@ use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
+use MyEdu\Ui\Messages;
 
 /**
  * Каталог учебных предметов.
@@ -90,11 +91,11 @@ final class SubjectController
         $name = trim((string) $request->postParam('name', ''));
 
         if ($name === '') {
-            return $this->storeRefused($request, 'Укажите название предмета');
+            return $this->storeRefused($request, Messages::requiredText('название предмета'));
         }
 
         if (mb_strlen($name, 'UTF-8') > 191) {
-            return $this->storeRefused($request, 'Слишком длинное название предмета');
+            return $this->storeRefused($request, Messages::maxLength(191));
         }
 
         /*
@@ -153,11 +154,11 @@ private function storeRefused(Request $request, string $message): Response
         $name = trim((string) $request->postParam('name', ''));
 
         if ($name === '') {
-            return $this->renameRefused($request, $asJson, 'Укажите название предмета', $id);
+            return $this->renameRefused($request, $asJson, Messages::requiredText('название предмета'), $id);
         }
 
         if (mb_strlen($name, 'UTF-8') > 191) {
-            return $this->renameRefused($request, $asJson, 'Слишком длинное название предмета', $id);
+            return $this->renameRefused($request, $asJson, Messages::maxLength(191), $id);
         }
 
         $this->subjects->rename($id, $name);

@@ -24,8 +24,6 @@ declare(strict_types=1);
 * @var ?int $editSubjectId
  * @var string $editName название, от которого сервер отказался: поле остаётся открытым
  * @var string $newName название, от которого сервер отказался: окно откроется заново
- * @var ?string $notice
- * @var ?string $error
  */
 
 $view->crumbs([
@@ -60,23 +58,24 @@ $valueBlock = static function (array $row) use ($view): string {
 };
 ?>
 
-<?php if ($notice !== null && $notice !== ''): ?>
-<?= $view->raw($view->bannerOk($notice)) ?>
-<?php endif; ?>
-
-<?php if ($error !== null && $error !== ''): ?>
-<?= $view->raw($view->bannerError($error)) ?>
-<?php endif; ?>
+<?php
+/*
+ * Сообщения выводит оболочка: она получает те же данные и печатает их сама,
+ * над содержимым страницы. Здесь они печатались вторым баннером — учитель
+ * видел одну и ту же фразу дважды и на разных высотах, а это читается как
+ * два разных сообщения.
+ */
+?>
+<?php
+$title = 'Предметы';
+$subtitle = 'Список, из которого выбирается предмет в работе и в классе. '
+    . 'Название правится прямо в строке.';
+require __DIR__ . '/_page_header.php';
+?>
 
 <div class="card">
     <div class="card-header">
         <div>
-            <h1 class="card-title">Предметы</h1>
-            <p class="card-subtitle">
-                Список, из которого выбирается предмет в работе и в классе.
-                Название правится прямо в строке.
-            </p>
-        </div>
         <button type="button" class="btn btn-primary" id="subject-add-opener"
                 data-modal-open="subject-add">
             Добавить предмет
@@ -98,7 +97,7 @@ $valueBlock = static function (array $row) use ($view): string {
                     <th scope="col">Предмет</th>
                     <th scope="col">Классы</th>
                     <th scope="col">Работы</th>
-                    <th scope="col" class="row-actions"></th>
+                    <th scope="col" data-orderable="false" class="row-actions"></th>
                 </tr>
                 </thead>
                 <tbody>

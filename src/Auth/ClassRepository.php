@@ -178,7 +178,7 @@ final class ClassRepository
      * Попытки удаляются явно: внешнего ключа на student_id в попытках нет,
      * иначе они остались бы висеть на несуществующем ученике.
      *
-     * @return array{deletedStudents:int,keptStudents:int}
+     * @return array{deletedStudents:int,keptStudents:int,studentIds:list<int>}
      */
     public function deleteWithStudents(int $classId): array
     {
@@ -218,7 +218,38 @@ final class ClassRepository
             // Связи с предметами, учителями и выдачей работ уходят каскадом.
             $db->run('DELETE FROM classes WHERE id = :c', ['c' => $classId]);
 
-            return ['deletedStudents' => $deleted, 'keptStudents' => $kept];
+            /*
+             * Ученики возвращаются наружу: после удаления класса ядро уже не
+             * может ни спросить, ни показать, а плагину нужно знать, чьи данные
+             * остались без класса. Список собирается ДО удаления — после него
+             * класса нет, а вместе с ним и связей.
+             */
+            return ['deletedStudents' => $deleted, 'keptStudents' => $kept, 'studentIds' => $members];
         });
+    }
+
+    /**
+     * Данные класса для выгрузки перед удалением.
+     *
+     * Отдельный метод, а не рендер шаблона: выгрузка должна отдавать файл, а
+     * страница подтверждения — HTML. Пересекаются они в одном месте — списке
+     * учеников и их попытках.
+     *
+     * @return list<array{student_id:int,full_name:string,login:string,email:?string,attempts:int,score:?string}>
+     */
+    public function exportForRemoval(int $classId): array
+    {
+        return $this->db->all(
+            'SELECT u.id AS student_id, u.full_name, u.login, u.email,
+                    COUNT(a.id) AS attempts,
+                    SUM(a.score) AS score
+               FROM class_students cs
+               JOIN users u ON u.id = cs.student_id
+               LEFT JOIN assignment_attempts a ON a.student_id = u.id
+              WHERE cs.class_id = :c
+           GROUP BY u.id, u.full_name, u.login, u.email
+           ORDER BY u.full_name',
+            ['c' => $classId]
+        );
     }
 }

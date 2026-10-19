@@ -84,25 +84,40 @@ final class PhpDatabaseDump
             $this->writeHeader($handle);
 
             /*
-             * Вся копия снимается в одной транзакции — это и есть
-             * `WITH CONSISTENT SNAPSHOT` для InnoDB.
+             * Пустой список таблиц — это не «база пустая», а «список не прочитан».
              *
-             * Без этого каждая таблица читалась в своей точке времени: между
-             * чтением `assignments` и `tests` успевала появиться новая попытка,
-             * и в копии оказывалась попытка без своей работы — или работа без
-             * попытки. Копия, из которой нельзя восстановиться, хуже отсутствия
-             * копии: человек узнаёт о проблеме, когда уже потерял данные.
-             *
-             * Транзакция в базе повторяет снимок по всем обычным чтениям внутри,
-             * поэтому таблицы видны на одном моменте, а независимо от того,
-             * сколько их и в каком порядке читаются.
-             *
-             * `Database::transaction()` вкладывается в уже открытую транзакцию
-             * без ошибки, если копию снимают посреди работы: свои незаписанные
-             * изменения такой снимок как раз и должен увидеть.
+             * База без таблиц на живом сайте не бывает, а вот служебную таблицу
+             * прочитать не удалось — бывает: имя колонки сервер отдаёт в своём
+             * регистре, и чтение по имени даёт пустоту. Копия без таблиц
+             * выглядит как снятая, а на деле в ней ничего нет, — и такую
+             * копию нельзя назвать точкой отката.
              */
-            $this->db->transaction(function () use ($handle): void {
-                $this->writeTables($handle);
+            $tables = $this->tables();
+
+            if ($tables === []) {
+                throw new RuntimeException(
+                    'не удалось прочитать список таблиц базы: служебная таблица '
+                    . 'information_schema отдала имена, которые не читаются'
+                );
+            }
+
+            /*
+             * Вся копия снимается в одной транзакции, и уровень изоляции
+             * задаётся явно.
+             *
+             * Раньше здесь стоял `transaction()`, и это была неправда: повторяемое
+             * чтение даёт уровень изоляции сервера, а не приложения. При
+             * READ-COMMITTED — а он по умолчанию на части хостингов — каждое
+             * чтение внутри транзакции видит свежие данные, и таблицы читались в
+             * разные моменты. Без этого копия, из которой нельзя восстановиться,
+             * хуже отсутствия копии: человек узнаёт о проблеме, когда уже потерял
+             * данные.
+             *
+             * `consistentSnapshot()` задаёт уровень только на время копии, а
+             * вложенным вызовом не ломает уже открытую транзакцию.
+             */
+            $this->db->consistentSnapshot(function () use ($handle, $tables): void {
+                $this->writeTables($handle, $tables);
             });
 
             $this->writeFooter($handle);
@@ -121,6 +136,11 @@ final class PhpDatabaseDump
      * Порядок по имени, а не по дате изменения: он одинаков при любом запуске,
      * и две копии, снятые подряд, отличаются данными, а не порядком таблиц.
      *
+     * Имя берётся по порядку, а не по имени колонки: имя колонки в
+     * `information_schema` сервер отдаёт в своём регистре, и на части
+     * шаред-хостингов оно приходит заглавными буквами. Обращение по ключу тогда
+     * даёт пустую строку, и копия обрывается ошибкой «Incorrect table name ''».
+     *
      * @return list<string>
      */
     public function tables(): array
@@ -132,7 +152,17 @@ final class PhpDatabaseDump
             ['type' => 'BASE TABLE']
         );
 
-        return array_map(static fn (array $row): string => (string) $row['table_name'], $rows);
+        $names = [];
+
+        foreach ($rows as $row) {
+            $name = trim((string) Database::firstValue($row));
+
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
     }
 
     /** @param resource $handle */
@@ -149,9 +179,9 @@ final class PhpDatabaseDump
     }
 
     /** @param resource $handle */
-    private function writeTables($handle): void
+    private function writeTables($handle, array $tables): void
     {
-        foreach ($this->tables() as $table) {
+        foreach ($tables as $table) {
             $this->writeTable($handle, $table);
         }
     }
@@ -334,7 +364,10 @@ final class PhpDatabaseDump
             ['table' => $table]
         );
 
-        return array_map(static fn (array $row): string => (string) $row['column_name'], $rows);
+        return array_map(
+            static fn (array $row): string => (string) Database::firstValue($row),
+            $rows
+        );
     }
 
     /**
@@ -357,7 +390,10 @@ final class PhpDatabaseDump
             ['table' => $table, 'binary' => 'binary']
         );
 
-        return array_map(static fn (array $row): string => (string) $row['column_name'], $rows);
+        return array_map(
+            static fn (array $row): string => (string) Database::firstValue($row),
+            $rows
+        );
     }
 
     /**
@@ -388,11 +424,15 @@ final class PhpDatabaseDump
 
         $types = ['int', 'integer', 'smallint', 'mediumint', 'bigint'];
 
-        if (!in_array(strtolower((string) $rows[0]['data_type']), $types, true)) {
+        // Значения берутся по порядку: имя колонки сервер отдаёт в своём
+        // регистре, и на части хостингов оно приходит заглавными буквами.
+        $values = array_values($rows[0]);
+
+        if (!in_array(strtolower((string) ($values[1] ?? '')), $types, true)) {
             return null;
         }
 
-        return (string) $rows[0]['column_name'];
+        return (string) ($values[0] ?? '');
     }
 
     /** @param resource $handle */

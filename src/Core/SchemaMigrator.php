@@ -107,8 +107,44 @@ final class SchemaMigrator
          * блокировкой миграций, чтобы параллельные запросы не сняли её
          * одновременно.
          */
-        private readonly ?DatabaseDump $backup = null
+        private readonly ?DatabaseDump $backup = null,
+        /**
+         * Файл отметки о падении миграции.
+         *
+         * Нужен, чтобы падавшая миграция не повторялась на каждом запросе. По
+         * умолчанию лежит рядом с журналом схемы и копиями базы; в тестах
+         * передаётся свой, чтобы отметка одной пробы не влияла на другую.
+         */
+        private readonly ?string $failureFile = null
     ) {
+    }
+
+    /**
+     * Куда пишется отметка о падении.
+     *
+     * У настоящей поставки это `var/schema_failure.json` рядом с журналом схемы и
+     * копиями базы: человек, которому пришло сообщение о падении, ищет причину
+     * там, где лежит всё остальное про базу.
+     *
+     * Каталог миграций узнаётся по последним двум именам, а не выводится
+     * арифметически от `migrationsDir`. Иначе у прогона, которому подсунули
+     * каталог в TEMP, отметка оказалась бы рядом с каталогом системы, общей для
+     * всех таких прогонов: один упавший файл остановил бы другой набор, у
+     * которого к этому отношения не имеет.
+     */
+    private function failureFile(): string
+    {
+        if ($this->failureFile !== null) {
+            return $this->failureFile;
+        }
+
+        if (basename($this->migrationsDir) === 'migrations'
+            && basename(dirname($this->migrationsDir)) === 'database') {
+            return dirname($this->migrationsDir, 2) . '/var/schema_failure.json';
+        }
+
+        return sys_get_temp_dir()
+            . '/myedu_schema_failure_' . substr(hash('sha256', $this->migrationsDir), 0, 12) . '.json';
     }
 
     /**
@@ -386,6 +422,38 @@ final class SchemaMigrator
 
         try {
             /*
+             * Миграция, которая уже упала, второй раз не выполняется.
+             *
+             * Раньше падение ничего не оставляло после себя: файл не помечался
+             * применённым, и следующий запрос — а на боевом сервере их десятки в
+             * минуту — падал снова, на том же месте. К каждой попытке снималась
+             * ещё и полная копия базы, то есть сайт, который не грузится, ещё и
+             * забивал диск копиями. Повтор к тому же результату не приводит:
+             * база между попытками не меняется, если её не меняет человек.
+             *
+             * Отметка снимается сама, как только файл миграции меняется: в ней
+             * лежит отпечаток содержимого, и починенный файл даёт другой
+             * отпечаток. Снимать отметку руками не нужно — только когда файл
+             * правили не в том месте, где он падал, а это уже осознанный выбор.
+             */
+            $fingerprint = $this->pendingFingerprint($pending);
+            $remembered = $this->readFailure($pending, $fingerprint);
+
+            if ($remembered !== null) {
+                $result['status'] = 'failed';
+                $result['file'] = $remembered['file'];
+                $result['message'] = $remembered['message']
+                    . "\n\nПовтор не выполняется: та же миграция уже падала "
+                    . '(попытка от ' . $remembered['failedAt'] . ').'
+                    . "\nКак только файл миграции изменится, попытка повторится.";
+                $result['statementIndex'] = 0;
+                $result['statementCount'] = 0;
+                $result['repeat'] = true;
+
+                return $result;
+            }
+
+            /*
              * Копия снимается здесь, а не до блокировки: копий на один
              * миграционный запуск должна быть одна, а запросов на боевом
              * сервере одновременно несколько, и каждая из них увидит одни и те же
@@ -396,6 +464,11 @@ final class SchemaMigrator
              *
              * Починка журнала (`reconcile()`) копии не требует: она только
              * дописывает отметки применённого и не трогает объекты базы.
+             *
+             * Отказ копии останавливает миграцию — по решению владельца,
+             * `security.backup_before_migrations_blocking`. Исключение уходит наверх
+             * само: `SchemaGate` ловит его и показывает страницу с причиной, а не
+             * роняет сайт.
              */
             $this->backup?->take('миграциями ядра: ' . implode(', ', $pending));
 
@@ -408,6 +481,7 @@ final class SchemaMigrator
                     $result['message'] = $outcome['message'];
                     $result['statementIndex'] = $outcome['index'];
                     $result['statementCount'] = $outcome['count'];
+                    $this->writeFailure($name, $outcome['message'], $fingerprint);
 
                     return $result;
                 }
@@ -415,12 +489,104 @@ final class SchemaMigrator
                 $result['applied'][] = $name;
             }
 
+            $this->clearFailure();
+
             $result['status'] = 'applied';
             $result['notes'] = $notes;
 
             return $result;
         } finally {
             $this->releaseLock($lock);
+        }
+    }
+
+    /**
+     * Отпечаток набора неприменённых миграций.
+     *
+     * По именам файлов отпечаток не годится: переименованный или исправленный
+     * файл с тем же именем выглядит тем же самым, и починка не была бы замечена.
+     * Поэтому в отпечаток входит содержимое.
+     *
+     * @param list<string> $pending
+     */
+    private function pendingFingerprint(array $pending): string
+    {
+        $parts = [];
+
+        foreach ($pending as $name) {
+            $hash = @hash_file('sha256', $this->migrationsDir . '/' . $name);
+            $parts[] = $name . ':' . ($hash === false ? 'нечитаем' : $hash);
+        }
+
+        return hash('sha256', implode('|', $parts));
+    }
+
+    /**
+     * Отметка о падении, если она относится к этому набору миграций.
+     *
+     * @param list<string> $pending
+     * @return array{file:string,message:string,failedAt:string}|null
+     */
+    private function readFailure(array $pending, string $fingerprint): ?array
+    {
+        $file = $this->failureFile();
+
+        if (!is_file($file)) {
+            return null;
+        }
+
+        $raw = @file_get_contents($file);
+
+        if (!is_string($raw) || $raw === '') {
+            return null;
+        }
+
+        $data = json_decode($raw, true);
+
+        if (!is_array($data)
+            || ($data['fingerprint'] ?? null) !== $fingerprint
+            || !is_string($data['file'] ?? null)
+            || !is_string($data['message'] ?? null)) {
+            return null;
+        }
+
+        return [
+            'file' => $data['file'],
+            'message' => $data['message'],
+            'failedAt' => is_string($data['failedAt'] ?? null) ? $data['failedAt'] : 'неизвестно',
+        ];
+    }
+
+    private function writeFailure(string $file, string $message, string $fingerprint): void
+    {
+        $path = $this->failureFile();
+        $dir = dirname($path);
+
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+
+        @file_put_contents(
+            $path,
+            (string) json_encode(
+                [
+                    'file' => $file,
+                    'message' => $message,
+                    'fingerprint' => $fingerprint,
+                    'failedAt' => date('Y-m-d H:i:s'),
+                ],
+                JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
+            ),
+            LOCK_EX
+        );
+    }
+
+    private function clearFailure(): void
+    {
+        $path = $this->failureFile();
+
+        if (is_file($path)) {
+            @unlink($path);
         }
     }
 

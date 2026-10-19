@@ -58,6 +58,13 @@ declare(strict_types=1);
     <link rel="stylesheet" href="<?= $view->e($view->asset('assets/vendor/gentelella/gentelella.css')) ?>">
     <link rel="stylesheet" href="<?= $view->e($view->asset('assets/css/theme.css')) ?>">
     <script src="<?= $view->e($view->asset('assets/js/theme-boot.js')) ?>"></script>
+    <?php /*
+         * Работа по ссылке и форма нового пароля по ссылке из письма приходят с
+         * токеном в адресе — иначе их не открыть. Скрипт убирает токен из
+         * адресной строки сразу после загрузки, чтобы он не остался в истории
+         * и не попал в скопированную ссылку.
+         */ ?>
+    <script src="<?= $view->e($view->asset('assets/js/token-in-url.js')) ?>" defer></script>
 </head>
 <body>
 

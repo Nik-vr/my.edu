@@ -4,14 +4,7 @@ declare(strict_types=1);
 
 namespace MyEdu\Core;
 
-use MyEdu\Auth\Auth;
-use MyEdu\Auth\AuthMailer;
-use MyEdu\Auth\AuthService;
-use MyEdu\Auth\ClassRepository;
-use MyEdu\Auth\LoginThrottle;
-use MyEdu\Auth\StudentRepository;
-use MyEdu\Auth\TokenRepository;
-use MyEdu\Auth\UserRepository;
+use MyEdu\Wiring;
 use RuntimeException;
 
 /**
@@ -29,8 +22,11 @@ final class App
 
     private Config $config;
 
-    /** @var array<string,object> */
+/** @var array<string,object> */
     private array $services = [];
+
+    /** @var array<string,callable> фабрики, объявленные снаружи ядра */
+    private array $factories = [];
 
     private string $basePath = '';
 
@@ -69,6 +65,16 @@ public static function boot(string $rootDir): self
         $app->set(Config::class, $config);
 
         self::$instance = $app;
+
+        /*
+         * Сборка верхних слоёв живёт вне ядра.
+         *
+         * Контейнер знает только свои сервисы, а кто из кого создаётся —
+         * сообщает MyEdu\Wiring. Именно так ядро перестало знать про Auth,
+         * плагины и меню панели: раньше эти двадцать с лишним записей стояли
+         * здесь, и ядро — самый нижний слой — зависело от самого верхнего.
+         */
+        Wiring::into($app);
 
         return $app;
     }
@@ -250,13 +256,30 @@ public static function boot(string $rootDir): self
      * Нужен для вещей, которые нельзя собрать автоматически, — прежде всего
      * для конфигурации: она уже прочитана при старте.
      */
-    public function set(string $id, object $service): void
+public function set(string $id, object $service): void
     {
         $this->services[$id] = $service;
     }
 
+    /**
+     * Объявить, как создаётся сервис снаружи ядра.
+     *
+     * Точка, через которую ядро узнаёт о верхних слоях, не называя их:
+     * сборка живёт в `MyEdu\Wiring`, а контейнер получает готовые фабрики.
+     * Свои сервисы ядро собирает само — они его родные, и знать о них ему
+     * полагается.
+     */
+    public function define(string $id, callable $factory): void
+    {
+        $this->factories[$id] = $factory;
+    }
+
     private function make(string $id): object
     {
+        if (isset($this->factories[$id])) {
+            return ($this->factories[$id])($this);
+        }
+
         if ($id === Csrf::class) {
             return new Csrf($this->get(Session::class));
         }
@@ -273,30 +296,6 @@ if ($id === MailerFactory::class) {
             return new ImageUpload($this->rootDir());
         }
 
-        if ($id === UserRepository::class) {
-            return new UserRepository($this->get(Database::class));
-        }
-
-        if ($id === TokenRepository::class) {
-            return new TokenRepository($this->get(Database::class));
-        }
-
-        if ($id === Auth::class) {
-            return new Auth($this->get(Session::class), $this->get(UserRepository::class), $this->config);
-        }
-
-        if ($id === AuthMailer::class) {
-            return new AuthMailer($this->get(MailerInterface::class), $this->config, $this->get(MailerFactory::class));
-        }
-
-if ($id === LoginThrottle::class) {
-            return new LoginThrottle(
-                $this->get(Database::class),
-                $this->config->int('security.login_failures_limit'),
-                $this->config->int('security.login_lockout_seconds')
-            );
-        }
-
         if ($id === RateLimiter::class) {
             return new RateLimiter(
                 $this->get(Database::class),
@@ -304,19 +303,7 @@ if ($id === LoginThrottle::class) {
             );
         }
 
-        if ($id === AuthService::class) {
-            return new AuthService(
-                $this->get(Database::class),
-                $this->get(UserRepository::class),
-                $this->get(TokenRepository::class),
-                $this->get(Auth::class),
-                $this->get(AuthMailer::class),
-                $this->config,
-                $this->get(LoginThrottle::class)
-            );
-        }
-
-if ($id === SiteUrl::class) {
+        if ($id === SiteUrl::class) {
             return new SiteUrl($this->config);
         }
 
@@ -331,51 +318,8 @@ if ($id === SiteUrl::class) {
             return new DatabaseDump($this, $this->config, $this->get(Database::class));
         }
 
-        if ($id === ClassRepository::class) {
-            return new ClassRepository($this->get(Database::class));
-        }
-
-        if ($id === StudentRepository::class) {
-            return new StudentRepository($this->get(Database::class));
-        }
-
-        if ($id === \MyEdu\Auth\SubjectRepository::class) {
-            return new \MyEdu\Auth\SubjectRepository($this->get(Database::class));
-        }
-
         if ($id === Settings::class) {
             return new Settings($this->get(Database::class));
-        }
-
-if ($id === \MyEdu\Repository\AssignmentRepository::class) {
-            return new \MyEdu\Repository\AssignmentRepository($this->get(Database::class));
-        }
-
-        if ($id === \MyEdu\Repository\RatingRepository::class) {
-            return new \MyEdu\Repository\RatingRepository($this->get(Database::class));
-        }
-
-if ($id === \MyEdu\Plugin\PluginManager::class) {
-            return new \MyEdu\Plugin\PluginManager(
-                $this,
-                $this->get(Database::class),
-                $this->rootDir() . '/plugins',
-                $this->get(View::class),
-                // Набор плагинов личный, поэтому менеджеру нужен тот, кто смотрит
-                // на страницу: без него список был бы общим, как и раньше.
-                $this->get(Auth::class)
-            );
-        }
-
-        // Меню панели: считается один раз на запрос и кладётся в общий
-        // контекст, иначе шаблон считал бы счётчики сам и они разъезжались бы
-        // между страницами.
-        if ($id === \MyEdu\Http\Presenter\PanelNav::class) {
-            return new \MyEdu\Http\Presenter\PanelNav(
-                $this->get(Auth::class),
-                $this->get(\MyEdu\Repository\AssignmentRepository::class),
-                $this->get(Database::class)
-            );
         }
 
         return match ($id) {
@@ -385,7 +329,26 @@ if ($id === \MyEdu\Plugin\PluginManager::class) {
                 $this->config->string('session.save_path'),
                 $this->config->string('session.name')
             ),
-            View::class     => new View($this->rootDir() . '/templates'),
+/*
+             * Вид получает адреса и защитное поле при создании.
+             *
+             * Раньше он брал их сам через `App::instance()`, и из-за этого
+             * зависел от контейнера целиком. Теперь достаточно перечислить, что
+             * нужно: `Csrf` создаётся раньше и лежит в контейнере, поэтому
+             * достаётся отсюда же.
+             */
+            View::class     => new View(
+                $this->rootDir() . '/templates',
+                $this->basePath,
+                $this->rootDir(),
+                $this->get(Csrf::class),
+                // Адрес публичной части знает только приложение: на локальном
+                // сервере каталог public/ и есть корень сайта, и адрес пустой,
+                // а на шаред-хостинге он лежит по адресу /public/. Вид раньше
+                // предполагал второе всегда — и на локальном сервере стили не
+                // находились, страница открывалась совсем без оформления.
+                $this->publicDirUrl
+            ),
             Router::class   => new Router(),
             default         => throw new RuntimeException('Сервис не зарегистрирован: ' . $id),
         };

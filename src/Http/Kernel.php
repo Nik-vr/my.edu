@@ -7,6 +7,7 @@ namespace MyEdu\Http;
 use MyEdu\Auth\Auth;
 use MyEdu\Core\App;
 use MyEdu\Core\Config;
+use MyEdu\Core\Csrf;
 use MyEdu\Core\HttpException;
 use MyEdu\Core\RateLimiter;
 use MyEdu\Core\RedirectSignal;
@@ -174,12 +175,26 @@ final class Kernel
         return $router;
     }
 
-    /**
+/**
      * Маршруты подключённых плагинов.
      *
      * Плагин объявляет пути относительно своего префикса и ничего не знает
      * о том, где установлен: /tests/{id} получается из префикса tests и
      * маршрута /{id}. Поэтому добавление плагина не требует правок здесь.
+     *
+     * Два правила добавляет ядро, а не плагин.
+     *
+     * Первое: маршрут без объявленного права требует входа. Раньше отсутствие
+     * права означало «открыто всем», и адрес плагина, о котором автор забыл
+     * дописать право, доставался гостю — то есть опечатка в манифесте или
+     * недосмотр тихо открывали наружу то, что плагин явно не собирался отдавать.
+     * Открытый адрес теперь надо назвать: `Router::PUBLIC_ACCESS`.
+     *
+     * Второе: изменяющий запрос проверяется на защитном поле здесь, до вызова
+     * плагина. Ядро проверяет его само в каждом своём контроллере, но полагаться
+     * на то, что каждый написанный кем-то плагин не забудет это сделать, —
+     * значит оставлять защиту по договорённости: один забытый вызов `validate()`
+     * превращался в изменение данных с чужого сайта.
      */
     private function registerPluginRoutes(Router $router): void
     {
@@ -196,16 +211,56 @@ final class Kernel
                 [$method, $path, $action] = $route;
                 $capability = $route[3] ?? null;
 
-                $handler = [$plugin, $action];
+                $full = '/' . trim($prefix, '/') . '/' . ltrim($path, '/');
+
+                /*
+                 * Адрес, занятый ядром или другим плагином, плагину не
+                 * отдаётся молча: иначе отвечал бы тот, кто попал в разбор
+                 * первым, а проигравший об этом не узнал бы.
+                 */
+                if ($router->isTaken(strtoupper($method), $full)) {
+                    $this->pluginManager()->recordRuntimeFailure(
+                        (string) $id,
+                        new \RuntimeException('Адрес занят: ' . strtoupper($method) . ' ' . $full)
+                    );
+
+                    continue;
+                }
 
                 $router->addRoute(
                     strtoupper($method),
-                    '/' . trim($prefix, '/') . '/' . ltrim($path, '/'),
-                    $handler,
-                    $capability === null ? null : (string) $capability
+                    $full,
+                    $this->pluginRouteHandler($plugin, $action, strtoupper($method)),
+                    $capability === null ? Router::AUTH_REQUIRED : (string) $capability
                 );
             }
         }
+    }
+
+    /**
+     * Обработчик маршрута плагина с проверкой защитного поля.
+     *
+     * `$action` — имя метода плагина, а не сам метод: массив «объект, имя»
+     * собирается здесь, где уже известен объект.
+     */
+    private function pluginRouteHandler(object $plugin, string $action, string $method): callable
+    {
+        $callable = [$plugin, $action];
+
+        /*
+         * Только методы, которые меняют данные. Проверка поля на чтении не
+         * имеет смысла: токен всё равно берётся из формы, а вот его отсутствие
+         * при чтении — обычное дело для ссылки.
+         */
+        if (in_array($method, ['GET', 'HEAD', 'OPTIONS'], true)) {
+            return static fn (Request $request, array $params): Response => $callable($request, $params);
+        }
+
+        return function (Request $request, array $params) use ($callable): Response {
+            $this->app->get(Csrf::class)->validate($request->postParam('_token'));
+
+            return $callable($request, $params);
+        };
     }
 
     /**
@@ -224,7 +279,7 @@ final class Kernel
          */
         $this->limitRate($request);
 
-        if ($capability === null) {
+        if ($capability === null || $capability === Router::PUBLIC_ACCESS) {
             return;
         }
 

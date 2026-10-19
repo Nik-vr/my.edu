@@ -42,14 +42,14 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
  */
 ?>
 
-<?php if ($notice !== null && $notice !== ''): ?>
-<?= $view->raw($view->bannerOk($notice)) ?>
-<?php endif; ?>
-
-<?php if ($error !== null && $error !== ''): ?>
-<?= $view->raw($view->bannerError($error)) ?>
-<?php endif; ?>
-
+<?php
+/*
+ * Сообщения выводит оболочка: она получает те же данные и печатает их сама,
+ * над содержимым страницы. Здесь они печатались вторым баннером — учитель
+ * видел одну и ту же фразу дважды и на разных высотах, а это читается как
+ * два разных сообщения.
+ */
+?>
 <div class="row col-4 stats-row">
     <div class="card">
         <div class="stat">
@@ -120,10 +120,14 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
     </div>
 </div>
 
+<?php
+$title = 'Сотрудники';
+require __DIR__ . '/_page_header.php';
+?>
+
 <div class="card">
     <div class="card-header">
-        <h2 class="card-title">Сотрудники</h2>
-    </div>
+        <div>
     <div class="table-responsive">
         <table class="table" data-datatable data-page-length="25">
             <thead>
@@ -133,7 +137,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                     <th scope="col">Статус</th>
                     <th scope="col">Последняя активность</th>
                     <th scope="col">Присоединился</th>
-                    <th scope="col"></th>
+                    <th scope="col" data-orderable="false"></th>
                 </tr>
             </thead>
             <tbody>

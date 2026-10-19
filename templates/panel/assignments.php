@@ -133,8 +133,7 @@ $view->crumbs([
  <summary class="work-folder__title">
  <span class="work-folder__name"><?= $view->e($folder['label']) ?></span>
  <span class="work-folder__count">
- <?= $view->e(count($folder['items'])) ?>
- <?= $view->e($view->plural(count($folder['items']), 'работа', 'работы', 'работ')) ?>
+<?= $view->e($view->count((int) (count($folder['items'])),  'работа', 'работы', 'работ')) ?>
  </span>
  </summary>
 

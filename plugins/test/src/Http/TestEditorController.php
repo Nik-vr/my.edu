@@ -7,7 +7,6 @@ namespace MyEduPlugin\Test\Http;
 use MyEduPlugin\Test\Question\AnswerText;
 use MyEdu\Auth\Auth;
 use MyEdu\Auth\Role;
-use MyEdu\Core\App;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
 use MyEdu\Core\Database;
@@ -50,30 +49,34 @@ final class TestEditorController
  /** Сколько пустых строк показывать в формах элементов. */
 
 
- private Database $db;
-
- private TestRepository $tests;
+private TestRepository $tests;
 
  private TestEditorRepository $editor;
 
  private WorkItemRepository $workItems;
 
- public function __construct(
- private readonly App $app,
- private readonly View $view,
- private readonly Session $session,
- private readonly Csrf $csrf,
- private readonly Auth $auth,
- private readonly Config $config,
- private readonly QuestionTypeRegistry $registry,
- private readonly string $urlPrefix
- ) {
- $this->db = $app->get(Database::class);
-
- $this->tests = new TestRepository($this->db);
- $this->editor = new TestEditorRepository($this->db, $registry);
- $this->workItems = new WorkItemRepository($this->db);
- }
+public function __construct(
+    /*
+     * База приходит сразу, а не контейнером.
+     *
+     * Внутри от контейнера нужна ровно одна вещь, и она извлекалась тут же. Оставлять
+     * ради неё контейнер в руках у контроллера плагина — значило держать в нём всё
+     * остальное заодно, а список сервисов плагина для этого уже не годится: он
+     * перечисляет, что плагину положено, и контейнер там быть не должно.
+     */
+    private readonly Database $db,
+    private readonly View $view,
+    private readonly Session $session,
+    private readonly Csrf $csrf,
+    private readonly Auth $auth,
+    private readonly Config $config,
+    private readonly QuestionTypeRegistry $registry,
+    private readonly string $urlPrefix
+    ) {
+    $this->tests = new TestRepository($this->db);
+    $this->editor = new TestEditorRepository($this->db, $registry);
+    $this->workItems = new WorkItemRepository($this->db);
+    }
 
  public function submitted(Request $request, array $params): Response
  {

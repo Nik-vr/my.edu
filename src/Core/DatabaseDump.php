@@ -86,14 +86,20 @@ final class DatabaseDump
      */
     private const SUFFIXES = ['', '.exe', '.bat', '.cmd'];
 
-    /**
-     * Каталоги, где MariaDB стоит на машине разработки.
+/**
+     * Каталоги, где MariaDB стоит на машине разработчика.
      *
      * Windows: `modules/database/MariaDB-<версия>/bin`. Номер версии меняется
      * при обновлении, поэтому каталоги перебираются, а не зашиваются.
+     *
+     * У OSPanel два вида сборки: с промежуточным каталогом `database` и без него.
+     * Пропуск второго означал бы, что на такой машине утилита не находится вовсе,
+     * а с обязательной копией перед миграцией это останавливает сайт — и виноват
+     * оказывается список каталогов, а не человек.
      */
     private const NEAR_SERVER_DIRS = [
         'c:/OSPanel/modules/database',
+        'c:/OSPanel/modules',
         'D:/OpenServer/modules/database',
         'C:/xampp/mysql/bin',
     ];

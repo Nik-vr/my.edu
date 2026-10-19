@@ -50,11 +50,16 @@ namespace MyEdu\Core;
 final class SchemaState
 {
     /**
-     * @param array<string,list<string>> $tables ожидаемые таблицы и их колонки
-     * @param bool                        $parsed разобран ли schema.sql
+     * @param array<string,list<string>> $tables       ожидаемые таблицы и их колонки
+     * @param array<string,list<string>> $indexes      ожидаемые индексы: `имя:колонки`
+     * @param array<string,list<string>> $foreignKeys  ожидаемые внешние ключи:
+     *                                                    `имя:колонки>таблица:колонки`
+     * @param bool                        $parsed      разобран ли schema.sql
      */
     private function __construct(
         private readonly array $tables,
+        private readonly array $indexes,
+        private readonly array $foreignKeys,
         private readonly bool $parsed
     ) {
     }
@@ -62,22 +67,37 @@ final class SchemaState
     /**
      * Разбор `database/schema.sql`.
      *
-     * Берутся таблицы и колонки — этого достаточно, чтобы отличить новую базу
-     * от старой. Индексы и внешние ключи намеренно не разбираются: для сверки
-     * «база новая или нет» хватает формы таблиц, а разбор ключей в общем виде
-     * (в том числе встроенных в `CREATE TABLE`) дорог и хрупок — ошибка в нём
-     * выглядела бы как «схема не совпадает», то есть как просьба применить
-     * миграции, которые применять нельзя.
+     * Берутся таблицы, колонки, индексы и внешние ключи.
+     *
+     * Про индексы и ключи. Раньше они не разбирались, и сверка оставалась формой
+     * таблиц. Этого хватало, чтобы отличить новую базу от старой, но не хватало,
+     * чтобы сказать «база в целевом состоянии»: база без `FOREIGN KEY` на
+     * удалении ученика выглядит по именам таблиц и колонок ровно так же, как
+     * база с ним. Журнал при этом чинится, миграция считается применённой, и
+     * ограничение, ради которого её и писали, не появляется никогда.
+     *
+     * Разбор поэтому узкий и по форме самого файла, а не общий: в `schema.sql`
+     * первичный ключ пишется как `PRIMARY KEY (...)`, индексы — как
+     * `KEY имя (...)` или `UNIQUE KEY имя (...)`, внешние ключи — как
+     * `CONSTRAINT имя FOREIGN KEY (...) REFERENCES ...`. Всё остальное не
+     * распознаётся и просто не попадает в сверку.
+     *
+     * Ложное срабатывание здесь не опасно, и это тоже проверено: расхождение
+     * означает лишь «не новую базу», то есть миграции будут применены — а это
+     * и без сверки ключей делается при любой неприменённой миграции. Опасна
+     * противоположная ошибка — признать базу новой по неполным признакам.
      */
     public static function fromSchemaFile(string $path): self
     {
         $sql = @file_get_contents($path);
 
         if ($sql === false) {
-            return new self([], false);
+            return new self([], [], [], false);
         }
 
         $tables = [];
+        $indexes = [];
+        $foreignKeys = [];
 
         /*
          * Таблица — от `CREATE TABLE` до `) ENGINE=`, как в проверках схемы.
@@ -120,6 +140,9 @@ final class SchemaState
             if ($columns !== []) {
                 $tables[$table] = $columns;
             }
+
+            $indexes[$table] = self::parseIndexes($match[2]);
+            $foreignKeys[$table] = self::parseForeignKeys($match[2]);
         }
 
         /*
@@ -127,7 +150,87 @@ final class SchemaState
          * обязательно: иначе сверка решила бы, что база новая, и починила журнал
          * на основании ничего.
          */
-        return new self($tables, $tables !== []);
+        return new self($tables, $indexes, $foreignKeys, $tables !== []);
+    }
+
+    /**
+     * Индексы таблицы в виде `имя:колонка,колонка`.
+     *
+     * Порядок колонок входит в отпечаток: составной ключ `(a, b)` и `(b, a)` —
+     * разные индексы, и для составного первичного ключа разница меняет смысл.
+     * У составного индекса в MySQL есть ещё и префикс, но он не влияет на то,
+     * найдёт ли поиск строку, и в сверку не входит.
+     *
+     * @return list<string>
+     */
+    private static function parseIndexes(string $body): array
+    {
+        $found = [];
+
+        if (preg_match_all('/^\s*PRIMARY\s+KEY\s*\(([^)]+)\)/im', $body, $matches) > 0) {
+            $found[] = 'primary:' . self::columnList($matches[1][0]);
+        }
+
+        if (preg_match_all(
+            '/^\s*(?:UNIQUE\s+)?KEY\s+`([a-z0-9_]+)`\s*\(([^)]+)\)/im',
+            $body,
+            $matches,
+            PREG_SET_ORDER
+        ) > 0) {
+            foreach ($matches as $match) {
+                $found[] = strtolower($match[1]) . ':' . self::columnList($match[2]);
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Внешние ключи в виде `имя:колонки>таблица:колонки`.
+     *
+     * Имя сравнивается само по себе: одноимённый ключ, указывающий не туда,
+     * ограничением не является. Правила удаления не сверяются — на поддержку
+     * `ON DELETE` у MySQL свои строки в `information_schema`, а решение о них
+     * принимает миграция, а не сверка.
+     *
+     * @return list<string>
+     */
+    private static function parseForeignKeys(string $body): array
+    {
+        if (preg_match_all(
+            '/^\s*CONSTRAINT\s+`([a-z0-9_]+)`\s+FOREIGN\s+KEY\s*\(([^)]+)\)\s+'
+                . 'REFERENCES\s+`([a-z0-9_]+)`\s*\(([^)]+)\)/im',
+            $body,
+            $matches,
+            PREG_SET_ORDER
+        ) === 0) {
+            return [];
+        }
+
+        $found = [];
+
+        foreach ($matches as $match) {
+            $found[] = strtolower($match[1]) . ':' . self::columnList($match[2])
+                . '>' . strtolower($match[3]) . ':' . self::columnList($match[4]);
+        }
+
+        return $found;
+    }
+
+    /** Колонки из списка в скобках: `` `a`, `b` `` → `a,b`. */
+    private static function columnList(string $inside): string
+    {
+        $names = [];
+
+        foreach (explode(',', $inside) as $name) {
+            $clean = strtolower(trim(str_replace('`', '', $name)));
+
+            if ($clean !== '') {
+                $names[] = $clean;
+            }
+        }
+
+        return implode(',', $names);
     }
 
     /**
@@ -159,17 +262,121 @@ final class SchemaState
             }
 
             $present = $this->columnsOf($db, $table);
+            $columnsComplete = true;
 
             foreach ($columns as $column) {
                 $checked++;
 
                 if (!in_array($column, $present, true)) {
                     $missing[] = 'колонка ' . $table . '.' . $column;
+                    $columnsComplete = false;
+                }
+            }
+
+            /*
+             * Индексы и внешние ключи сверяются только когда все колонки таблицы
+             * на месте. Ключ по отсутствующей колонке — следствие её отсутствия,
+             * и отдельной строкой он лишь удваивает список одной и той же причины.
+             */
+            if (!$columnsComplete) {
+                continue;
+            }
+
+            $presentIndexes = $this->indexesOf($db, $table);
+
+            foreach ($this->indexes[$table] ?? [] as $index) {
+                $checked++;
+
+                if (!in_array($index, $presentIndexes, true)) {
+                    $missing[] = 'индекс ' . $table . '.' . $index;
+                }
+            }
+
+            $presentKeys = $this->foreignKeysOf($db, $table);
+
+            foreach ($this->foreignKeys[$table] ?? [] as $key) {
+                $checked++;
+
+                if (!in_array($key, $presentKeys, true)) {
+                    $missing[] = 'внешний ключ ' . $table . '.' . $key;
                 }
             }
         }
 
         return ['checked' => $checked, 'missing' => $missing];
+    }
+
+    /**
+     * Индексы таблицы в том же виде, что и разбор `schema.sql`.
+     *
+     * @return list<string>
+     */
+    private function indexesOf(Database $db, string $table): array
+    {
+        $rows = $db->all(
+            'SELECT INDEX_NAME AS n, COLUMN_NAME AS c'
+            . ' FROM information_schema.STATISTICS'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t'
+            . ' ORDER BY INDEX_NAME, SEQ_IN_INDEX',
+            ['t' => $table]
+        );
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            // Значения берутся по порядку: имя колонки сервер отдаёт в своём
+            // регистре, и на части хостингов оно приходит заглавными буквами.
+            $values = array_values($row);
+            $name = strtolower(trim((string) ($values[0] ?? '')));
+            $grouped[$name][] = strtolower(trim((string) ($values[1] ?? '')));
+        }
+
+        $result = [];
+
+        foreach ($grouped as $name => $columns) {
+            $result[] = $name . ':' . implode(',', $columns);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Внешние ключи таблицы в том же виде, что и разбор `schema.sql`.
+     *
+     * @return list<string>
+     */
+    private function foreignKeysOf(Database $db, string $table): array
+    {
+        $rows = $db->all(
+            'SELECT CONSTRAINT_NAME AS n, COLUMN_NAME AS c,'
+            . ' REFERENCED_TABLE_NAME AS rt, REFERENCED_COLUMN_NAME AS rc'
+            . ' FROM information_schema.KEY_COLUMN_USAGE'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t'
+            . ' AND REFERENCED_TABLE_NAME IS NOT NULL'
+            . ' ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION',
+            ['t' => $table]
+        );
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            // Значения берутся по порядку: имя колонки сервер отдаёт в своём
+            // регистре, и на части хостингов оно приходит заглавными буквами.
+            $values = array_values($row);
+            $name = strtolower(trim((string) ($values[0] ?? '')));
+            $grouped[$name]['own'][] = strtolower(trim((string) ($values[1] ?? '')));
+            $grouped[$name]['ref_table'] = strtolower(trim((string) ($values[2] ?? '')));
+            $grouped[$name]['ref'][] = strtolower(trim((string) ($values[3] ?? '')));
+        }
+
+        $result = [];
+
+        foreach ($grouped as $name => $key) {
+            $result[] = $name . ':' . implode(',', $key['own'])
+                . '>' . $key['ref_table'] . ':' . implode(',', $key['ref']);
+        }
+
+        return $result;
     }
 
     /** Разобран ли schema.sql: без него сверка не даёт вердикта. */
@@ -252,10 +459,25 @@ final class SchemaState
               WHERE table_schema = DATABASE() ORDER BY table_name'
         );
 
-        return array_map(
-            static fn (array $row): string => strtolower((string) $row['table_name']),
-            $rows
-        );
+        /*
+         * Имя берётся по порядку, а не по имени колонки: имя колонки в
+         * `information_schema` сервер отдаёт в своём регистре, и на части
+         * шаред-хостингов оно приходит заглавными буквами. Обращение по ключу
+         * тогда даёт пустую строку, и сверка видит в базе таблицу с пустым
+         * именем — то есть считает, что в базе нет ничего, и требует создать
+         * всё с нуля.
+         */
+        $names = [];
+
+        foreach ($rows as $row) {
+            $name = strtolower(trim((string) Database::firstValue($row)));
+
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
     }
 
     /** @return array<string,list<string>> */
@@ -283,7 +505,7 @@ final class SchemaState
         );
 
         return array_map(
-            static fn (array $row): string => strtolower((string) $row['column_name']),
+            static fn (array $row): string => strtolower(trim((string) Database::firstValue($row))),
             $rows
         );
     }

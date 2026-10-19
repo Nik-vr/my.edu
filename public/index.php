@@ -13,6 +13,7 @@ declare(strict_types=1);
 use MyEdu\Core\App;
 use MyEdu\Core\Database;
 use MyEdu\Core\DatabaseDump;
+use MyEdu\Core\ErrorHandler;
 use MyEdu\Core\Request;
 use MyEdu\Core\SchemaMigrator;
 use MyEdu\Http\Kernel;
@@ -84,6 +85,15 @@ require $rootDir . '/src/Core/Autoloader.php';
 // Загрузчик нужен до всего остального: без него не загрузится даже App.
 MyEdu\Core\Autoloader::create($rootDir);
 
+/*
+ * Страховка от белого экрана ставится здесь — до загрузки конфигурации.
+ *
+ * Именно до неё и нужно: ошибается чаще всего `config.local.php`, который
+ * читается внутри `App::boot()`. Обработчик, поставленный позже, такую ошибку
+ * уже не увидит, а человек вместо причины получит пустую страницу.
+ */
+ErrorHandler::register($rootDir . '/var/log/error.log');
+
 if (PHP_VERSION_ID < 80100) {
     http_response_code(500);
     exit('Требуется PHP 8.1 или новее. Текущая версия: ' . PHP_VERSION);
@@ -110,6 +120,16 @@ if ($missing !== []) {
 }
 
 $app = App::boot($rootDir);
+
+/*
+ * Кому можно верить насчёт адреса клиента.
+ *
+ * Обратный прокси не является клиентом, и без доверия к нему все, кто пришёл
+ * через него, делят один адрес — а вместе с ним лимиты на неудачные входы.
+ * Список пуст по умолчанию: `X-Forwarded-For` подделывается без труда, и
+ * читать его без явного разрешения владельца нельзя.
+ */
+Request::setTrustedProxies($app->config()->array('security.trusted_proxies'));
 
 $request = Request::fromGlobals($app->basePath());
 

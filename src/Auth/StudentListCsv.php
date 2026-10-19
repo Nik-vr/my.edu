@@ -21,13 +21,25 @@ final class StudentListCsv
     public const HEADERS = ['Фамилия', 'Имя', 'Отчество'];
 
     /**
+     * В какой кодировке прочитан последний файл.
+     *
+     * Нужна не для разбора, а для отчёта: русский Excel по умолчанию пишет в
+     * Windows-1251, и без догадки о кодировке человек не может понять, почему в
+     * его файле фамилии вышли «РџРѕРјСЂРѕРІР°». Правильная догадка читает файл,
+     * неверная — ломает имена всерьёз, и сказать об этом заранее честнее.
+     */
+    private string $encoding = 'UTF-8';
+
+    /**
      * Разбирает содержимое файла.
      *
      * @return array{rows:list<array{family:string,name:string,middle:string,line:int}>,
-     *               errors:list<array{line:int,message:string}>}
+     *               errors:list<array{line:int,message:string}>,
+     *               encoding:string}
      */
     public function parse(string $content): array
     {
+        $content = $this->decode($content);
         $content = $this->stripBom($content);
         $delimiter = $this->detectDelimiter($content);
 
@@ -114,7 +126,7 @@ final class StudentListCsv
             }
         }
 
-        return ['rows' => $rows, 'errors' => $errors];
+        return ['rows' => $rows, 'errors' => $errors, 'encoding' => $this->encoding];
     }
 
     /**
@@ -131,6 +143,50 @@ final class StudentListCsv
         $rows[] = ['Кузнецов', 'Пётр', ''];
 
         return "\xEF\xBB\xBF" . $this->toCsv($rows);
+    }
+
+    /**
+     * Перевести содержимое в UTF-8.
+     *
+     * UTF-8 — основной вариант и проверяется первым. Русский Excel сохраняет в
+     * Windows-1251, и раньше такой файл молча разбирался как UTF-8: фамилии
+     * превращались в мусор, длина строки в байтах оказывалась больше, чем
+     * длина в буквах, и учеников, чьи имена «разъехались», система заводила под
+     * фамилиями из ромбиков. Отдельного кодирования в проекте нет, и разбирать
+     * такие файлы иначе нечем.
+     *
+     * UTF-16 опознаётся по метке порядка байтов: без неё определить кодировку
+     * нечем, а с ней она однозначна.
+     */
+    private function decode(string $content): string
+    {
+        if (str_starts_with($content, "\xFE\xFF")) {
+            $this->encoding = 'UTF-16LE';
+
+            return (string) mb_convert_encoding(substr($content, 2), 'UTF-8', 'UTF-16LE');
+        }
+
+        if (str_starts_with($content, "\xFF\xFE")) {
+            $this->encoding = 'UTF-16BE';
+
+            return (string) mb_convert_encoding(substr($content, 2), 'UTF-8', 'UTF-16BE');
+        }
+
+        if (mb_check_encoding($content, 'UTF-8')) {
+            $this->encoding = 'UTF-8';
+
+            return $content;
+        }
+
+        /*
+         * Однобайтная кодировка. Windows-1251 выбирается потому, что в неё пишет
+         * русский Excel, а не потому, что она угадывается: однобайтовых
+         * кодировок много, и проверить, какая именно, по байтам нельзя. Поэтому
+         * выбор не скрывается — разбор возвращает, чем именно прочитан файл.
+         */
+        $this->encoding = 'Windows-1251';
+
+        return (string) mb_convert_encoding($content, 'UTF-8', 'Windows-1251');
     }
 
     /**

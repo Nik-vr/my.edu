@@ -212,6 +212,21 @@ final class TestClient
         return $this->token($response['body']);
     }
 
+    /**
+     * Одноразовый пропуск формы со страницы, полученной ранее.
+     *
+     * Форма, которая создаёт что-то один раз (выдача работы), несёт в себе ещё
+     * и пропуск: повторная отправка обязана быть отвергнута. Тест достаёт его
+     * так же, как токен защиты, — иначе проверка двойной отправки проверяла бы
+     * не то.
+     */
+    public function onceFrom(array $response, string $form): ?string
+    {
+        $pattern = '/name="once_' . preg_quote($form, '/') . '" value="([^"]+)"/';
+
+        return preg_match($pattern, $response['body'], $m) === 1 ? $m[1] : null;
+    }
+
 /**
  * Кодирование полей формы.
  *

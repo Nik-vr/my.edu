@@ -41,6 +41,7 @@ use MyEdu\Http\Controller\PortalController;
 use MyEdu\Http\Controller\WorkController;
 use MyEdu\Plugin\PluginManager;
 use MyEdu\Repository\AssignmentRepository;
+use MyEdu\Repository\AssignmentDraftRepository;
 use MyEdu\Repository\RatingRepository;
 
 /**
@@ -92,6 +93,7 @@ final class Controllers
         $settings = $app->get(Settings::class);
         $plugins = $app->get(PluginManager::class);
         $assignments = $app->get(AssignmentRepository::class);
+        $drafts = $app->get(AssignmentDraftRepository::class);
         $users = $app->get(UserRepository::class);
         $subjects = $app->get(SubjectRepository::class);
         $students = $app->get(StudentRepository::class);
@@ -122,7 +124,7 @@ final class Controllers
         );
 
         $this->assignments = new AssignmentController(
-            $view, $session, $csrf, $config, $auth, $db, $assignments, $plugins
+            $view, $session, $csrf, $config, $auth, $db, $assignments, $drafts, $plugins
         );
 
         $this->editorAssets = new EditorAssetController($auth, $csrf, $view, $uploads);
@@ -154,7 +156,8 @@ final class Controllers
 
         $this->classes = new ClassController(
             $app, $db, $view, $session, $csrf, $config, $auth,
-            $app->get(ClassRepository::class), $subjects, $users, $students, $settings
+            $app->get(ClassRepository::class), $subjects, $users, $students, $settings,
+            $app->get(PluginManager::class)
         );
 
         $this->subjects = new SubjectController($view, $session, $csrf, $config, $subjects);
@@ -164,8 +167,18 @@ final class Controllers
             $app->get(ClassRepository::class)
         );
 
+        /*
+         * Фабрика писем берётся из контейнера, а не собирается здесь.
+         *
+         * Здесь она создавалась с каталогом `var/log`, а `MailerFactory::create()`
+         * дописывает к нему `log` сам. Журнал писем уезжал в `var/log/log/`,
+         * тогда как всё остальное писалось в `var/log/`: письма о регистрации и
+         * сбросе пароля оказывались в непривычном месте, которое никто не
+         * открывал, — и на боевом сервере это выглядело бы как «письма не
+         * отправляются вовсе».
+         */
         $this->health = new HealthController(
-            $app, $db, $config, new MailerFactory($config, $app->rootDir() . '/var/log')
+            $app, $db, $config, $app->get(MailerFactory::class)
         );
     }
 }

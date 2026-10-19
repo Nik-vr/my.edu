@@ -233,6 +233,26 @@ final class IssueController
 
         if ($request->method() === 'POST') {
             /*
+             * Форму отправляли один раз. Токен защиты от подделки не спасает от
+             * двойного нажатия: обе отправки настоящие, и сервер выполнит обе —
+             * ученик получит две выдачи, а его лимит попыток возьмётся из
+             * самой свежей, то есть из случайной половины. Пропуск забирается до
+             * всякой работы: отказ на середине (неверная дата, класс исчез) не
+             * должен оставлять возможность отправить форму ещё раз — после
+             * отказа человек почти наверняка попробует именно это.
+             */
+            if (! $this->takeOneTimeToken($request, 'issue')) {
+                $this->session->set(
+                    'flash_notice',
+                    'Эта форма уже отправлена. Если работа не выдалась — откройте шаг заново'
+                );
+
+                return $this->redirect('panel/issues/' . (int) $assignment['id']
+                    . '/period?classes=' . implode(',', $classIds)
+                    . '&students=' . implode(',', $picked));
+            }
+
+            /*
              * Срок проверяется здесь, до выдачи: пустые или перепутанные даты
              * означали бы либо бессрочную работу, либо выдачу, которой не видно
              * никому, — и обе молчали бы.
@@ -245,7 +265,11 @@ final class IssueController
                  * ввёл и менял порядок, и заставлять набирать заново — значит
                  * заставить ошибиться второй раз.
                  */
-                $this->keepInput('issue_period_old', $request, ['_token', 'period', 'date_from', 'date_until']);
+                $this->keepInput(
+                    'issue_period_old',
+                    $request,
+                    ['_token', 'period', 'date_from', 'date_until', 'once_issue']
+                );
 
                 $this->session->set(
                     'flash_error',
@@ -271,6 +295,7 @@ final class IssueController
             // Что человек ввёл на этом шаге до отказа: срок и даты приходят
             // адресом с предыдущего шага, и без этого отказ стирал бы их.
             'old'        => $this->session->pull('issue_period_old', []),
+            'once'       => $this->oneTimeToken('issue'),
         ]);
     }
 

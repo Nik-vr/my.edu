@@ -19,6 +19,7 @@ use MyEdu\Core\Session;
 use MyEdu\Core\SiteUrl;
 use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
+use MyEdu\Ui\Messages;
 
 /**
  * Регистрация учеников класса и учётные данные.
@@ -78,18 +79,44 @@ final class StudentController
 
         if (mb_strlen($fullName, 'UTF-8') < 3) {
             $this->session->set('student_add_old', (string) $request->postParam('full_name', ''));
-            $this->session->set('flash_error', 'Укажите фамилию и имя ученика');
+            $this->session->set('flash_error', Messages::requiredText('фамилию и имя ученика'));
 
             return $this->redirect('classes/' . $classId);
         }
 
-        $existing = $this->students->findByName($fullName);
+$existing = $this->students->findByName($fullName);
 
         // Уже заведённого ученика просто добавляем в класс повторно.
         if ($existing !== null) {
             if ($this->students->isInClass($classId, (int) $existing['id'])) {
                 $this->session->set('student_add_old', (string) $request->postParam('full_name', ''));
                 $this->session->set('flash_error', $fullName . ' уже состоит в этом классе');
+
+                return $this->redirect('classes/' . $classId);
+            }
+
+            /*
+             * Совпадение имени — ещё не доказательство, что это тот же человек.
+             * Склеиваются лишь те, у кого нет ни одной попытки: смешивать нечего,
+             * и это почти наверняка переход в другой класс или повторное заведение
+             * из списка.
+             *
+             * У кого попытки есть — это уже другой человек с таким же именем, и
+             * склейка отдала бы ему чужой логин и чужие оценки. Раньше она происходила
+             * молча, и человек узнавал о ней через месяц, когда увидел в журнале
+             * чужую работу. Теперь система отказывает и говорит, где этот человек
+             * числится: разбираться вручную дешевле, чем исправлять историю.
+             */
+            if ($this->students->findMergeableByName($fullName) === null) {
+                $classes = $this->students->classNames((int) $existing['id']);
+                $this->session->set('student_add_old', (string) $request->postParam('full_name', ''));
+                $this->session->set(
+                    'flash_error',
+                    $fullName . ' уже заведён и сдавал работы'
+                    . ($classes === [] ? '' : ' (класс ' . implode(', ', $classes) . ')')
+                    . '. Если это тот же человек, переведите его на странице того класса; '
+                    . 'если другой — уточните имя при заведении'
+                );
 
                 return $this->redirect('classes/' . $classId);
             }
@@ -201,11 +228,11 @@ final class StudentController
 
         if ($fullName === '') {
             if ($asJson) {
-                return $this->json(['ok' => false, 'error' => 'Введите фамилию, имя и отчество']);
+                return $this->json(['ok' => false, 'error' => Messages::requiredText('фамилию, имя и отчество')]);
             }
 
             $this->rememberRenameInput($studentId, (string) $request->postParam('full_name', ''));
-            $this->session->set('flash_error', 'Введите фамилию, имя и отчество');
+            $this->session->set('flash_error', Messages::requiredText('фамилию, имя и отчество'));
 
             return $this->redirect('classes/' . $classId . '?edit=' . $studentId);
         }
@@ -342,7 +369,7 @@ final class StudentController
                 trim($row['family'] . ' ' . $row['name'] . ' ' . $row['middle'])
             );
 
-            if ($this->students->findByName($fullName) !== null) {
+            if ($this->students->findByName($fullName, $classId) !== null) {
                 /*
                  * Формат замечания — такой же, как у ошибок разбора файла:
                  * массив с номером строки и текстом. Строкой здесь класть нельзя,
@@ -350,7 +377,40 @@ final class StudentController
                  */
                 $skipped[] = [
                     'line'    => $row['line'],
-                    'message' => $fullName . ' — уже зарегистрирован',
+                    'message' => $fullName . ' — уже состоит в этом классе',
+                ];
+
+                continue;
+            }
+
+            /*
+             * Совпадение имени в ДРУГОМ классе раньше просто пропускалось, и
+             * импорт докладывал: «уже зарегистрирован». Учитель видел в отчёте
+             * пропуск и считал, что человек уже зачислен сюда — а он числился в
+             * соседнем классе, и в новом его не было. Список класса отличается от
+             * состава класса ровно на этих строках.
+             *
+             * Теперь такого ученика, у которого ещё нет работ, действительно
+             * добавляют в класс (переход между классами). У кого работы есть —
+             * это, скорее всего, другой человек, и его молча пропустить значит
+             * потерять его из класса; об этом и говорит замечание.
+             */
+            $mergeable = $this->students->findMergeableByName($fullName);
+
+            if ($mergeable !== null) {
+                $this->students->addToClass($classId, (int) $mergeable['id']);
+                $skipped[] = [
+                    'line'    => $row['line'],
+                    'message' => $fullName . ' — уже был заведён, добавлен в этот класс',
+                ];
+
+                continue;
+            }
+
+            if ($this->students->findByName($fullName) !== null) {
+                $skipped[] = [
+                    'line'    => $row['line'],
+                    'message' => $fullName . ' — заведён в другом классе и сдавал работы, разберитесь вручную',
                 ];
 
                 continue;
@@ -383,9 +443,10 @@ final class StudentController
         $this->session->set('import_errors', array_merge($errors, $skipped));
 
         if ($issued === []) {
-            $this->session->set('flash_notice', sprintf(
-                'Из файла зарегистрировано учеников: 0. Пропущено: %d.',
-                count($skipped) + count($errors)
+            $this->session->set('flash_notice', $this->importSummary(
+                0,
+                count($skipped) + count($errors),
+                (string) $parsed['encoding']
             ));
 
             return $this->redirect('classes/' . $classId);
@@ -396,10 +457,10 @@ final class StudentController
          * лист режут и раздают, а замечания к файлу нужны тому, кто его
          * загрузил, и до следующего открытия класса.
          */
-        $this->session->set('flash_notice', sprintf(
-            'Из файла зарегистрировано учеников: %d. Пропущено: %d.',
+        $this->session->set('flash_notice', $this->importSummary(
             count($issued),
-            count($skipped) + count($errors)
+            count($skipped) + count($errors),
+            (string) $parsed['encoding']
         ));
 
         /*
@@ -413,9 +474,30 @@ final class StudentController
         return $this->credentialsSheet($class, $issued);
     }
 
-    // ---------------------------------------------------------------- учётные данные
+// ---------------------------------------------------------------- учётные данные
 
     /**
+     * Итог импорта списка.
+     *
+     * Кодировка названа явно, когда она не UTF-8: русский Excel пишет в
+     * Windows-1251, и без этой строки человек видит фамилии из ромбиков и
+     * решает, что импорт сломан. На деле это другой файл, и сказать об этом
+     * заранее дешевле, чем разбираться с испорченными именами потом.
+     */
+    private function importSummary(int $created, int $skipped, string $encoding): string
+    {
+        $summary = sprintf(
+            'Из файла зарегистрировано учеников: %d. Пропущено: %d.',
+            $created,
+            $skipped
+        );
+
+        return $encoding === 'UTF-8'
+            ? $summary
+            : $summary . ' Файл прочитан как ' . $encoding . ' — если фамилии вышли нечитаемыми, сохраните файл в UTF-8.';
+    }
+
+/**
  * Лист печати: логины и пароли.
  *
  * Отдельного листа больше нет — таблица с логинами и паролями стоит в

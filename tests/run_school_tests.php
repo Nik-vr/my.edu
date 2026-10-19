@@ -604,7 +604,7 @@ $owner->post('/panel/subjects', [
     'name'   => '   ',
 ]);
 
-$t->contains($owner->get('/panel/subjects')['body'], 'Укажите название предмета',
+$t->contains($owner->get('/panel/subjects')['body'], 'Заполните «название предмета»',
     'пустое название отклонено с объяснением');
 
 /* Переименование меняет только название. */
@@ -1055,7 +1055,7 @@ $reportPage = $owner->get('/classes/' . $classId);
 $t->contains($reportPage['body'], 'Из файла зарегистрировано учеников', 'отчёт об импорте показан');
 
 $t->contains($reportPage['body'], 'строка 5 — не указана фамилия', 'ошибка строки показана');
-$t->contains($reportPage['body'], 'уже зарегистрирован', 'пропуск дубля показан');
+$t->contains($reportPage['body'], 'уже состоит в этом классе', 'пропуск дубля показан');
 
 $t->equals((int) $db->value('SELECT COUNT(*) FROM users WHERE full_name LIKE :n',
     ['n' => 'Сидорова Мария Алексеевна']), 1, 'ученик из файла создан');
@@ -1070,6 +1070,147 @@ $t->equals((int) $db->value('SELECT COUNT(*) FROM class_students WHERE class_id 
     4, 'в классе четыре ученика');
 
 @unlink($csvPath);
+
+/*
+ * Однофамильцы из разных классов — это два человека.
+ *
+ * Совпадение имени раньше означало «тот же ученик»: система молча отдавала
+ * новому классу чужую учётную запись вместе с логином и всеми работами. Учитель
+ * узнавал об этом через месяц, когда в журнале класса у себя появлялась чужую
+ * работа. Склеивать перестали тех, у кого уже есть попытки: смешивать нечего —
+ * а вот совпадение имён у двух людей происходит регулярно.
+ *
+ * Переход между классами при этом сохранён: у того, кто ещё ничего не сдавал,
+ * склейка остаётся — там она почти наверняка и есть нужное действие.
+ */
+$t->group('Однофамильцы из разных классов');
+
+$secondClass = $owner->post('/classes', [
+    '_token' => $owner->tokenFrom($owner->get('/classes')) ?? '',
+    'name'   => '9 Б',
+    'title'  => 'Средняя школа № 1',
+    'year'   => '2026/2027',
+]);
+
+preg_match('#/classes/(\d+)#', (string) $secondClass['location'], $secondClassMatch);
+$secondClassId = (int) ($secondClassMatch[1] ?? 0);
+
+$t->is($secondClassId > 0, 'создан второй класс для проверки однофамильцев');
+
+// Человек без работ: того же самого ученика в другой класс добавляем.
+$transferName = 'Никитин Алексей Петрович';
+$transferPage = $owner->get('/classes/' . $secondClassId);
+$transfer = $owner->post('/classes/' . $secondClassId . '/students', [
+    '_token'    => $owner->tokenFrom($transferPage) ?? '',
+    'full_name' => $transferName,
+]);
+
+$t->is($transfer['status'] === 302, 'переход в другой класс обработан');
+$t->equals(1, (int) $db->value(
+    'SELECT COUNT(*) FROM users WHERE full_name = :n',
+    ['n' => $transferName]
+), 'человек без работ не размножен');
+$t->equals(1, (int) $db->value(
+    'SELECT COUNT(*) FROM class_students cs JOIN users u ON u.id = cs.student_id
+      WHERE u.full_name = :n AND cs.class_id = :c',
+    ['n' => $transferName, 'c' => $secondClassId]
+), 'он же состоит в новом классе');
+
+// Человек с работами: это уже другой человек, и склеивать нельзя.
+$otherName = 'Орлов Кирилл Олегович';
+$otherId = (int) $db->insert('users', [
+    'login'         => 'test-orlov-' . substr(md5($otherName), 0, 6),
+    'email'         => null,
+    'password_hash' => password_hash('test-pass-2025', PASSWORD_DEFAULT),
+    'full_name'     => $otherName,
+    'is_owner'      => 0,
+    'status'        => 'active',
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('user_roles', ['user_id' => $otherId, 'role_code' => \MyEdu\Auth\Role::STUDENT, 'granted_at' => date('Y-m-d H:i:s')]);
+$db->insert('class_students', ['class_id' => $classId, 'student_id' => $otherId, 'joined_at' => date('Y-m-d H:i:s')]);
+
+// Человек с работами: склеивать его нельзя, а для этого у него должна быть попытка.
+$clashWorkId = (int) $db->insert('assignments', [
+    'author_id'     => $ownerId,
+    'title'         => 'Работа для проверки однофамильцев',
+    'description'   => '',
+    'status'        => 'published',
+    'grade_mode'    => 'weighted',
+    'criteria_mode' => 'score',
+    'show_results'  => 1,
+    'time_limit'    => 0,
+    'criteria'      => json_encode([['grade' => 5, 'min_score' => 1, 'max_score' => 5]], JSON_UNESCAPED_UNICODE),
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('assignment_attempts', [
+    'assignment_id' => $clashWorkId,
+    'student_id'    => $otherId,
+    'status'        => 'finished',
+    'token'         => hash('sha256', 'orlov-' . $otherId),
+    'started_at'    => date('Y-m-d H:i:s', time() - 86400),
+    'finished_at'   => date('Y-m-d H:i:s', time() - 3600),
+]);
+
+$clashPage = $owner->get('/classes/' . $secondClassId);
+$clash = $owner->post('/classes/' . $secondClassId . '/students', [
+    '_token'    => $owner->tokenFrom($clashPage) ?? '',
+    'full_name' => $otherName,
+]);
+
+$t->is($clash['status'] === 302, 'заведение однофамильца не роняет страницу');
+$t->equals(1, (int) $db->value('SELECT COUNT(*) FROM users WHERE full_name = :n', ['n' => $otherName]),
+    'второй человек с тем же именем не создан и не съеден');
+$t->equals(0, (int) $db->value(
+    'SELECT COUNT(*) FROM class_students cs JOIN users u ON u.id = cs.student_id
+      WHERE u.full_name = :n AND cs.class_id = :c',
+    ['n' => $otherName, 'c' => $secondClassId]
+), 'в новый класс он не попал — это был бы чужой человек');
+$t->contains((string) $owner->get('/classes/' . $secondClassId)['body'], 'сдавал работы',
+    'об отказе сказано, что человек уже сдавал работы');
+
+/*
+ * Файл в Windows-1251 читается, а не ломает имена.
+ *
+ * Русский Excel по умолчанию сохраняет в Windows-1251, и такой файл раньше
+ * разбирался как UTF-8: фамилии превращались в мусор, а длина строки в байтах
+ * оказывалась больше длины в буквах — и проверка «слишком длинное значение»
+ * ругалась на нормальные имена. Импорт проходил, а учеников в базе было
+ * трое с фамилиями из ромбиков.
+ */
+$t->group('Список учеников в кодировке Excel');
+
+$win1251Csv = (string) mb_convert_encoding(
+    "Фамилия;Имя;Отчество\r\nКопылов;Артём;Игоревич\r\n",
+    'Windows-1251',
+    'UTF-8'
+);
+
+$win1251Path = tempnam(sys_get_temp_dir(), 'spisok1251') . '.csv';
+file_put_contents($win1251Path, $win1251Csv);
+
+$csvClassPage = $owner->get('/classes/' . $classId);
+$win1251Import = $owner->upload(
+    '/classes/' . $classId . '/students/import',
+    ['_token' => $owner->tokenFrom($csvClassPage) ?? ''],
+    ['file' => $win1251Path]
+);
+
+$t->is($win1251Import['status'] === 200, 'файл в Windows-1251 разобран');
+$t->equals(1, (int) $db->value(
+    'SELECT COUNT(*) FROM users WHERE full_name = :n',
+    ['n' => 'Копылов Артём Игоревич']
+), 'фамилия прочитана по-человечески, а не ромбиками');
+$t->notContains($win1251Import['body'], '�', 'в листе нет заменяющих символов');
+
+$win1251Report = $owner->get('/classes/' . $classId);
+$t->contains($win1251Report['body'], 'Windows-1251', 'сказано, в какой кодировке прочитан файл');
+
+@unlink($win1251Path);
 
 // ------------------------------------------------------------------ смена паролей
 
@@ -1792,7 +1933,7 @@ foreach ([$rootDir . '/src', $rootDir . '/templates'] as $passwordDir) {
         $code = (string) file_get_contents($file->getPathname());
         $code = (string) preg_replace('#/\*.*?\*/#s', '', $code);
         $code = (string) preg_replace('#(^|\s)//[^\n]*#', '$1', $code);
-        $code = (string) preg_replace('#(^|\s)#[^\n]*#', '$1', $code);
+        $code = (string) preg_replace('~(^|\s)#[^\n]*~', '$1', $code);
 
         if (str_contains($code, 'issued_credentials')) {
             $passwordStash[] = $file->getPathname();
@@ -1877,6 +2018,65 @@ $t->notContains($ownerSelfPage['body'], 'name="roles[]"', 'на странице
 $t->contains($ownerSelfPage['body'], 'У владельца сайта она всегда «Администратор» — снять её нельзя',
     'владелец не может редактировать собственную роль');
 
+/*
+ * Пустой адрес почты не убирает адрес молча.
+ *
+ * Раньше пустое поле ставило NULL: адрес исчезал вместе со всеми письмами на
+ * него, а «забыли пароль» переставал работать навсегда. Обнаружить это можно
+ * было только по письму, которое не пришло, — человеку с телефоном.
+ *
+ * Проверяется ровно то, что было поломкой: адрес в баре после попытки его
+ * очистить остался прежним, а человек узнал, почему адрес не убрался.
+ */
+$t->group('Адрес почты не пропадает молча');
+
+$userWithMailId = (int) $db->value('SELECT id FROM users WHERE email = :e', ['e' => 'teacher@school.test']);
+$editPage = $owner->get('/panel/users/' . $userWithMailId);
+
+$t->is($editPage['status'] === 200, 'страница сотрудника с адресом открыта');
+
+$dropEmail = $owner->post('/panel/users/' . $userWithMailId, [
+    '_token'       => $owner->tokenFrom($editPage) ?? '',
+    'last_name'    => 'Иванова',
+    'first_name'   => 'Мария',
+    'birth_date'   => '',
+    'email'        => '',
+    'vk_url'       => '',
+]);
+
+$t->is($dropEmail['status'] === 302, 'попытка убрать адрес не роняет страницу');
+$t->equals(
+    'teacher@school.test',
+    (string) $db->value('SELECT email FROM users WHERE id = :i', ['i' => $userWithMailId]),
+    'адрес на месте — его не вычеркнули из-под человека'
+);
+$t->contains((string) $owner->get('/panel/users/' . $userWithMailId)['body'], 'восстанавливается пароль',
+    'об отказе сказано, что будет с восстановлением пароля');
+
+/*
+ * У того, у кого адреса и не было, пустое поле — обычное дело: такие люди
+ * заводятся без почты, и правка имени у них должна проходить.
+ */
+$studentWithoutMailId = (int) $db->value(
+    'SELECT id FROM users WHERE email IS NULL ORDER BY id LIMIT 1'
+);
+
+if ($studentWithoutMailId > 0) {
+    $studentPage = $owner->get('/panel/users/' . $studentWithoutMailId);
+    $renameWithoutMail = $owner->post('/panel/users/' . $studentWithoutMailId, [
+        '_token'     => $owner->tokenFrom($studentPage) ?? '',
+        'last_name'  => 'Петров',
+        'first_name' => 'Пётр',
+        'birth_date' => '',
+        'email'      => '',
+        'vk_url'     => '',
+    ]);
+
+    $t->is($renameWithoutMail['status'] === 302, 'правка человека без адреса проходит');
+    $t->notContains((string) $owner->get('/panel/users/' . $studentWithoutMailId)['body'], 'Нельзя убрать адрес',
+        'у человека без адреса пустое поле не считается попыткой убрать его');
+}
+
 $t->is(
     $owner->post('/panel/users/role', [
         '_token'  => $owner->tokenFrom($ownerUsers) ?? '',
@@ -1889,6 +2089,51 @@ $t->is(
     in_array(\MyEdu\Auth\Role::ADMIN, (new \MyEdu\Auth\UserRepository($db))->rolesOf((int) $ownerId), true),
     'у владельца роль администратора на месте'
 );
+
+/*
+ * Ученику роль не выдаётся.
+ *
+ * Форма ролей принимала любую назначаемую роль для любого человека, и роль
+ * «Учитель» проходила проверку списка: одним нажатием ученик становился
+ * учителем, а «Администратор» — человеком со всеми правами и списком
+ * сотрудников. Ученики живут в своём классе, и правами такого человека
+ * управляет не форма ролей.
+ */
+$t->group('Роль ученика не меняется из панели');
+
+$studentForRoleId = (int) $db->insert('users', [
+    'login'         => 'ne-uchitel@example.edu',
+    'email'         => 'ne-uchitel@example.edu',
+    'password_hash' => password_hash('uchebnik-2026', PASSWORD_DEFAULT),
+    'full_name'     => 'Роль Ученика',
+    'is_owner'      => 0,
+    'status'        => 'active',
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('user_roles', [
+    'user_id'    => $studentForRoleId,
+    'role_code'  => \MyEdu\Auth\Role::STUDENT,
+    'granted_at' => date('Y-m-d H:i:s'),
+]);
+
+$rolePage = $owner->get('/panel/users');
+$promote = $owner->post('/panel/users/role', [
+    '_token'  => $owner->tokenFrom($rolePage) ?? '',
+    'user_id' => (string) $studentForRoleId,
+    'role'    => \MyEdu\Auth\Role::ADMIN,
+]);
+
+$t->is($promote['status'] === 302, 'попытка выдать роль ученику не роняет страницу');
+$t->equals(
+    [\MyEdu\Auth\Role::STUDENT],
+    (new \MyEdu\Auth\UserRepository($db))->rolesOf($studentForRoleId),
+    'ученик не стал администратором — форма ролей его не касается'
+);
+
+$db->run('DELETE FROM user_roles WHERE user_id = :id', ['id' => $studentForRoleId]);
+$db->run('DELETE FROM users WHERE id = :id', ['id' => $studentForRoleId]);
 
 // ------------------------------------------------------------- единый стиль классов
 
@@ -2212,6 +2457,40 @@ $t->is($confirm['status'] === 200, 'страница подтверждения 
 $t->contains($confirm['body'], 'Восстановить это нельзя', 'сказано, что удаление необратимо');
 $t->contains($confirm['body'], 'будут удалены все его ученики', 'предупреждено об учениках');
 
+/*
+ * Данные класса можно забрать до удаления.
+ *
+ * Удаление уносит логины, пароли и всю историю попыток учеников, а список
+ * класса лежит на бумаге. Если файл не забрать сейчас, после удаления брать
+ * нечего, и выгрузка из журнала не поможет: там нет ни логинов, ни паролей.
+ */
+$t->contains($confirm['body'], '/delete/export', 'на странице подтверждения есть выгрузка данных');
+
+$export = $owner->get('/classes/' . $doomedId . '/delete/export');
+
+/*
+ * Заголовки приходят списком строк, а не картой: так их отдаёт HTTP-обёртка
+ * PHP. Поиск по названию заголовка, а не по индексу — иначе проверка сломалась
+ * бы от появления любого заголовка до него.
+ */
+$header = static function (array $response, string $name): string {
+    foreach ($response['headers'] as $line) {
+        if (stripos((string) $line, $name . ':') === 0) {
+            return trim(substr((string) $line, strlen($name) + 1));
+        }
+    }
+
+    return '';
+};
+
+$t->is($export['status'] === 200, 'выгрузка данных класса отдаётся');
+$t->equals('attachment; filename="klassa-9-В.csv"', $header($export, 'Content-Disposition'),
+    'файл отдаётся как вложение с именем');
+$t->contains($header($export, 'Content-Type'), 'text/csv', 'файл отдаётся как CSV');
+$t->contains($export['body'], 'Кузнецов', 'в выгрузке есть ученик');
+$t->contains($export['body'], 'Логин', 'в выгрузке есть логины');
+$t->contains($export['body'], "\xEF\xBB\xBF", 'файл помечен как UTF-8 для русского Excel');
+
 $t->is(
     (int) $db->value('SELECT COUNT(*) FROM classes WHERE id = :id', ['id' => $doomedId]) === 1,
     'до подтверждения класс на месте'
@@ -2242,7 +2521,57 @@ $t->equals(0, (int) $db->value('SELECT COUNT(*) FROM users WHERE id = :id', ['id
 $t->notContains($owner->get('/classes')['body'], '/classes/' . $doomedId,
     'удалённого класса больше нет в списке');
 
-$t->group('Ученик другого класса не удаляется вместе с классом');
+/*
+ * Плагин узнаёт, что класс исчез.
+ *
+ * У тестового плагина есть собственные записи, привязанные к классу: при
+ * удалении класса внешний ключ обнуляет привязку, и тесты остаются жить уже ни
+ * в чьём классе. Само по себе это нормально, но молча — плохо: без уведомления
+ * плагин не знает, что данные осиротели, и причина остаётся загадкой.
+ *
+ * Проверяется сквозной путь: класс с тестом удаляется по-настоящему, и в
+ * сообщении об удалении появляется заметка плагина.
+ */
+$t->group('Плагин узнаёт об удалении класса');
+
+$pluginClassId = (int) $db->insert('classes', [
+    'name'  => '8 Г',
+    'title' => 'Средняя школа № 1',
+    'year'  => 2026,
+    'created_at' => date('Y-m-d H:i:s'),
+    'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$pluginTestId = (int) $db->insert('tests', [
+    'author_id'       => $ownerId,
+    'class_id'        => $pluginClassId,
+    'title'           => 'Тест класса, который удалят',
+    'description'     => '',
+    'time_limit_min'  => 0,
+    'shuffle_questions' => 0,
+    'shuffle_options' => 0,
+    'max_attempts'    => 1,
+    'show_results'    => 1,
+    'status'          => 'published',
+    'created_at'      => date('Y-m-d H:i:s'),
+    'updated_at'      => date('Y-m-d H:i:s'),
+]);
+
+$t->equals($pluginClassId, (int) $db->value('SELECT class_id FROM tests WHERE id = :id', ['id' => $pluginTestId]),
+    'тест привязан к классу');
+
+$pluginDelete = $owner->post('/classes/' . $pluginClassId . '/delete', [
+    '_token' => $owner->tokenFrom($owner->get('/classes/' . $pluginClassId . '/delete')) ?? '',
+]);
+
+$t->is($pluginDelete['status'] === 302, 'класс с тестом удалён');
+$t->equals(0, (int) $db->value('SELECT class_id FROM tests WHERE id = :id', ['id' => $pluginTestId]),
+    'привязка теста к классу обнулена');
+
+$pluginNotice = $owner->get('/classes');
+
+$t->contains($pluginNotice['body'], 'остались в списке без класса',
+    'в сообщении об удалении сказано, что плагин оставил сиротами');
 
 /*
  * Человек может состоять в двух классах: заведённого ученика можно добавить

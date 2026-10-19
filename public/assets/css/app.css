@@ -20,6 +20,20 @@
     --mid-soft: #fdf3dd;
     --bad: #b3271e;
     --bad-soft: #fdeceb;
+
+    /*
+     * Цвета текста отдельно от цветов заливки.
+     *
+     * Один токен на оба случая в тёмной теме не работает: заливка должна
+     * быть тёмной, чтобы белый текст на ней читался, а текст на тёмной
+     * поверхности — светлым, иначе его не видно. В светлой теме значения
+     * совпадают с заливкой, и разницы не видно.
+     */
+    --accent-link: #2f5fd0;
+    --accent-ink: #24499f;
+    --good-text: #1a7f4b;
+    --mid-text: #8f6200;
+    --bad-text: #b3271e;
     --radius: 10px;
     --shadow: 0 1px 2px rgba(28, 36, 52, .06), 0 4px 14px rgba(28, 36, 52, .05);
 }
@@ -37,7 +51,7 @@ body {
 
 h1, h2, h3 { line-height: 1.25; margin: 0 0 .5em; }
 
-a { color: var(--accent); }
+a { color: var(--accent-link); }
 
 .visually-hidden {
     position: absolute;
@@ -108,7 +122,7 @@ a { color: var(--accent); }
 
 .topnav > a { color: var(--text-muted); text-decoration: none; }
 
-.topnav > a:hover { color: var(--accent); }
+.topnav > a:hover { color: var(--accent-link); }
 
 .topnav__who {
     display: inline-flex;
@@ -148,11 +162,11 @@ a { color: var(--accent); }
     font-size: 14px;
 }
 
-.topnav--tabs .topnav__tab:hover { border-color: var(--accent); color: var(--accent); }
+.topnav--tabs .topnav__tab:hover { border-color: var(--accent-link); color: var(--accent-link); }
 
 .topnav--tabs .topnav__tab--active {
     background: var(--accent);
-    border-color: var(--accent);
+    border-color: var(--accent-link);
     color: #fff;
     font-weight: 600;
 }
@@ -166,7 +180,7 @@ a { color: var(--accent); }
     padding: 5px 12px;
 }
 
-.btn--quiet:hover { border-color: var(--accent); color: var(--accent-dark); }
+.btn--quiet:hover { border-color: var(--accent); color: var(--accent-ink); }
 
 .btn--sm { padding: 6px 12px; font-size: 14px; }
 
@@ -392,8 +406,8 @@ a { color: var(--accent); }
 
 .info-tip:hover,
 .info-tip:focus-visible {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--accent-link);
+    color: var(--accent-link);
     outline: none;
 }
 
@@ -596,15 +610,15 @@ code {
 
 .chip--link { text-decoration: none; display: inline-flex; gap: 8px; align-items: baseline; }
 
-.chip--link:hover { border-color: var(--accent); }
+.chip--link:hover { border-color: var(--accent-link); }
 
 .chip__note { font-size: 12px; color: var(--text-muted); }
 
-.chip__count { font-size: 12px; color: var(--accent-dark); font-weight: 600; }
+.chip__count { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
 
-.badge--bad { background: var(--bad-soft); color: var(--bad); }
+.badge--bad { background: var(--bad-soft); color: var(--bad-text); }
 
-.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good); }
+.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good-text); }
 
 .issue-list { margin: 0; padding-left: 20px; font-size: 14px; }
 
@@ -660,9 +674,9 @@ code {
   margin: 12px 0;
   background: #fff;
 }
-.work-review--good { border-left-color: var(--good); }
-.work-review--mid  { border-left-color: var(--mid); }
-.work-review--bad  { border-left-color: var(--bad); }
+.work-review--good { border-left-color: var(--good-text); }
+.work-review--mid  { border-left-color: var(--mid-text); }
+.work-review--bad  { border-left-color: var(--bad-text); }
 
 .work-review__head {
   display: flex;
@@ -675,7 +689,7 @@ code {
   height: 26px;
   border-radius: 50%;
   background: var(--accent-soft);
-  color: var(--accent-dark);
+  color: var(--accent-ink);
   font-weight: 700;
   font-size: 13px;
   display: inline-flex;
@@ -790,11 +804,11 @@ code {
     font-size: 15px;
 }
 
-.alert--error { background: var(--bad-soft); border-color: #f3c6c3; color: var(--bad); }
+.alert--error { background: var(--bad-soft); border-color: #f3c6c3; color: var(--bad-text); }
 
-.alert--warn { background: var(--mid-soft); border-color: #efdda9; color: var(--mid); }
+.alert--warn { background: var(--mid-soft); border-color: #efdda9; color: var(--mid-text); }
 
-.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good); }
+.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good-text); }
 
 /* Убираем повтор: ниже, в разделе показателей, описание .stat__label.
    Здесь нужен только цвет текста предупреждения внутри карточки. */
@@ -836,7 +850,7 @@ code {
 
 .test-card__title a { color: var(--text); text-decoration: none; }
 
-.test-card__title a:hover { color: var(--accent); }
+.test-card__title a:hover { color: var(--accent-link); }
 
 .test-card__desc { color: var(--text-muted); margin: 0 0 10px; }
 
@@ -1008,7 +1022,7 @@ code {
 
 .chip {
     background: var(--accent-soft);
-    color: var(--accent-dark);
+    color: var(--accent-ink);
     border-radius: 999px;
     padding: 4px 12px;
     font-size: 13px;
@@ -1017,7 +1031,7 @@ code {
 .badge {
     display: inline-block;
     background: var(--accent-soft);
-    color: var(--accent-dark);
+    color: var(--accent-ink);
     border-radius: 6px;
     padding: 2px 8px;
     font-size: 12px;
@@ -1026,7 +1040,7 @@ code {
 
 .badge--muted { background: #eef1f6; color: var(--text-muted); }
 
-.badge--warn { background: var(--mid-soft); color: var(--mid); }
+.badge--warn { background: var(--mid-soft); color: var(--mid-text); }
 
 /* ---------------------------------------------------------------- формы */
 
@@ -1074,6 +1088,60 @@ code {
 .field__hint { display: block; color: var(--text-muted); font-size: 13px; margin-top: 6px; }
 
 /*
+ * Обязательные поля отмечены звёздочкой.
+ *
+ * Пока подпись была одинаковой у всех полей, человек узнавал об обязательности
+ * только после нажатия «Сохранить» — и то из текста ошибки под полем. В форме
+ * из двадцати полей обязательные и необязательные ничем не отличались, и все
+ * проверки давали одну и ту же фразу «Заполните «Название»».
+ *
+ * Отметка рисуется стилями, а не разметкой: поля на сайте пишутся и руками в
+ * шаблонах, и через Ui, и вторая копия правила в разметке рано или поздно
+ * разошлась бы с первой. Плюс так отметка появляется ровно там, где есть
+ * обязательные поля, и не требует правки каждой новой формы: завели поле с
+ * required — звёздочка появилась сама.
+ *
+ * Для чтения с экрана ничего не меняется: обязательность и так объявляется
+ * самим атрибутом required, а звёздочка — украшение, читать которое не нужно.
+ */
+.form-group:has(> [required]) > .form-label::after,
+.form-check:has(> [required]) > label::after {
+    content: "*";
+    margin-left: 4px;
+    color: var(--bad-text);
+    font-weight: 600;
+}
+
+/*
+ * Что означает звёздочка — той же строкой стилей, а не подписью в каждом шаблоне.
+ *
+ * Пояснение нужно только формам, где такие поля есть, и исчезает само, когда
+ * их не осталось. Наборы флажков с общим условием («отметьте хотя бы одного
+ * ученика») звёздочкой не помечаются: у них нет одного обязательного элемента,
+ * есть требование ко всему набору, и оно уже написано подсказкой над ним.
+ */
+form:has([required])::before {
+    content: "Поля, отмеченные звёздочкой, обязательны";
+    display: block;
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/*
+ * Форма-строка пояснения не получает.
+ *
+ * Такие формы — одно поле и кнопка рядом (.btn-group), и добавленная строка
+ * текста становилась третьим элементом строки: она сжимала и подпись поля, и
+ * кнопку, и «Добавить ученика» выглядела сломанной. Отмечать поле в такой
+ * форме и нечего — оно там единственное, и звёздочка говорит всё.
+ */
+form.btn-group:has([required])::before,
+form.field-row:has([required])::before {
+    content: none;
+}
+
+/*
  * Перечислены все типы полей, которыми пользуется сайт. Раньше здесь был
  * только input[type="text"], и поля e-mail и пароль выходили системными,
  * заметно отличаясь от остальных: на странице входа и регистрации одинаковые
@@ -1105,6 +1173,23 @@ input[type="file"] {
 }
 
 /*
+ * Поле поиска в таблице: текст начинается за значком, а не под ним.
+ *
+ * Значок лупы рисует шаблон, и он оставляет под него 32 пикселя слева. Общее
+ * правило выше перебивает этот отступ на свои 12 — и подсказка «Найти в
+ * таблице…» ложилась прямо на значок, а при вводе первая буква уезжала под
+ * него же. Правило стоит после общего, потому что переводы строк в CSS не
+ * учитывают: кто объявлен позже, тот и победил.
+ */
+/*
+ * Оформление полей таблицы — поиска и пагинации — задано в theme.css.
+ *
+ * Здесь для него не место: файл подключается раньше сборки шаблона и библиотеки
+ * таблиц, а правила с одинаковой силой решаются порядком подключения. Здесь
+ * они бы снова проиграли — молча, и правка выглядела бы сделанной.
+ */
+
+/*
  * Ошибка ввода видна на любом поле, а не только на оформленных по образцу.
  *
  * В сборке правило привязано к .form-control, а в панели большинство полей идут
@@ -1118,7 +1203,7 @@ input.is-invalid,
 select.is-invalid,
 textarea.is-invalid,
 .form-control.is-invalid {
-    border-color: var(--bad);
+    border-color: var(--bad-text);
 }
 
 input.is-invalid:focus,
@@ -1139,14 +1224,27 @@ textarea.is-invalid:focus,
 }
 
 input[type="file"]::file-selector-button {
-    margin-right: 10px;
-    padding: 6px 12px;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    /*
+     * Системная кнопка выбора файла выглядела как кнопка из другой сборки:
+     * другие отступы, другое скругление, серый фон. На странице аватара она
+     * стояла рядом с нашими кнопками — и выглядела как инструмент из другой
+     * программы.
+     *
+     * Меняется не вёрстка, а вид самой кнопки: браузер рисует её сам и
+     * подписать её не даёт, а покрасить и скруглить — даёт. Надпись остаётся
+     * браузерная («Выбор файла» — так её называют везде, то есть человек
+     * узнаёт её сразу), а вид становится нашим.
+     */
+    margin-right: 12px;
+    padding: 10px 18px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
     font: inherit;
-    color: inherit;
-    background: var(--surface);
+    font-weight: 600;
     cursor: pointer;
+    transition: background 120ms;
 }
 
 textarea { resize: vertical; min-height: 84px; }
@@ -1162,11 +1260,11 @@ select:focus,
 textarea:focus {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
-    border-color: var(--accent);
+    border-color: var(--accent-link);
 }
 
 input[type="file"]::file-selector-button:hover {
-    border-color: var(--accent);
+    background: var(--accent-dark);
 }
 
 .btn {
@@ -1283,13 +1381,13 @@ input[type="file"]::file-selector-button:hover {
     position: relative;
 }
 
-.qnav__item:hover { border-color: var(--accent); color: var(--accent-dark); }
+.qnav__item:hover { border-color: var(--accent); color: var(--accent-ink); }
 
 /* Отвеченное задание: заливка синим и галочка. */
 .qnav__item.is-answered {
     background: var(--accent-soft);
     border-color: #b9cbf3;
-    color: var(--accent-dark);
+    color: var(--accent-ink);
 }
 
 .qnav__item.is-answered::after {
@@ -1305,7 +1403,7 @@ input[type="file"]::file-selector-button:hover {
 
 .qnav__item.is-current {
     background: var(--accent);
-    border-color: var(--accent);
+    border-color: var(--accent-link);
     color: #fff;
     box-shadow: 0 0 0 2px rgba(47, 95, 208, .22);
 }
@@ -1339,20 +1437,20 @@ input[type="file"]::file-selector-button:hover {
     color: var(--text-muted);
 }
 
-.btn--ghost:hover { border-color: var(--accent); color: var(--accent-dark); }
+.btn--ghost:hover { border-color: var(--accent); color: var(--accent-ink); }
 
 .timer {
     font-variant-numeric: tabular-nums;
     background: var(--accent-soft);
-    color: var(--accent-dark);
+    color: var(--accent-ink);
     border-radius: 999px;
     padding: 4px 14px;
     font-size: 14px;
 }
 
-.timer--warn { background: var(--mid-soft); color: var(--mid); }
+.timer--warn { background: var(--mid-soft); color: var(--mid-text); }
 
-.timer--danger { background: var(--bad-soft); color: var(--bad); animation: pulse 1s ease-in-out infinite; }
+.timer--danger { background: var(--bad-soft); color: var(--bad-text); animation: pulse 1s ease-in-out infinite; }
 
 @keyframes pulse { 50% { opacity: .6; } }
 
@@ -1407,7 +1505,7 @@ input[type="file"]::file-selector-button:hover {
 
 .option:hover { border-color: var(--border-strong); background: #fafbfd; }
 
-.option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.option:has(input:checked) { border-color: var(--accent-link); background: var(--accent-soft); }
 
 .option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -1434,7 +1532,7 @@ input[type="file"]::file-selector-button:hover {
  */
 .option__text { min-width: 0; overflow-wrap: anywhere; }
 
-.option input:checked + .option__mark { border-color: var(--accent); background: var(--accent); }
+.option input:checked + .option__mark { border-color: var(--accent-link); background: var(--accent); }
 
 .option input:checked + .option__mark::after {
     content: "";
@@ -1498,7 +1596,7 @@ input[type="file"]::file-selector-button:hover {
     height: 18px;
     margin: 0;
     cursor: pointer;
-    accent-color: var(--accent);
+    accent-color: var(--accent-link);
 }
 
 .option-row__pick input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1528,7 +1626,7 @@ input[type="file"]::file-selector-button:hover {
 }
 
 .option-row__drop:hover {
-    color: var(--bad);
+    color: var(--bad-text);
     border-color: var(--border-strong);
 }
 
@@ -1566,13 +1664,13 @@ input[type="file"]::file-selector-button:hover {
     cursor: pointer;
 }
 
-.icon-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+.icon-btn:hover { border-color: var(--accent); color: var(--accent-ink); }
 .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .icon-btn svg { width: 18px; height: 18px; }
 
 /* Дискета — действие, которое меняет данные: выглядит заметнее отмены. */
-.icon-btn--save { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+.icon-btn--save { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
 .icon-btn--save:hover { background: var(--accent); color: #fff; }
 
 .inline-value { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1757,12 +1855,12 @@ input[type="file"]::file-selector-button:hover {
  * кнопка удаляет, а соседние просто меняют состояние, читается как меню
  * из двух равноправных пунктов, и промах обходится дорого.
  */
-.menu-item--danger { color: var(--bad); }
+.menu-item--danger { color: var(--bad-text); }
 
 .menu-item--danger:hover,
 .menu-item--danger:focus-visible {
     background: var(--bad-soft, rgba(214, 57, 57, 0.12));
-    color: var(--bad);
+    color: var(--bad-text);
 }
 
 /*
@@ -1778,8 +1876,8 @@ input[type="file"]::file-selector-button:hover {
     text-align: start;
 }
 
-.icon-btn--danger { color: var(--bad); }
-.icon-btn--danger:hover { border-color: var(--bad); background: var(--bad); color: #fff; }
+.icon-btn--danger { color: var(--bad-text); }
+.icon-btn--danger:hover { border-color: var(--bad-text); background: var(--bad); color: #fff; }
 
 /* Карандаш заметен только при наведении на строку: в покое он не спорит с именем. */
 .inline-value .icon-btn { opacity: 0; transition: opacity .12s ease; }
@@ -1821,7 +1919,7 @@ input[type="file"]::file-selector-button:hover {
     width: 26px; height: 26px;
     border-radius: 50%;
     background: var(--accent-soft);
-    color: var(--accent-dark);
+    color: var(--accent-ink);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1961,9 +2059,9 @@ input[type="file"]::file-selector-button:hover {
     box-shadow: var(--shadow);
 }
 
-.review--good { border-left-color: var(--good); }
-.review--mid { border-left-color: var(--mid); }
-.review--bad { border-left-color: var(--bad); }
+.review--good { border-left-color: var(--good-text); }
+.review--mid { border-left-color: var(--mid-text); }
+.review--bad { border-left-color: var(--bad-text); }
 
 .review__head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
 
@@ -1980,8 +2078,8 @@ input[type="file"]::file-selector-button:hover {
     font-weight: 600;
 }
 
-.review--good .review__number { background: var(--good-soft); color: var(--good); }
-.review--bad .review__number { background: var(--bad-soft); color: var(--bad); }
+.review--good .review__number { background: var(--good-soft); color: var(--good-text); }
+.review--bad .review__number { background: var(--bad-soft); color: var(--bad-text); }
 
 .review__heading { flex: 1 1 auto; min-width: 0; }
 
@@ -2732,7 +2830,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .work-card__btn--danger:hover,
 .work-card__btn--danger:focus-visible {
     background: var(--bad-soft);
-    color: var(--bad);
+    color: var(--bad-text);
 }
 
 /*
@@ -2857,7 +2955,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     background: var(--accent-soft, #eef4ff);
 }
 
-.work-row__pick { margin: 0; width: 18px; height: 18px; accent-color: var(--accent); }
+.work-row__pick { margin: 0; width: 18px; height: 18px; accent-color: var(--accent-link); }
 
 /* Значок «требует проверки»: лист с карандашом, подпись обязательна. */
 .needs-review { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -3387,11 +3485,11 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .field--error input,
 .field--error select,
 .field--error textarea {
-    border-color: var(--bad);
+    border-color: var(--bad-text);
     background: var(--bad-soft);
 }
 
-.field--error .field__label { color: var(--bad); }
+.field--error .field__label { color: var(--bad-text); }
 
 /* Заголовок внутри блока ошибки — чтобы «что не так» читалось первым. */
 .alert__title { font-weight: 600; margin: 0 0 6px; }

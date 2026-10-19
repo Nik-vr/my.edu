@@ -57,6 +57,32 @@ final class PluginDescriptor
         return $this->error !== null;
     }
 
+    /**
+     * Копия описания с причиной, почему плагином нельзя пользоваться.
+     *
+     * Описание неизменяемое не просто так: его раздают наружу, и меняемое
+     * «задним числом» описание сбило бы панель с толку. Для случая «плагин
+     * признан сломанным» возвращается новая копия, а исходная остаётся
+     * нетронутой — так видно, что было до решения.
+     */
+    public function withError(string $error): self
+    {
+        return new self(
+            $this->id,
+            $this->name,
+            $this->version,
+            $this->dir,
+            $this->namespace,
+            $this->entry,
+            $this->description,
+            $this->author,
+            $this->requiresCore,
+            $this->urlPrefix,
+            $error,
+            $this->providesTasks
+        );
+    }
+
     public function errorMessage(): string
     {
         return $this->error ?? '';

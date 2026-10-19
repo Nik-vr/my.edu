@@ -54,8 +54,7 @@ $view->crumbs([
 <li class="facts__row">
 <span class="facts__label">Кому</span>
 <span class="facts__value">
-<?= $view->e(count($rows)) ?>
-<?= $view->e($view->plural(count($rows), 'ученик', 'ученика', 'учеников')) ?>
+<?= $view->e($view->count((int) (count($rows)),  'ученик', 'ученика', 'учеников')) ?>
 </span>
 </li>
 <li class="facts__row">

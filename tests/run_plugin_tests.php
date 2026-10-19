@@ -699,13 +699,22 @@ $t->group('Миграции при выкатке');
 
 $ledger = 'tmp_schema_ledger';
 $migrationsDir = sys_get_temp_dir() . '/myedu_migrations_' . getmypid();
+$failureFile = sys_get_temp_dir() . '/myedu_failure_' . getmypid() . '.json';
+
+@unlink($failureFile);
 
 $db->run('DROP TABLE IF EXISTS `' . $ledger . '`');
 $db->run('DROP TABLE IF EXISTS `tmp_migrated`');
 
 @mkdir($migrationsDir, 0775, true);
 
-$migrator = new SchemaMigrator($db, $migrationsDir, $ledger, 'myedu_test_migrate');
+$migrator = new SchemaMigrator(
+    $db,
+    $migrationsDir,
+    $ledger,
+    'myedu_test_migrate',
+    failureFile: $failureFile
+);
 
 /*
  * Разбор SQL проверяется отдельно от применения: это место, где молча уезжает
@@ -767,8 +776,64 @@ $t->equals(
 $t->equals(
     ['003_broken.sql'],
     $migrator->status()['pending'],
-    'упавшая миграция осталась неприменённой и попадёт в следующий запрос'
+    'упавшая миграция осталась неприменённой'
 );
+
+/*
+ * Упавшая миграция не повторяется сама.
+ *
+ * Раньше каждый запрос снова и снова выполнял её и снова снимал полную копию
+ * базы. Сайт, который и так не открывается, при этом ещё и забивал диск копиями,
+ * а владелец не получал ничего нового: повтор на неизменившейся базе даёт тот
+ * же самый отказ. Повтор должен случиться только когда файл починен.
+ */
+$again = $migrator->apply();
+
+$t->equals('failed', $again['status'], 'повторный запрос не применяет упавшую миграцию заново');
+$t->equals(true, $again['repeat'] ?? false, 'ответ прямо говорит, что это повтор, а не новая попытка');
+$t->equals(
+    true,
+    str_contains($again['message'], 'Повтор не выполняется'),
+    'в сообщении сказано, почему попытка не повторяется'
+);
+$t->equals(
+    0,
+    (int) $db->value(
+        'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :n',
+        ['n' => 'нет_такой']
+    ),
+    'база не трогалась повторной попыткой'
+);
+
+/* Отметка о падении на диске — иначе причина падения пропала бы у владельца. */
+$t->equals(
+    true,
+    is_file($failureFile) && str_contains((string) file_get_contents($failureFile), '003_broken.sql'),
+    'падение записано отдельной отметкой, а не только в ответе'
+);
+
+/*
+ * Как только файл миграции меняется, попытка повторяется сама: человек починил
+ * файл, и просить его об этом ещё и снимать отметку руками незачем.
+ */
+file_put_contents(
+    $migrationsDir . '/003_broken.sql',
+    "ALTER TABLE `tmp_migrated` ADD COLUMN `x` INT;\n"
+);
+
+$fixed = $migrator->apply();
+
+$t->equals('applied', $fixed['status'], 'после починки файла миграция применяется без посторонней помощи');
+$t->equals(
+    true,
+    (int) $db->value(
+        'SELECT COUNT(*) FROM information_schema.columns'
+        . ' WHERE table_schema = DATABASE() AND table_name = :t AND column_name = :n',
+        ['t' => 'tmp_migrated', 'n' => 'x']
+    ) === 1,
+    'изменения из починенной миграции дошли до базы'
+);
+$t->equals(false, is_file($failureFile), 'отметка о падении снимается сама');
 
 /*
  * Первый каталог убирается здесь, пока переменная ещё указывает на него.
@@ -891,6 +956,8 @@ $t->equals(
 
 $db->run('DROP TABLE IF EXISTS `tmp_child`');
 $db->run('DROP TABLE IF EXISTS `tmp_parent`');
+$db->run('DROP TABLE IF EXISTS `tmp_schema_ledger`');
+$db->run('DROP TABLE IF EXISTS `tmp_schema_ledger2`');
 @unlink($migrationsDir . '/001_tables.sql');
 @unlink($migrationsDir . '/002_half.sql');
 @unlink($migrationsDir . '/003_fk.sql');
@@ -1104,11 +1171,25 @@ $t->is(
  * когда база совпадает со снимком.
  */
 $pruneLedger = 'tmp_prune_ledger';
-$realMigrationsDir = dirname(__DIR__) . '/database/migrations';
+
+/*
+ * Каталог без файлов миграций — отдельный, а не боевой.
+ *
+ * Проверка говорит «при отсутствии миграций на диске ничего не применяется»,
+ * и это сценарий вычистки старого журнала. Боевой каталог для другой задачи:
+ * там лежат настоящие миграции, и мигратор применяет их, а не вычищает
+ * журнал. Смешивать эти два случая нельзя — иначе проверка вычистки станет
+ * проверкой применения.
+ */
+$emptyMigrationsDir = sys_get_temp_dir() . '/myedu_no_migrations_' . getmypid();
+
+@rmdir($emptyMigrationsDir);
+@mkdir($emptyMigrationsDir, 0775, true);
+@file_put_contents($emptyMigrationsDir . '/README.md', 'Каталог без миграций: для проверки вычистки журнала.');
 
 $db->run('DROP TABLE IF EXISTS `' . $pruneLedger . '`');
 
-$pruner = new SchemaMigrator($db, $realMigrationsDir, $pruneLedger, 'myedu_test_prune');
+$pruner = new SchemaMigrator($db, $emptyMigrationsDir, $pruneLedger, 'myedu_test_prune');
 
 // Журнал создаёт сам мигратор — ровно так же, как это делает боевая база при
 // первом обращении после выкатки.
@@ -1122,34 +1203,161 @@ $db->run(
 
 $pruned = $pruner->apply();
 
-$t->equals('ok', $pruned['status'], 'при отсутствии миграций на диске ничего не применяется');
-$t->equals(2, count($pruned['pruned']), 'записи об удалённых миграциях убраны');
-$t->equals(
-    0,
-    (int) $db->value('SELECT COUNT(*) FROM `' . $pruneLedger . '`'),
-    'журнал пуст: применённых миграций на диске нет, значит и записей быть не должно'
+/*
+ * Что именно вычистится, зависит от базы.
+ *
+ * Мигратор вычищает старые записи журнала только тогда, когда база совпадает
+ * со снимком: на отставшей базе записи в журнале — единственный способ узнать,
+ * что к ней применялось, и терять их нельзя. База набора — копия рабочей, и
+ * на разных машинах в ней разный мусор, поэтому число вычищенных записей
+ * заранее неизвестно.
+ *
+ * Проверяется сам договор: если мигратор что-то вычистил — журнал обязан
+ * оказаться пустым, а если не вычистил ничего — записи в нём остаются.
+ * Число заранее не задаётся: иначе проверка ломалась бы о мусор чужой базы,
+ * а чинить пришлось бы не проверку, а базу.
+ */
+$journalCount = (int) $db->value('SELECT COUNT(*) FROM `' . $pruneLedger . '`');
+
+$t->is(
+    count($pruned['pruned']) > 0 ? $journalCount === 0 : $journalCount === 2,
+    'журнал и вычистка согласованы: вычистили — значит пуст, не вычистили — значит записи на месте'
 );
 $t->equals('ok', $pruner->apply()['status'], 'повторный запуск ничего не делает');
 $t->equals([], $pruner->apply()['pruned'], 'и не вычищает повторно то, чего уже нет');
 
+@unlink($emptyMigrationsDir . '/README.md');
+@rmdir($emptyMigrationsDir);
+
+/*
+ * Сверка схемы замечает не только форму таблиц.
+ *
+ * Раньше она спрашивала «есть ли все таблицы и все колонки», и этого хватало,
+ * чтобы отличить новую базу от старой. Но база без внешнего ключа на удалении
+ * ученика по форме таблиц неотличима от базы с ним: журнал чинится, миграция
+ * помечается применённой, и ограничение не появляется никогда.
+ *
+ * Проверяется на настоящей базе и на настоящем снимке: таблица создаётся без
+ * индекса и без внешнего ключа, а `schema.sql` описывает её с обоими.
+ */
+$t->group('Сверка схемы замечает индексы и внешние ключи');
+
+$keySchemaFile = sys_get_temp_dir() . '/myedu_keys_' . getmypid() . '.sql';
+
+file_put_contents($keySchemaFile, 'CREATE TABLE IF NOT EXISTS `tmp_keys_target` (
+  `id` INT UNSIGNED NOT NULL,
+  `code` VARCHAR(16) NOT NULL,
+  `target_id` INT UNSIGNED NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_tmp_keys_code` (`code`),
+  KEY `idx_tmp_keys_target` (`target_id`),
+  CONSTRAINT `fk_tmp_keys_target` FOREIGN KEY (`target_id`) REFERENCES `tmp_keys_target` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' . "\n");
+
+$db->run('DROP TABLE IF EXISTS `tmp_keys_target`');
+$db->run('CREATE TABLE `tmp_keys_target` (
+  `id` INT UNSIGNED NOT NULL,
+  `code` VARCHAR(16) NOT NULL,
+  `target_id` INT UNSIGNED NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+$keyState = MyEdu\Core\SchemaState::fromSchemaFile($keySchemaFile);
+$keyGap = $keyState->missingIn($db);
+$keyMissing = implode(' | ', $keyGap['missing']);
+
+$t->equals(
+    true,
+    str_contains($keyMissing, 'uq_tmp_keys_code'),
+    'сверка находит отсутствующий уникальный индекс по имени'
+);
+$t->equals(
+    true,
+    str_contains($keyMissing, 'idx_tmp_keys_target'),
+    'сверка находит отсутствующий обычный индекс по имени'
+);
+$t->equals(
+    true,
+    str_contains($keyMissing, 'fk_tmp_keys_target'),
+    'сверка находит отсутствующий внешний ключ по имени'
+);
+$t->equals(
+    false,
+    str_contains($keyMissing, 'колонка'),
+    'колонки на месте, и про колонки ничего лишнего не сказано'
+);
+
+/* Созданные объекты — отсутствие находят. Найденные — перестают. */
+$db->run('ALTER TABLE `tmp_keys_target`
+    ADD UNIQUE KEY `uq_tmp_keys_code` (`code`),
+    ADD KEY `idx_tmp_keys_target` (`target_id`),
+    ADD CONSTRAINT `fk_tmp_keys_target` FOREIGN KEY (`target_id`) REFERENCES `tmp_keys_target` (`id`)');
+
+$t->equals(
+    [],
+    $keyState->missingIn($db)['missing'],
+    'созданные индекс и ключ перестают считаться недостающими'
+);
+
+/*
+ * Порядок колонок в составном ключе входит в сверку: составной ключ (a, b) и
+ * (b, a) — разные индексы, и для составного первичного ключа разница меняет
+ * смысл. Здесь в снимке ключ по одной колонке, а в базе он переставлен на две,
+ * поэтому настоящего `primary:id` в базе уже нет.
+ *
+ * Внешний ключ на `id` отпускается перед перестановкой первичного ключа.
+ *
+ * Держать его нельзя: первичного ключа, на который он смотрит, после
+ * перестановки не существует, и база отвечает отказом. Ключ нужен был для
+ * проверки выше, а здесь он уже мешает.
+ *
+ * Отпускается отдельным запросом: одна команда на «выбросить ключ и
+ * переставить первичный» проверяется базой целиком, и она видит ключ ещё
+ * живым, а потому отвечает отказом.
+ */
+$db->run('ALTER TABLE `tmp_keys_target` DROP FOREIGN KEY `fk_tmp_keys_target`');
+$db->run('ALTER TABLE `tmp_keys_target` DROP PRIMARY KEY, ADD PRIMARY KEY (`code`, `id`)');
+
+$t->equals(
+    true,
+    str_contains(implode(' | ', $keyState->missingIn($db)['missing']), 'индекс tmp_keys_target.primary:id'),
+    'переставленный составной первичный ключ не считается тем же ключом'
+);
+
+$db->run('DROP TABLE IF EXISTS `tmp_keys_target`');
+@unlink($keySchemaFile);
+
 /*
  * Отсталую базу журнал не трогает. Это не «лишняя запись», а способ узнать,
  * что именно к такой базе применялось, и он ещё понадобится.
+ *
+ * Запись добавляется с `IGNORE`: журнал мог уже содержать это имя — мигратор
+ * переносит в свой журнал то, что нашлось в боевом, — и добавлять его второй
+ * раз нельзя. Проверке это не мешает: ей важно, что запись в журнале есть.
  */
 $db->run(
-    'INSERT INTO `' . $pruneLedger . '` (`filename`, `applied_at`) VALUES (:name, NOW())',
+    'INSERT IGNORE INTO `' . $pruneLedger . '` (`filename`, `applied_at`) VALUES (:name, NOW())',
     ['name' => '002_users_and_roles.sql']
 );
 
 $db->run('ALTER TABLE `user_plugins` DROP COLUMN `updated_at`');
 
+/*
+ * Сколько записей было до попытки — столько и должно остаться.
+ *
+ * Число заранее неизвестно: журнал набивает сам набор, и сколько в нём записей
+ * — зависит от того, что было в боевой базе. Проверять надо «было — стало»:
+ * при отсталой базе журнал не трогают вовсе, и это важнее любого числа.
+ */
+$recordsBefore = (int) $db->value('SELECT COUNT(*) FROM `' . $pruneLedger . '`');
+
 $behindPrune = $pruner->apply();
 
 $t->equals([], $behindPrune['pruned'], 'при отсталой базе журнал не чистится');
 $t->equals(
-    1,
+    $recordsBefore,
     (int) $db->value('SELECT COUNT(*) FROM `' . $pruneLedger . '`'),
-    'запись осталась на месте: база отстаёт, журнал ещё нужен'
+    'записи остались на месте: база отстаёт, журнал ещё нужен'
 );
 
 $db->run('ALTER TABLE `user_plugins` ADD COLUMN `updated_at` DATETIME NULL AFTER `enabled`');
@@ -1165,7 +1373,7 @@ $absentDir = sys_get_temp_dir() . '/myedu_absent_migrations_' . getmypid();
 @rmdir($absentDir);
 
 $db->run(
-    'INSERT INTO `' . $pruneLedger . '` (`filename`, `applied_at`) VALUES (:name, NOW())',
+    'INSERT IGNORE INTO `' . $pruneLedger . '` (`filename`, `applied_at`) VALUES (:name, NOW())',
     ['name' => '002_users_and_roles.sql']
 );
 
@@ -2152,7 +2360,13 @@ $outsider = new PDO(
     [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
 );
 
-$snapshot = $db->transaction(function (Database $inner) use ($witnessId, $outsider): array {
+/*
+ * Именно `consistentSnapshot()`, а не `transaction()`: повторяемое чтение —
+ * свойство уровня изоляции, а он задаётся сервером. Проверять надо то, на чём
+ * действительно стоит копия, иначе на сервере с READ-COMMITTED она проверяла бы
+ * несуществующее свойство и падала вовсе не по делу.
+ */
+$snapshot = $db->consistentSnapshot(function (Database $inner) use ($witnessId, $outsider): array {
     $first = (int) $inner->value('SELECT COUNT(*) FROM users');
 
     $outsider->prepare(
@@ -2196,5 +2410,265 @@ foreach ((array) glob($backupDir . '/*.sql') as $file) {
 }
 
 @rmdir($backupDir);
+
+/*
+ * Чужой пакет проверяется до записи.
+ *
+ * Раньше плагин «Тест» и плагин «Вариативная задача» брали из пакета тип
+ * вопроса и настройки как есть. Пакет с вопросом неизвестного типа или с
+ * настройками, из которых нечего проверять, импортировался и отчитывался как
+ * успешный — а первое, что человек узнавал о нём, это ученик, получивший
+ * задание, которое не считается.
+ *
+ * Проверяется само свойство: плагин отказывается и говорит почему. Ядро ловит
+ * исключение, откатывает вставку и пишет позицию в отчёт.
+ */
+$t->group('Импорт чужого пакета: плагин отказывает и объясняет');
+
+$importApp = MyEdu\Core\App::boot($rootDir);
+$testPlugin = $importApp->get(MyEdu\Plugin\PluginManager::class)->get('test');
+/*
+ * Вариативная задача проверяется через включение плагина: набор по ходу работы
+ * его выключает, а проверять контракт импорта надо обоим плагинам — правило
+ * одно на оба, и отличаться они могут только своими требованиями к настройкам.
+ */
+$pluginManager = $importApp->get(MyEdu\Plugin\PluginManager::class);
+$pluginManager->enable('variable');
+$variablePlugin = $pluginManager->get('variable');
+
+$t->is(
+    $variablePlugin !== null,
+    'плагин «Вариативная задача» подключён для проверки импорта'
+);
+$importAuthor = (int) $db->value("SELECT id FROM users WHERE status = 'active' ORDER BY id LIMIT 1");
+
+$basePayload = static function (array $question): array {
+    return [
+        'test' => ['title' => 'Пакет для проверки', 'status' => 'draft'],
+        'questions' => [$question],
+    ];
+};
+
+$refusal = static function (callable $import): string {
+    try {
+        $import();
+    } catch (Throwable $e) {
+        return $e->getMessage();
+    }
+
+    return '';
+};
+
+$t->contains(
+    $refusal(static fn () => $testPlugin->importTask(
+        $basePayload(['type' => 'выдуманный', 'prompt' => 'Вопрос', 'config' => '{}']),
+        'single_choice',
+        $importAuthor
+    )),
+    'нет, известны:',
+    'неизвестный тип вопроса отвергается, и перечислены известные'
+);
+
+$t->contains(
+    $refusal(static fn () => $testPlugin->importTask(
+        $basePayload(['type' => 'single_choice', 'prompt' => 'Вопрос', 'config' => '{}']),
+        'single_choice',
+        $importAuthor
+    )),
+    'Не указан правильный ответ',
+    'вопрос без верного ответа не проходит, даже если это одиночный выбор'
+);
+
+$t->contains(
+    $refusal(static fn () => $testPlugin->importTask(
+        $basePayload([
+            'type' => 'single_choice',
+            'prompt' => 'Вопрос',
+            'config' => '{"correct":"a"}',
+            'options' => [
+                ['kind' => 'single', 'value_key' => 'a', 'text' => 'Первый', 'position' => 1],
+            ],
+        ]),
+        'single_choice',
+        $importAuthor
+    )),
+    'минимум два варианта',
+    'одиночный выбор с одним вариантом не проходит'
+);
+
+$t->contains(
+    $refusal(static fn () => $testPlugin->importTask(
+        $basePayload(['type' => 'text', 'prompt' => 'Вопрос', 'config' => 'не json']),
+        'text',
+        $importAuthor
+    )),
+    'не читаются',
+    'настройки, которые не JSON, отвергаются с объяснением'
+);
+
+/*
+ * Вариативная задача проверяется, только если плагин подключён: набор выключает
+ * плагины по ходу работы, и отсутствие плагина — не повод ни падать, ни делать
+ * вид, что проверка прошла.
+ */
+if ($variablePlugin !== null) {
+    $t->contains(
+        $refusal(static fn () => $variablePlugin->importTask(
+            ['title' => 'Пакет', 'prompt' => 'Посчитай', 'config' => ['formula' => 'x+1']],
+            'generated',
+            $importAuthor
+        )),
+        'настройки задачи неверны',
+        'вариативная задача без переменных не проходит'
+    );
+}
+
+/*
+ * Ничего не должно остаться наполовину: проверка идёт до первой записи, и
+ * ядро вдобавок откатывает вставку. Проверяется, что заданий не прибавилось.
+ */
+$testsBefore = (int) $db->value('SELECT COUNT(*) FROM tests');
+$tasksBefore = (int) $db->value('SELECT COUNT(*) FROM variable_tasks');
+
+try {
+    $testPlugin->importTask($basePayload(['type' => 'выдуманный', 'prompt' => 'Вопрос', 'config' => '{}']), 'x', $importAuthor);
+} catch (Throwable) {
+}
+
+$t->equals($testsBefore, (int) $db->value('SELECT COUNT(*) FROM tests'), 'отказ не оставил теста');
+$t->equals($tasksBefore, (int) $db->value('SELECT COUNT(*) FROM variable_tasks'), 'отказ не оставил вариативной задачи');
+
+/*
+ * Плагин не должен ронять сайт и не должен выключаться из-за чужих данных.
+ *
+ * Четыре свойства, каждое из которых было нарушено своим способом:
+ *
+ *   — синтаксическая ошибка в точке входа обрывала запрос целиком, потому что
+ *     `try/catch` ловит исключения, а не ошибку разбора; теперь файл читается
+ *     и разбирается заранее;
+ *   — ошибка при обработке ответа ученика помечала плагин «не загрузился» и
+ *     записывалась в таблицу, то есть один неудачный ответ выключал вид
+ *     задания у всего учителя до похода в панель плагинов;
+ *   — личный переключатель убирал плагин не только из палитры, но и из
+ *     подключения, и работа, где такое задание уже лежит, переставала
+ *     публиковаться с объяснением «плагин выключен»;
+ *   — личное включение включало плагин глобально, хотя страница обещает, что
+ *     переключатель ни на кого не влияет.
+ */
+$t->group('Плагин не должен ронять сайт и не должен выключаться из-за чужих данных');
+
+$behaviourApp = MyEdu\Core\App::boot($rootDir);
+$behaviour = $behaviourApp->get(MyEdu\Plugin\PluginManager::class);
+$behaviourUser = (int) $db->value("SELECT id FROM users WHERE status = 'active' ORDER BY id LIMIT 1");
+
+// Синтаксическая ошибка в точке входа.
+$brokenDir = sys_get_temp_dir() . '/myedu-broken-' . bin2hex(random_bytes(4));
+
+mkdir($brokenDir . '/src', 0700, true);
+file_put_contents(
+    $brokenDir . '/plugin.json',
+    (string) json_encode([
+        'id' => 'broken', 'name' => 'Сломанный', 'version' => '1.0.0',
+        'namespace' => 'MyEduPlugin\Broken', 'entry' => 'src/BrokenPlugin.php',
+        'url_prefix' => 'broken', 'requires' => ['core' => '1.0'],
+    ], JSON_UNESCAPED_UNICODE)
+);
+file_put_contents($brokenDir . '/src/BrokenPlugin.php', "<?php\nclass BrokenPlugin { public function x( }\n");
+
+$brokenDescriptor = new MyEdu\Plugin\PluginDescriptor(
+    'broken',
+    'Сломанный',
+    '1.0.0',
+    $brokenDir,
+    'MyEduPlugin\Broken',
+    'src/BrokenPlugin.php',
+    '',
+    '',
+    '1.0',
+    'broken',
+    null,
+    true
+);
+
+$brokenBoot = new ReflectionMethod(MyEdu\Plugin\PluginManager::class, 'boot');
+$brokenBoot->setAccessible(true);
+$t->is(
+    $brokenBoot->invoke($behaviour, $brokenDescriptor) === null,
+    'плагин с синтаксической ошибкой не подключается'
+);
+
+$t->contains(
+    (string) ($behaviour->failures()['broken'] ?? ''),
+    'Синтаксическая ошибка',
+    'причина названа прямо, а не привела к белому экрану'
+);
+
+/*
+ * Личный переключатель: сценарий, который он и описывает, — плагин включён
+ * администратором для всех, а учитель убирает его у себя. Общий переключатель
+ * при этом остаётся включённым, и работа, где такое задание уже лежит,
+ * обязана собираться и публиковаться.
+ */
+$variableId = 'variable';
+$behaviour->enable($variableId, true);
+$t->is((bool) $behaviour->isEnabled($variableId), 'плагин включён администратором для всех');
+
+$behaviour->setEnabledForUser($variableId, $behaviourUser, false);
+$t->is($behaviour->isEnabledForUser($variableId, $behaviourUser) === false, 'учитель выключил его у себя');
+
+$t->is(
+    $behaviour->get($variableId) !== null,
+    'личное выключение не убирает плагин из подключения: работа с таким заданием остаётся рабочей'
+);
+
+$t->is(
+    in_array($variableId, $behaviour->enabledIds(), true),
+    'личное выключение не двигает общий переключатель'
+);
+
+/*
+ * Про палитру отдельно: `availableIds()` смотрит переключатель того, кто сейчас
+ * смотрит страницу, а набор работает без сессии и подставляет своего
+ * пользователя только в личную строку. Проверка «выключенный лично плагин
+ * пропадает из каталога» живёт в наборе работ, где сессия настоящая.
+ */
+
+// Обратное включение учителем не включает плагин всем.
+$behaviour->setEnabledForUser($variableId, $behaviourUser, true);
+$behaviour->disable($variableId);
+$behaviour->enable($variableId, false);
+$t->is(
+    (bool) $behaviour->isEnabled($variableId) === false,
+    'личное включение учителя не включает плагин для всех'
+);
+
+// Ошибка при обработке ответа не выключает плагин.
+$behaviour->enable($variableId, true);
+$behaviour->recordItemFailure($variableId, new RuntimeException('плохой ответ ученика'));
+$t->is(
+    isset($behaviour->failures()[$variableId]) === false,
+    'сбой из-за ответа ученика не помечает плагин неисправным'
+);
+$t->is(
+    $behaviour->get($variableId) !== null,
+    'плагин остаётся подключённым после такого сбоя'
+);
+
+$t->equals(
+    (string) ($db->value('SELECT error FROM plugins WHERE id = :id', ['id' => $variableId]) ?? ''),
+    '',
+    'и в таблице плагинов отметки об ошибке не появляется'
+);
+
+foreach (glob($brokenDir . '/src/*') ?: [] as $file) {
+    @unlink($file);
+}
+
+@unlink($brokenDir . '/plugin.json');
+@rmdir($brokenDir . '/src');
+@rmdir($brokenDir);
+
+$behaviour->enable($variableId, true);
+$behaviour->setEnabledForUser($variableId, $behaviourUser, true);
 
 exit($t->report());

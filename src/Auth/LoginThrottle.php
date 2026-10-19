@@ -12,8 +12,16 @@ use MyEdu\Core\Database;
  * Единый текст ошибки и проверка фиктивного хэша прячут, существует ли учётная
  * запись, но не мешают подбирать пароль к найденному адресу: миллион неудачных
  * попыток для сервера выглядит как миллион обычных входов. Здесь считаются
- * неудачи по паре «логин + адрес источника» и после порога вход временно
- * прекращается.
+ * неудачи и закрываются два входа: по паре «логин + адрес источника» и по
+ * одному логину.
+ *
+ * Второй счётчик — от чаяний, что первый достаточно. Не достаточно: адрес
+ * источника меняется на каждом запросе из чужой сети, и перебор на логине разлетался
+ * по тысяче адресов, обходя любой счёт. Счёт по логину не меняется от смены
+ * адреса, поэтому окно держится на счётчике, который атакующий не может
+ * размножить. Плата за это — легитимный человек с забытым паролем блокируется
+ * после стольких же попыток со всех адресов; это заметно безопаснее, чем
+ * бесконечный перебор одной чужой учётной записи.
  *
  * Ключ — sha256 от логина и адреса. Сам логин вводит посетитель, и держать
  * чужие адреса в таблице ограничений незачем: для подбора пароля достаточно
@@ -46,7 +54,17 @@ final class LoginThrottle
      */
     public function waitSeconds(string $identifier, string $ip): int
     {
-        $key = $this->key($identifier, $ip);
+        $wait = 0;
+
+        foreach ($this->keys($identifier, $ip) as $key) {
+            $wait = max($wait, $this->waitForKey($key));
+        }
+
+        return $wait;
+    }
+
+    private function waitForKey(string $key): int
+    {
         $row = $this->db->one(
             'SELECT failures, first_failed_at FROM login_throttle WHERE throttle_key = :k',
             ['k' => $key]
@@ -70,61 +88,82 @@ final class LoginThrottle
         return $left;
     }
 
-    /**
+/**
      * Отметить неудачную попытку.
      *
-     * Решение о сбросе счётчика принимается здесь, а не в SQL: условие
-     * «прошло ли окно» в ON DUPLICATE KEY UPDATE с подставленным параметром
-     * внутри INTERVAL базы понимают по-разному, и запрос падал там, где
-     * проверка должна была тихо обновить строку.
+     * Счётчик наращивает один атомарный UPDATE, и это главное: раньше неудачи
+     * считали чтением, а запись делали следом. Две одновременные попытки по
+     * несуществующему логину обе видели пустую строку и обе вставляли её —
+     * вторая падала с «Duplicate entry», и вместо отказа на входе человек
+     * получал 500.
+     *
+     * Отдельные операции, а не один INSERT ... ON DUPLICATE KEY UPDATE: на этой
+     * СУБД подзапрос в INSERT ... SELECT роняет подготовленный запрос, а в ветке
+     * ON DUPLICATE KEY UPDATE именованные параметры работают не всегда. Поэтому
+     * строка создаётся вставкой с игнорированием повторов, а счётчик
+     * увеличивается UPDATE'ом — он и сам по себе атомарен.
+     *
+     * Параметры здесь позиционные, и это не вкус: именованные внутри IF() в
+     * многострочном UPDATE на этой связке PHP и MariaDB дают «Invalid parameter
+     * number» — запрос падает на ровном месте, а выглядит как ошибка в данных.
+     *
+     * Сброс окна выражен через дату отсечки: условие «прошло ли окно» передаётся
+     * датой, а не вычисляется на стороне базы, где INTERVAL с подставленным
+     * параметром понимают по-разному.
      */
     public function registerFailure(string $identifier, string $ip): void
     {
-        $key = $this->key($identifier, $ip);
         $now = date('Y-m-d H:i:s');
-        $row = $this->db->one(
-            'SELECT failures, last_failed_at FROM login_throttle WHERE throttle_key = :k',
-            ['k' => $key]
-        );
+        $cutoff = date('Y-m-d H:i:s', time() - $this->windowSeconds);
 
-        if ($row === null) {
-            /*
-             * Имена параметров разные, хотя значение одно: повтор одного
-             * именованного параметра PDO принимает не всегда, и запрос падал
-             * с «Invalid parameter number» там, где данные одинаковые.
-             */
+        foreach ($this->keys($identifier, $ip) as $key) {
+            // Ноль, а не единица: счётчик ниже увеличивается отдельным
+            // UPDATE'ом, и строка, созданная единицей, считалась бы дважды —
+            // уже на первой попытке.
             $this->db->run(
-                'INSERT INTO login_throttle (throttle_key, failures, first_failed_at, last_failed_at)
-                      VALUES (:k, 1, :first, :last)',
-                ['k' => $key, 'first' => $now, 'last' => $now]
+                'INSERT IGNORE INTO login_throttle (throttle_key, failures, first_failed_at, last_failed_at)
+                      VALUES (?, 0, ?, ?)',
+                [$key, $now, $now]
             );
 
-            return;
+            // Окно прошло — начинаем счёт заново.
+            $this->db->run(
+                'UPDATE login_throttle
+                    SET failures = IF(last_failed_at <= ?, 1, failures),
+                        first_failed_at = IF(last_failed_at <= ?, ?, first_failed_at),
+                        last_failed_at = ?
+                  WHERE throttle_key = ?
+                    AND last_failed_at <= ?',
+                [$cutoff, $cutoff, $now, $now, $key, $cutoff]
+            );
+
+            // Окно не прошло: счётчик растёт на единицу.
+            $this->db->run(
+                'UPDATE login_throttle
+                    SET failures = failures + 1, last_failed_at = ?
+                  WHERE throttle_key = ?
+                    AND last_failed_at > ?',
+                [$now, $key, $cutoff]
+            );
         }
-
-        $last = strtotime((string) $row['last_failed_at']) ?: 0;
-        $windowPassed = (time() - $last) >= $this->windowSeconds;
-
-        // Окно прошло — начинаем счёт заново, иначе старая неудача вечно держала
-        // бы блокировку и человек не смог бы войти никогда.
-        $failures = $windowPassed ? 1 : (int) $row['failures'] + 1;
-        $first = $windowPassed ? $now : (string) $row['last_failed_at'];
-
-        $this->db->run(
-            'UPDATE login_throttle
-                SET failures = :count, first_failed_at = :first, last_failed_at = :last
-              WHERE throttle_key = :k',
-            ['count' => $failures, 'first' => $first, 'last' => $now, 'k' => $key]
-        );
     }
 
     /** Успешный вход снимает счётчик: человек вошёл, перебора больше нет. */
     public function registerSuccess(string $identifier, string $ip): void
     {
-        $this->db->run(
-            'DELETE FROM login_throttle WHERE throttle_key = :k',
-            ['k' => $this->key($identifier, $ip)]
-        );
+        foreach ($this->keys($identifier, $ip) as $key) {
+            $this->db->run('DELETE FROM login_throttle WHERE throttle_key = :k', ['k' => $key]);
+        }
+    }
+
+    /**
+     * Ключи, по которым считается одна и та же неудачная попытка.
+     *
+     * @return list<string>
+     */
+    private function keys(string $identifier, string $ip): array
+    {
+        return [$this->key($identifier, $ip), $this->key($identifier, '')];
     }
 
     private function key(string $identifier, string $ip): string

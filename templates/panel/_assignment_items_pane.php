@@ -382,8 +382,17 @@ $variantCount = count($rows);
   </div>
 
   <div class="modal-body">
-   <div class="task-editor" data-editor-for="<?= $view->e((int) ($editor['itemId'] ?? 0)) ?>"
-    data-editor-body>
+<div class="task-editor" data-editor-for="<?= $view->e((int) ($editor['itemId'] ?? 0)) ?>"
+     <?php /*
+      * Адрес черновика — рядом с формой, а не собран скриптом.
+      *
+      * Скрипт знает только номер позиции (`data-editor-for`); собирать из него
+      * путь значило бы держать в браузере копию правил маршрутизации, которая
+      * рано или поздно разойдётся с серверной. Здесь адрес уже готов, и вместе
+      * с ним рядом лежит номер работы.
+      */ ?>
+     data-draft-url="<?= $view->e($view->url($itemsUrl . '/' . (int) ($editor['itemId'] ?? 0) . '/draft')) ?>"
+     data-editor-body>
      <?php if ($editor !== null): ?>
      <?= $view->raw($editor['html']) ?>
      <?php endif; ?>

@@ -496,6 +496,37 @@ CREATE TABLE IF NOT EXISTS `assignment_items` (
     FOREIGN KEY (`assignment_id`) REFERENCES `assignments` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Черновик правки позиции работы.
+--
+-- Что это: значения полей, которые учитель набрал, но ещё не сохранил. Раньше
+-- черновик жил в sessionStorage и умирал вместе со вкладкой — работа на пять
+-- минут могла уйти из-за того, что окно закрылось или завис браузер.
+--
+-- Почему отдельная таблица, а не столбец в позиции: черновик принадлежит
+-- человеку, а не позиции. У одного задания может быть несколько редакторов
+-- (два учителя ведут одну работу), и у каждого своя недописанная правка.
+-- Поэтому уникальность по (автор, позиция), а не по позиции.
+--
+-- Ничего не публикуется: строка живёт отдельно от задания, ученик её не видит,
+-- и «сохранить» по-прежнему остаётся единственным способом опубликовать.
+CREATE TABLE IF NOT EXISTS `assignment_drafts` (
+  `id`            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `assignment_id` INT UNSIGNED NOT NULL,
+  `item_id`       INT UNSIGNED NOT NULL,
+  `author_id`     INT UNSIGNED NOT NULL COMMENT 'кто набирал: черновик виден только ему',
+  `fields`        TEXT         NOT NULL COMMENT 'значения полей позиции в виде JSON',
+  `updated_at`    DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_assignment_drafts_author_item` (`author_id`,`item_id`),
+  KEY `idx_assignment_drafts_assignment` (`assignment_id`),
+  CONSTRAINT `fk_assignment_drafts_assignment`
+    FOREIGN KEY (`assignment_id`) REFERENCES `assignments` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_assignment_drafts_item`
+    FOREIGN KEY (`item_id`) REFERENCES `assignment_items` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_assignment_drafts_author`
+    FOREIGN KEY (`author_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Попытка ученика по работе. token — одноразовый ключ доступа, как у тестов:
 -- по голой ссылке чужую работу не открыть. manual = 1 — ждёт проверки учителем.
 CREATE TABLE IF NOT EXISTS `assignment_attempts` (

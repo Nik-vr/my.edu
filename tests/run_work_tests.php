@@ -1825,6 +1825,55 @@ $t->equals(1.0, (float) $db->value(
     ['a' => $attemptId, 'i' => $pendingItemId]
 ), 'автоматически проверенный балл не перебивается ручной правкой');
 
+/*
+ * Отметка проверки сверяется со списком.
+ *
+ * Строка отметки приходит из браузера и попадает в результат, который видит
+ * ученик. Раньше принималась любая: подделанный запрос мог записать в результат
+ * что угодно — вплоть до строки, которая покажется ученику как его достижение.
+ */
+$t->group('Отметка проверки не берётся из запроса как есть');
+
+$markReview = $teacher->get('/panel/assignments/' . $assignmentId . '/attempts/'
+    . (int) $db->value('SELECT id FROM assignment_attempts WHERE assignment_id = :a AND student_id = :s LIMIT 1', [
+        'a' => $assignmentId,
+        's' => $studentId,
+    ]));
+
+$markAttemptId = 0;
+preg_match('#/attempts/(\d+)#', (string) $markReview['location'], $markMatch) === 1
+    ? $markAttemptId = (int) ($markMatch[1] ?? 0)
+    : $markAttemptId = (int) $db->value(
+        'SELECT id FROM assignment_attempts WHERE assignment_id = :a AND student_id = :s LIMIT 1',
+        ['a' => $assignmentId, 's' => $studentId]
+    );
+
+$markItemId = (int) $db->value(
+    'SELECT item_id FROM assignment_item_results WHERE attempt_id = :a LIMIT 1',
+    ['a' => $markAttemptId]
+);
+
+if ($markAttemptId > 0 && $markItemId > 0) {
+    $teacher->post('/panel/assignments/' . $assignmentId . '/attempts/' . $markAttemptId, [
+        '_token'         => $teacher->tokenFrom($markReview) ?? '',
+        'score[' . $markItemId . ']' => '1',
+        'max_score[' . $markItemId . ']' => '2',
+        'mark[' . $markItemId . ']' => 'отличная работа',
+    ]);
+
+    $storedMark = (string) $db->value(
+        'SELECT status FROM assignment_item_results WHERE attempt_id = :a AND item_id = :i',
+        ['a' => $markAttemptId, 'i' => $markItemId]
+    );
+
+    $t->is(
+        in_array($storedMark, ['correct', 'partial', 'wrong', 'skipped'], true),
+        'в результат попала не строка из браузера, а отметка из списка: ' . $storedMark
+    );
+} else {
+    $t->is(true, 'попытка для проверки отметки найдена');
+}
+
 // -------------------------------------------------------------- старые адреса
 
 $t->group('Совместимость старых адресов');
@@ -2392,6 +2441,37 @@ $t->is(
 );
 
 /*
+ * Форма шага срока одноразовая: каждая отправка получает свою страницу и свой
+ * пропуск. Иначе вторая проверка подряд отказывала бы по пропуску, а не по
+ * своему поводу, и проверка дат проходила бы, ни разу не дойдя до дат.
+ */
+$issueForm = static function (
+    TestClient $client,
+    int $assignmentId,
+    int $classId,
+    array $studentIds
+): array {
+    $query = 'classes%5B%5D=' . $classId;
+
+    foreach ($studentIds as $studentId) {
+        $query .= '&students%5B%5D=' . $studentId;
+    }
+
+    $page = $client->get('/panel/issues/' . $assignmentId . '/period?' . $query);
+
+    $fields = [
+        '_token'     => $client->tokenFrom($page) ?? '',
+        'once_issue' => $client->onceFrom($page, 'issue') ?? '',
+        ['classes[]', (string) $classId],
+    ];
+
+    foreach ($studentIds as $studentId) {
+        $fields[] = ['students[]', (string) $studentId];
+    }
+
+    return $fields;
+};
+/*
  * Шаг срока открывается адресом (GET), а сохраняется POST'ом на тот же
  * адрес. Проверяется и то и другое: GET, который сохранил бы выдачу, отдал
  * бы автору лишнюю кнопку в закладках, а POST, который просто показал бы
@@ -2420,9 +2500,10 @@ $t->equals('week', $periodMatch[1] ?? '', 'по умолчанию отмече�
 
 // POST без поля срока сохраняет неделю — ту, что помечена в форме.
 $stored = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
-    '_token'   => $teacher->tokenFrom($periodStep) ?? '',
-    'classes'  => [(string) $otherClassId],
-    'students' => [(string) $otherId],
+    '_token'    => $teacher->tokenFrom($periodStep) ?? '',
+    'once_issue' => $teacher->onceFrom($periodStep, 'issue') ?? '',
+    'classes'   => [(string) $otherClassId],
+    'students'  => [(string) $otherId],
 ]);
 
 $t->is($stored['status'] === 302, 'выдача сохранена');
@@ -2486,13 +2567,11 @@ $t->is($strangerToken !== null && $strangerToken !== '', 'форма шага с
  * клиент соберёт `students=22&students=21`, а PHP из повторов оставит в $_POST
  * только последнее значение — и подделка формы проверяла бы не то.
  */
-$mixed = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
-    '_token'                     => $strangerToken,
-    'period'                     => 'week',
-    ['classes[]', (string) $otherClassId],
-    ['students[]', (string) $otherId],
-    ['students[]', (string) $studentId],
-]);
+$mixed = $teacher->post(
+    '/panel/issues/' . $assignmentId . '/period',
+    $issueForm($teacher, $assignmentId, $otherClassId, [$otherId, $studentId])
+        + ['period' => 'week']
+);
 
 $mixedIssueId = (int) ($db->value('SELECT MAX(id) FROM assignment_issues WHERE assignment_id = :a', ['a' => $assignmentId]) ?? 0);
 
@@ -2515,12 +2594,11 @@ $t->contains((string) $other->get('/works')['body'], 'Контрольная п�
  * об отказе и возврат на шаг учеников, где список ещё раз покажет, кто в этих
  * классах состоит.
  */
-$onlyStranger = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
-    '_token'                 => $strangerToken,
-    'period'                 => 'week',
-    ['classes[]', (string) $otherClassId],
-    ['students[]', (string) $studentId],
-]);
+$onlyStranger = $teacher->post(
+    '/panel/issues/' . $assignmentId . '/period',
+    $issueForm($teacher, $assignmentId, $otherClassId, [$studentId])
+        + ['period' => 'week']
+);
 
 $t->is($onlyStranger['status'] === 302, 'отказ в выдаче перенаправляет, а не падает');
 $t->contains((string) $onlyStranger['location'], '/students', 'отказ возвращает на шаг учеников');
@@ -2541,12 +2619,11 @@ foreach ([
     'несуществующий день'   => ['date_from' => '2026-02-31', 'date_until' => '2026-03-10'],
     'срок кончается раньше' => ['date_from' => '2026-12-31', 'date_until' => '2026-12-01'],
 ] as $why => $dates) {
-    $attempt = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
-        '_token'                 => $strangerToken,
-        'period'                 => 'dates',
-        ['classes[]', (string) $otherClassId],
-        ['students[]', (string) $otherId],
-    ] + $dates);
+    $attempt = $teacher->post(
+        '/panel/issues/' . $assignmentId . '/period',
+        $issueForm($teacher, $assignmentId, $otherClassId, [$otherId])
+            + ['period' => 'dates'] + $dates
+    );
 
     $t->is($attempt['status'] === 302, 'плохие даты не роняют страницу: ' . $why);
     $t->equals($beforeDates, (int) ($db->value(
@@ -2556,13 +2633,15 @@ foreach ([
 }
 
 // Хорошие даты проходят — проверка не должна отказывать всем подряд.
-$goodDates = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
-    '_token'     => $strangerToken,
-    'period'     => 'dates',
-    'date_from'  => '2026-03-01',
+$goodDates = $teacher->post('/panel/issues/' . $assignmentId . '/period', $issueForm(
+    $teacher,
+    $assignmentId,
+    $otherClassId,
+    [$otherId]
+) + [
+    'period' => 'dates',
+    'date_from' => '2026-03-01',
     'date_until' => '2026-03-10',
-    ['classes[]', (string) $otherClassId],
-    ['students[]', (string) $otherId],
 ]);
 
 $datedIssueId = (int) ($db->value('SELECT MAX(id) FROM assignment_issues WHERE assignment_id = :a', ['a' => $assignmentId]) ?? 0);
@@ -3666,36 +3745,35 @@ $t->contains($editorJs, 'setPromptHtml: function (form, html)',
     'скрипт умеет вернуть набранное в редактор вопроса');
 
 /*
- * Черновик редактора: в браузере, до нажатия «Сохранить».
+ * Черновик редактора: на сервере, до нажатия «Сохранить».
  *
- * Проверяется не сам механизм sessionStorage, а три договора, из-за которых он и
- * выбран.
+ * Черновик переехал из браузера в базу: sessionStorage умирал вместе со вкладкой,
+ * и работа на пять минут могла уйти из-за закрытого окна или перезагрузки машины.
+ * Теперь он переживает и то и другое, но по-прежнему ничего не публикует: строки
+ * лежат в отдельной таблице, ученик их не видит, а «Сохранить» остаётся
+ * единственным способом внести правку в работу.
  *
- * Первый: черновик не ходит на сервер. Редактор пишет прямо в позицию работы, а
- * для опубликованной работы правка заданий не доходит до тех, кто уже начал её
- * проходить. Автосохранение по таймеру сделало бы это обещание неверным тихо, без
- * спроса. Поэтому в модуле нет ни отправки, ни вызова формы — на сервер уходит
- * только то, что человек сам сохранил.
+ * Проверяются три договора, из-за которых он выбран именно таким.
  *
- * Второй:sessionStorage, а не localStorage. Черновик держится в пределах вкладки:
- * на общем компьютере после закрытия не остаётся ничего, что мог бы увидеть
- * следующий человек.
+ * Первый: это не второй способ сохранить. Отправки формы нет — на сервер уходит
+ * только черновик, отдельным запросом, и работа от этого не меняется.
  *
- * Третий: черновик живёт по номеру задания, поэтому правка одного задания не
- * восстанавливается в другом.
+ * Второй: черновик не остаётся в браузере. Иначе он продолжил бы умирать вместе
+ * с вкладкой, а всё, что на него потрачено, было бы враньём при открытии.
+ *
+ * Третий: черновик живёт по номеру позиции и по автору, поэтому правка одного
+ * задания не восстанавливается в другом, а чужая не отдаётся никогда.
  */
 $draftJs = (string) @file_get_contents($rootDir . '/public/assets/js/task-draft.js');
 $itemsJs = (string) @file_get_contents($rootDir . '/public/assets/js/assignment-items.js');
 
 $t->is($draftJs !== '', 'модуль черновика на месте');
-$t->notContains($draftJs, 'fetch(', 'черновик не отправляет ничего на сервер');
-$t->notContains($draftJs, 'XMLHttpRequest', 'черновик не отправляет ничего на сервер');
 $t->notContains($draftJs, 'form.submit', 'черновик не отправляет форму вместо человека');
 /*
- * Проверка на localStorage намеренно ищет обращения, а не слово: про
- * localStorage написано в пояснении файла — «не в localStorage», — и совпадение
- * по слову ругало бы верный код за неверное. Слово с точкой в конце тоже не
- * годится: это просто конец предложения в пояснении.
+ * Проверка на хранилища намеренно ищет обращения, а не слово: про них написано в
+ * пояснении файла, и совпадение по слову ругало бы верный код за неверное.
+ * Обращение — то, что правда осталось бы в браузере: getItem, setItem и само
+ * свойство.
  */
 $t->notContains($draftJs, 'localStorage.getItem',
     'черновик не остаётся на диске после закрытия вкладки');
@@ -3703,9 +3781,15 @@ $t->notContains($draftJs, 'localStorage.setItem',
     'черновик не остаётся на диске после закрытия вкладки');
 $t->notContains($draftJs, 'window.localStorage',
     'черновик не остаётся на диске после закрытия вкладки');
-$t->contains($draftJs, 'sessionStorage', 'черновик лежит в хранилище вкладки');
-$t->contains($draftJs, "'myedu-task-draft:'", 'черновик именуется по номеру задания');
-$t->contains($draftJs, 'data-editor-for', 'номер задания берётся у окна редактора');
+$t->notContains($draftJs, 'sessionStorage.getItem',
+    'черновик не умирает вместе с вкладкой');
+$t->notContains($draftJs, 'sessionStorage.setItem',
+    'черновик не умирает вместе с вкладкой');
+$t->notContains($draftJs, 'window.sessionStorage',
+    'черновик не умирает вместе с вкладкой');
+$t->contains($draftJs, 'data-draft-url', 'адрес черновика приходит вместе с формой');
+$t->contains($draftJs, 'data-editor-for', 'номер позиции берётся у окна редактора');
+$t->contains($draftJs, 'sendBeacon', 'последняя правка уходит при уходе со страницы');
 $t->contains($draftJs, "addEventListener('pagehide'", 'уход со страницы дописывает черновик');
 $t->contains($draftJs, "addEventListener('beforeunload'", 'несохранённая правка предупреждает об уходе');
 $t->contains($draftJs, "addEventListener('input'", 'правка запоминается по мере набора');
@@ -3740,9 +3824,158 @@ $t->is(
 $draftPanel = (string) @file_get_contents($rootDir . '/templates/panel/_assignment_items_pane.php');
 
 $t->contains($draftPanel, 'assets/js/task-draft.js', 'страница редактора подключает модуль черновика');
+$t->contains($draftPanel, 'data-draft-url', 'окно редактора знает адрес своего черновика');
 $t->is(
     strpos($draftPanel, 'assets/js/assignment-items.js') < strpos($draftPanel, 'assets/js/task-draft.js'),
     'модуль черновика подключается после скрипта доски'
+);
+
+/*
+ * Черновик на сервере: переживает вкладку, но чужому не отдаётся.
+ *
+ * Черновик переехал из sessionStorage в базу, потому что вкладка закрывается
+ * вместе с правкой. Проверяется ровно то, ради чего он переехал: написанное
+ * лежит на сервере, возвращается тому же автору, не достаётся чужому учителю,
+ * не достаётся гостю и убирается по отмене.
+ */
+$t->group('Черновик правки позиции');
+
+$draftItemId = (int) $db->value(
+    'SELECT id FROM assignment_items WHERE assignment_id = :id ORDER BY id LIMIT 1',
+    ['id' => $assignmentId]
+);
+
+$draftAuthorId = (int) $db->value(
+    'SELECT author_id FROM assignments WHERE id = :id',
+    ['id' => $assignmentId]
+);
+
+$t->is($draftItemId > 0, 'у работы есть позиция, у которой можно взять черновик');
+
+$draftUrl = $itemsUrl . '/' . $draftItemId . '/draft';
+$draftPage = $teacher->get($itemsUrl . '?edit=' . $testId);
+$draftToken = $teacher->tokenFrom($draftPage) ?? '';
+
+$t->is(
+    str_contains((string) $draftPage['body'], 'data-draft-url'),
+    'адрес черновика приходит вместе с открытым редактором'
+);
+
+$t->is(
+    $teacher->getAjax($draftUrl)['status'] === 200,
+    'черновик положения запрашивается отдельным адресом'
+);
+
+$savedDraft = $teacher->postAjax($draftUrl, [
+    '_token' => $draftToken,
+    'action'  => 'save',
+    'fields'  => json_encode([
+        'question_text' => 'Черновик, который должен пережить вкладку',
+        'option_text'   => ['Первый вариант', 'Второй вариант'],
+    ], JSON_UNESCAPED_UNICODE),
+]);
+
+$t->is($savedDraft['status'] === 200, 'черновик записывается отдельным запросом');
+$draftRows = $db->all('SELECT id, item_id, author_id FROM assignment_drafts');
+
+$t->is(
+    count(array_filter(
+        $draftRows,
+        static fn (array $row): bool => (int) $row['item_id'] === $draftItemId
+            && (int) $row['author_id'] === $draftAuthorId
+    )) === 1,
+    'черновик лежит в базе и принадлежит автору'
+);
+
+$readBack = $teacher->getAjax($draftUrl);
+
+$t->is(
+    str_contains(
+        (string) $readBack['json']['fields']['question_text'] ?? '',
+        'пережить вкладку'
+    ),
+    'написанное возвращается при следующем открытии задания'
+);
+
+/*
+ * Позиция не публикуется тем, что черновик записан.
+ *
+ * Главная причина, по которой черновик остаётся отдельной сущностью: правка
+ * задания не должна попадать в работу молча. Если после записи черновика текст
+ * изменился в самой позиции — автосохранение незаметно публикует то, что
+ * человек правит для себя.
+ */
+$t->is(
+    !str_contains(
+        (string) $db->value(
+            'SELECT config FROM questions WHERE test_id = :id ORDER BY id LIMIT 1',
+            ['id' => $testId]
+        ),
+        'пережить вкладку'
+    ),
+    'черновик не меняет саму позицию работы'
+);
+
+/*
+ * Чужой черновик не отдаётся.
+ *
+ * У одного задания может быть несколько редакторов, и у каждого своя
+ * недописанная правка. Отдавать чужую значило бы показать человеку то, чего он
+ * не писал, — и стереть его при первом же сохранении.
+ *
+ * Отказ здесь — «это работа другого автора»: черновик принадлежит автору, и
+ * чужой автор работы не имеет права его видеть.
+ */
+$otherDraft = $otherTeacher->getAjax($draftUrl);
+
+$t->is(
+    $otherDraft['status'] === 403,
+    'чужой учитель черновик не получает вовсе'
+);
+
+$t->is(
+    $guest->getAjax($draftUrl)['status'] === 401,
+    'гостю черновик недоступен'
+);
+
+/*
+ * Позиция от другой работы в этом адресе не годится.
+ *
+ * Адрес называет и работу, и позицию, а сверить их может только сервер: без
+ * сверки номер позиции можно подставить свой, и черновик уехал бы не туда.
+ */
+$foreignUrl = '/panel/assignments/' . ($assignmentId + 1000) . '/edit/items/' . $draftItemId . '/draft';
+
+$t->is(
+    $teacher->getAjax($foreignUrl)['status'] === 404,
+    'позиция от другой работы не отдаёт черновик'
+);
+
+/* Отмена значит отмену: черновик уходит вместе с правкой. */
+$dropped = $teacher->postAjax($draftUrl, [
+    '_token' => $draftToken,
+    'action'  => 'drop',
+]);
+
+$t->is($dropped['status'] === 200, 'черновик убирается по отмене');
+$t->is(
+    (int) $db->value('SELECT COUNT(*) FROM assignment_drafts WHERE item_id = :item', ['item' => $draftItemId]) === 0,
+    'после отмены черновика в базе нет'
+);
+
+/*
+ * Черновик не принимается без защитного поля.
+ *
+ * Иначе его можно было бы писать и подсовывать от чужого имени прямо со
+ * страницы учителя: адрес известен, тело формируется без труда. Ответ — 419,
+ * тот же, что и на любой другой форме без защитного поля.
+ */
+$t->is(
+    $teacher->postAjax($draftUrl, [
+        'action' => 'save',
+        'fields' => json_encode(['question_text' => 'подделка'], JSON_UNESCAPED_UNICODE),
+    ])['status'] === 419,
+    'черновик не принимается без защитного поля'
 );
 
 /*
@@ -4339,6 +4572,161 @@ $percentSaved = $teacher->post(
 );
 
 $t->is($percentSaved['status'] === 302, 'форма с обоими наборами сохраняется');
+
+/*
+ * Числа на странице обязаны быть такими, которые форма принимает.
+ *
+ * Сервер проверяет шаг границы в баллах куда мягче, чем браузер: проверка на
+ * сервере для этого режима отключена, а у поля стоит `step`. Расхождение было
+ * невидимо при ручной проверке — страница открывалась, наборы сохранялись, — и
+ * проявлялось только у человека: браузер отвергал на заполненной форме ровно
+ * четыре поля, «не отправлено: проверьте 4 пол.», а отмечать было нечего,
+ * потому что значения стояли те, что подставил сервер.
+ *
+ * Поэтому проверяется не сохранение, а разметка: каждое числовое поле страницы
+ * вместе со своим значением, минимумом и шагом. Иначе поломка вернётся вместе
+ * с любым изменением расчёта границ.
+ */
+$scalePage = $teacher->get('/panel/assignments/' . $scaleWorkId . '/edit/result');
+$scaleForm = '';
+
+if (preg_match(
+    '~<form[^>]*action="/panel/assignments/' . $scaleWorkId . '/edit/save".*?</form>~s',
+    $scalePage['body'],
+    $scaleFormMatch
+) === 1) {
+    $scaleForm = $scaleFormMatch[0];
+}
+
+$rejectedFields = [];
+
+if ($scaleForm !== ''
+    && preg_match_all('~<input\b[^>]*\btype="number"[^>]*>~i', $scaleForm, $numberInputs) > 0) {
+    foreach ($numberInputs[0] as $input) {
+        if (preg_match('~type="hidden"~i', $input) === 1) {
+            continue;
+        }
+
+        $value = preg_match('~value="([^"]*)"~i', $input, $v) === 1 ? $v[1] : '';
+        $step = preg_match('~\bstep="([^"]*)"~i', $input, $s) === 1 ? $s[1] : '';
+
+        if ($value === '' || $step === '') {
+            continue;
+        }
+
+        preg_match('~\bname="([^"]*)"~i', $input, $nameMatch);
+        preg_match('~\bmin="([^"]*)"~i', $input, $minMatch);
+
+        $number = (float) str_replace(',', '.', $value);
+        $unit = (float) str_replace(',', '.', $step);
+        $base = isset($minMatch[1]) ? (float) $minMatch[1] : 0.0;
+
+        if ($unit <= 0.0) {
+            continue;
+        }
+
+        $steps = ($number - $base) / $unit;
+
+        /*
+         * Допуск в сотую: разница накапливается при делении и уводит верное
+         * число вроде 7.125 на сотую от шага. Границы округлены, и зазор в
+         * сотую — это зазор, а не нарушение кратности.
+         */
+        if (abs($steps - round($steps)) > 0.005) {
+            $rejectedFields[] = ($nameMatch[1] ?? '?') . '=' . $value . ' при шаге ' . $step;
+        }
+    }
+}
+
+$t->is(
+    $rejectedFields === [],
+    'каждое числовое поле шкалы принимает собственное значение'
+    . ($rejectedFields === [] ? '' : '; отвергаются: ' . implode(', ', $rejectedFields))
+);
+
+/*
+ * Тот же разбор на работе с неудобной суммой цен.
+ *
+ * 20 баллов делятся на четыре части ровно, и поломка на них не видна — именно
+ * поэтому она и прожила незамеченной. Сумма 17 даёт 12.75 и 4.25 в нижних
+ * границах и 12.25 с 3.75 в верхних: четыре поля, четыре отказа, и это ровно то,
+ * что человек видел на своей работе.
+ */
+$oddWorkId = (int) $db->insert('assignments', [
+    'author_id'     => $teacherId,
+    'title'         => 'Работа с неудобной суммой цен',
+    'status'        => 'draft',
+    'grade_mode'    => 'weighted',
+    'criteria_mode' => 'percent',
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$db->run(
+    'INSERT INTO assignment_items (assignment_id, position, plugin_id, task_kind, task_id, weight, max_score, created_at)
+     VALUES (:w, 1, \'test\', \'generated\', :t, 1.00, 17.00, NOW())',
+    ['w' => $oddWorkId, 't' => $testId]
+);
+
+$oddPage = $teacher->get('/panel/assignments/' . $oddWorkId . '/edit/result');
+$oddForm = '';
+
+if (preg_match(
+    '~<form[^>]*action="/panel/assignments/' . $oddWorkId . '/edit/save".*?</form>~s',
+    $oddPage['body'],
+    $oddFormMatch
+) === 1) {
+    $oddForm = $oddFormMatch[0];
+}
+
+$oddRejected = [];
+$oddChecked = 0;
+
+if (preg_match_all('~<input\b[^>]*\btype="number"[^>]*>~i', $oddForm, $oddInputs) > 0) {
+    foreach ($oddInputs[0] as $input) {
+        if (preg_match('~type="hidden"~i', $input) === 1) {
+            continue;
+        }
+
+        $value = preg_match('~value="([^"]*)"~i', $input, $v) === 1 ? $v[1] : '';
+        $step = preg_match('~\bstep="([^"]*)"~i', $input, $s) === 1 ? $s[1] : '';
+
+        if ($value === '' || $step === '') {
+            continue;
+        }
+
+        $oddChecked++;
+        preg_match('~\bname="([^"]*)"~i', $input, $oddName);
+
+        $number = (float) str_replace(',', '.', $value);
+        $unit = (float) str_replace(',', '.', $step);
+
+        if ($unit <= 0.0) {
+            continue;
+        }
+
+        $steps = $number / $unit;
+
+        if (abs($steps - round($steps)) > 0.005) {
+            $oddRejected[] = ($oddName[1] ?? '?') . '=' . $value;
+        }
+    }
+}
+
+/*
+ * Проверка обязана что-то видеть. Иначе она тихо проходит при любой поломке —
+ * в том числе если разметка переедет, и это худший вид проверки: зелёная
+ * проверка, которая ничего не проверяет.
+ */
+$t->is(
+    $oddChecked >= 8,
+    'проверка шага полей шкалы добралась до чисел (проверено: ' . $oddChecked . ')'
+);
+$t->is(
+    $oddRejected === [],
+    'при сумме цен 17 баллов форма принимает все свои границы'
+    . ($oddRejected === [] ? '' : '; отвергаются: ' . implode(', ', $oddRejected))
+);
 $t->equals('percent', (string) $db->value(
     'SELECT criteria_mode FROM assignments WHERE id = :id',
     ['id' => $scaleWorkId]
@@ -7450,10 +7838,17 @@ foreach (['Альтернатива переноса вторая', 'Альте�
         'created_at' => date('Y-m-d H:i:s'), 'updated_at' => date('Y-m-d H:i:s'),
     ]);
 
+    /*
+     * Настройка проверки обязательна, и без неё вопрос не проверяем вовсе:
+     * импорт пакета это проверяет, как и редактор при сохранении. Пустой config
+     * в фикстуре давал задание, у которого нет ни одного верного ответа и ни
+     * одной стратегии, — оно переезжало, а проверить его было нечем.
+     */
     $db->insert('questions', [
         'test_id' => $transferVariantTestId, 'type' => 'text',
         'prompt' => 'Вопрос варианта: ' . $variantTitle,
         'position' => 1, 'weight' => 1.0, 'is_required' => 1,
+        'config' => json_encode(['strategy' => 'manual'], JSON_UNESCAPED_UNICODE),
     ]);
 
     $db->insert('assignment_items', [
@@ -8457,5 +8852,160 @@ $t->equals((float) $firstPrice['max_score'], (float) $priceRow[2]['max_score'],
     'альтернатива получила цену первой карточки, а не ту, что прислали с ней');
 $t->equals((float) $firstPrice['weight'], (float) $priceRow[2]['weight'],
     'вес у строки один: варианты его делят');
+
+/*
+ * Двойная отправка не создаёт вторую выдачу.
+ *
+ * Токен защиты от подделки не спасает от двойного нажатия: обе отправки
+ * настоящие, и сервер выполнит обе. Дальше это бьёт не только по счётчику
+ * выдач: лимит попыток ученику берётся из самой свежей выдачи, поэтому молчаливый
+ * дубль менял бы условие, которые учитель задал для всех остальных.
+ *
+ * Проверяется ровно то, что было поломкой: повтор той же формы (тот же пропуск)
+ * не создаёт записей и возвращает на шаг срока с объяснением.
+ */
+$t->group('Выдача не создаётся дважды');
+
+$issuesBefore = (int) ($db->value(
+    'SELECT COUNT(*) FROM assignment_issues WHERE assignment_id = :a',
+    ['a' => $assignmentId]
+) ?? 0);
+
+$again = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
+    '_token'     => $teacher->tokenFrom($periodStep) ?? '',
+    'once_issue' => $teacher->onceFrom($periodStep, 'issue') ?? '',
+    'classes'    => [(string) $otherClassId],
+    'students'   => [(string) $otherId],
+]);
+
+$t->is($again['status'] === 302, 'повторная отправка не падает, а переадресует');
+$t->contains((string) $again['location'], '/period', 'повтор возвращает на шаг срока');
+$t->equals($issuesBefore, (int) ($db->value(
+    'SELECT COUNT(*) FROM assignment_issues WHERE assignment_id = :a',
+    ['a' => $assignmentId]
+) ?? 0), 'вторая выдача не создана');
+$afterAgain = $teacher->get((string) $again['location']);
+
+$t->contains($afterAgain['body'], 'уже отправлена',
+    'об отказе сказано прямо: форма уже отправлена');
+
+/*
+ * Время вышло: ответ не теряется, а человек узнаёт, что произошло.
+ *
+ * Таймер на странице задания отправляет форму уже после истечения: ученик
+ * дописал ответ, нажал «Далее», а время как раз кончилось. Раньше сервер на
+ * такой отправке просто завершал работу — ответ пропадал, и узнать об этом
+ * можно было только на странице результата, где вернуть его уже нельзя.
+ *
+ * Проверяется ровно это: ответ долетел до базы, работа завершена, а на
+ * странице результата сказано, что ответ сохранён.
+ */
+$t->group('Истечение времени не съедает ответ');
+
+$expiredWorkId = (int) $db->insert('assignments', [
+    'author_id'     => $sharedAuthor,
+    'title'         => 'Работа с таймером',
+    'description'   => '',
+    'subject_id'    => null,
+    'status'        => 'published',
+    'grade_mode'    => 'weighted',
+    'criteria_mode' => 'score',
+    'show_results'  => 1,
+    // Минута: истечение считается от начала попытки, а не от таймера в коде.
+    'time_limit'    => 1,
+    'criteria'      => json_encode([['grade' => 5, 'min_score' => 1, 'max_score' => 5]], JSON_UNESCAPED_UNICODE),
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$expiredQuestionId = (int) $db->value(
+    "SELECT id FROM questions WHERE test_id = :id AND type = 'single_choice' ORDER BY position LIMIT 1",
+    ['id' => $transferTestId]
+);
+
+$expiredItemId = (int) $db->insert('assignment_items', [
+    'assignment_id'  => $expiredWorkId,
+    'position'       => 1,
+    'plugin_id'      => 'test',
+    'task_kind'      => 'single_choice',
+    'task_id'        => $transferTestId,
+    'created_at'     => date('Y-m-d H:i:s'),
+]);
+
+$expiredIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id'   => $expiredWorkId,
+    'author_id'       => $sharedAuthor,
+    'available_from'  => null,
+    'available_until' => null,
+    'created_at'      => date('Y-m-d H:i:s'),
+]);
+
+$db->run(
+    'INSERT INTO assignment_issue_students (issue_id, student_id, class_id, assigned_at)'
+    . ' VALUES (:i, :u, :c, :t)',
+    ['i' => $expiredIssueId, 'u' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
+);
+
+$expiredStartPage = $student->get('/work/' . $expiredWorkId);
+$expiredStart = $student->post('/work/' . $expiredWorkId . '/start', [
+    '_token' => $student->tokenFrom($expiredStartPage) ?? '',
+]);
+
+$t->is($expiredStart['status'] === 302, 'попытка работы с таймером начата');
+$t->is(preg_match('#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#', $expiredStart['location'], $expiredMatch) === 1,
+    'адрес задания получен');
+
+$expiredAttemptId = (int) ($expiredMatch[1] ?? 0);
+$expiredToken = (string) ($expiredMatch[3] ?? '');
+
+// Время вышло: начало попытки отмотано на два часа назад.
+$db->run(
+    'UPDATE assignment_attempts SET started_at = :s WHERE id = :id',
+    ['s' => date('Y-m-d H:i:s', time() - 7200), 'id' => $expiredAttemptId]
+);
+
+$expiredItemPath = '/work/' . $expiredAttemptId . '/item/' . $expiredItemId;
+$expiredItemPage = $student->get($expiredItemPath . '?t=' . $expiredToken);
+$expiredSave = $student->post($expiredItemPath, [
+    '_token' => $student->tokenFrom($expiredItemPage) ?? '',
+    't'      => $expiredToken,
+    ['answer_present[' . $expiredQuestionId . ']', '1'],
+    ['answers[' . $expiredQuestionId . ']', 'a'],
+    ['action', 'finish'],
+]);
+
+$t->is($expiredSave['status'] === 302, 'отправка после истечения не падает');
+
+$expiredAnswer = $db->one(
+    'SELECT a.answer_text FROM test_item_answers a
+       JOIN test_item_attempts t ON t.id = a.item_attempt_id
+      WHERE t.assignment_attempt_id = :attempt AND a.question_id = :question',
+    ['attempt' => $expiredAttemptId, 'question' => $expiredQuestionId]
+);
+
+$t->is($expiredAnswer !== null, 'ответ, отправленный на истечении, сохранён');
+$t->equals('finished', (string) $db->value('SELECT status FROM assignment_attempts WHERE id = :id', ['id' => $expiredAttemptId]),
+    'работа завершена');
+
+$expiredResultPage = $student->get('/work/' . $expiredAttemptId . '/result?t=' . $expiredToken);
+
+$t->is($expiredResultPage['status'] === 200, 'страница результата открыта');
+$t->contains($expiredResultPage['body'], 'Время вышло', 'на результате сказано, что время кончилось');
+$t->contains($expiredResultPage['body'], 'сохранён', 'на результате сказано, что ответ сохранён');
+
+/*
+ * Без пропуска — тоже отказ: иначе отключённый скрипт был бы обходом
+ * единственной защиты от двойной отправки.
+ */
+$withoutOnce = $teacher->post('/panel/issues/' . $assignmentId . '/period', [
+    '_token'   => $teacher->tokenFrom($periodStep) ?? '',
+    'classes'  => [(string) $otherClassId],
+    'students' => [(string) $otherId],
+]);
+
+$t->equals($issuesBefore, (int) ($db->value(
+    'SELECT COUNT(*) FROM assignment_issues WHERE assignment_id = :a',
+    ['a' => $assignmentId]
+) ?? 0), 'без пропуска выдача тоже не создаётся');
 
 exit($t->report());

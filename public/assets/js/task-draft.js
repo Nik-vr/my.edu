@@ -1,25 +1,30 @@
 /* ==========================================================================
    Черновик формы редактора задания.
 
-   Что делает: пока человек правит задание, введённое лежит в браузере, а не
-   на сервере. На сервер оно уходит только по кнопке «Сохранить» — ни раньше,
-   ни чаще.
+   Что делает: пока человек правит позицию работы, введённое уходит на сервер
+   отдельной строкой и возвращается при следующем открытии. На задание это не
+   влияет: «Сохранить» по-прежнему остаётся единственным способом внести правку
+   в работу.
 
-   Почему черновик в браузере, а не автосохранение на сервере: редактор пишет
-   прямо в позицию работы, а для опубликованной работы правка заданий не доходит
-   до тех, кто уже начал её проходить. Автосохранение каждые полминуты сделало бы
-   это обещание неверным тихо, без спроса, и человек не узнал бы, что работу уже
-   видят новые ученики. Черновик ничего не публикует: это подстраховка от
-   закрытой вкладки, а не способ сохранить.
+   Почему черновик на сервере, а не в браузере: sessionStorage умирал вместе со
+   вкладкой. Работа на пять минут могла уйти из-за того, что окно закрылось,
+   завис браузер или машина перезагрузилась, — и человек узнавал об этом
+   только по исчезнувшему тексту. Теперь черновик переживает и это: он лежит в
+   таблице assignment_drafts и приходит обратно при открытии задания.
 
-   Где хранится: sessionStorage, а не localStorage. Черновик держится в пределах
-   вкладки — на общем компьютере после закрытия не остаётся ничего, что мог бы
-   увидеть следующий человек, — и переживает перезагрузку страницы и аварийное
-   закрытие вкладки, ради чего он и нужен.
+   Почему это не публикация: строка лежит отдельно от позиции, ученик её не
+   видит, а автосохранение не меняет статус работы. Публиковать по-прежнему
+   можно только кнопкой — иначе учитель правил бы задание, уже видимое новым
+   ученикам, и обещание «правка дойдёт до тех, кто начал» стало бы неверным
+   тихо, без спроса.
 
-   Что не хранится: файлы. Загруженный файл не переживает перезагрузку страницы,
-   восстанавливать его неоткуда, и молча оставить поле пустым хуже, чем не
-   обещать восстановления.
+   Кому принадлежит черновик: тому, кто набирал. У одного задания может быть
+   несколько редакторов, и у каждого своя недописанная правка — поэтому сервер
+   отдаёт черновик по паре «автор + позиция», и чужий не отдаётся никогда.
+
+   Что не хранится: файлы. Загруженный файл не переживает перезагрузку
+   страницы, восстанавливать его неоткуда, и молча оставить поле пустым хуже,
+   чем не обещать восстановления.
 
    Чего модуль не делает: не решает за человека. Черновик возвращается сам и
    говорит об этом сообщением, но кнопка «Отмена» его удаляет: отмена значит
@@ -30,8 +35,7 @@
 (function () {
     'use strict';
 
-    var PREFIX = 'myedu-task-draft:';
-    var DEBOUNCE_MS = 500;
+    var DEBOUNCE_MS = 700;
 
     /*
      * Поля, которые в черновик не кладутся: одноразовые и служебные. Токен и
@@ -40,48 +44,34 @@
      */
     var SKIP = ['_token', 'action', 'question_id', '_method'];
 
-    var store = null;
-
     /* Страница уже слушает уход со страницы: второй раз подписываться незачем. */
     var watching = false;
 
-    /**
-     * Хранилище или null, если им нельзя пользоваться.
-     *
-     * Проверяется не только наличие: в приватном режиме некоторых браузеров
-     * sessionStorage есть, а писать в него нельзя — обращение бросает
-     * исключение. Черновик удобство, а не условие работы формы, и его отсутствие
-     * не должно мешать сохранять.
-     */
-    function storage() {
-        if (store !== null) {
-            return store;
-        }
+    /* Формы, для которых черновик уже взят при открытии. */
+    var loaded = [];
 
-        try {
-            var probe = PREFIX + 'probe';
-            var candidate = window.sessionStorage;
-
-            candidate.setItem(probe, '1');
-            candidate.removeItem(probe);
-
-            store = candidate;
-        } catch (e) {
-            store = false;
-        }
-
-        return store;
+    function editorOf(node) {
+        return node && node.closest ? node.closest('[data-editor-for]') : null;
     }
 
-    function draftKey(taskId) {
-        return PREFIX + String(taskId || '');
+    /** Адрес черновика приходит вместе с формой — скрипт его не собирает. */
+    function endpoint(form) {
+        var editor = editorOf(form);
+
+        return editor ? editor.getAttribute('data-draft-url') || '' : '';
     }
 
-    /** Задание, которому принадлежит форма: окно хранит номер позиции работы. */
+    /** Номер позиции работы: по нему сервер и находит черновик. */
     function taskIdOf(form) {
-        var host = form.closest ? form.closest('[data-editor-for]') : null;
+        var editor = editorOf(form);
 
-        return host ? host.getAttribute('data-editor-for') || '' : '';
+        return editor ? editor.getAttribute('data-editor-for') || '' : '';
+    }
+
+    function csrfToken(form) {
+        var field = form.querySelector('input[name="_token"]');
+
+        return field ? field.value : '';
     }
 
     function draftState(editor) {
@@ -178,8 +168,21 @@
         return { name: field.name, html: html };
     }
 
-    /** Положить значения обратно в форму. */
-    function restore(form, fields) {
+    /** Готова ли пара «визуальный редактор + скрытое поле» к приёму текста. */
+    function promptReady(form) {
+        return promptValue(form) !== null;
+    }
+
+    /**
+     * Положить значения обратно в форму.
+     *
+     * Текст вопроса возвращается отдельно и позже остальных полей: пряталка
+     * полей по типу задания отрабатывает по событию change, и вернуть текст
+     * раньше значило бы положить его в блок, который вот-вот спрячут.
+     *
+     * @param {boolean} withPrompt доносить ли текст из визуального редактора
+     */
+    function restore(form, fields, withPrompt) {
         Object.keys(fields).forEach(function (name) {
             var value = fields[name];
 
@@ -208,85 +211,14 @@
             });
         });
 
-        /*
-         * Вопрос возвращается после остальных полей. Пряталка полей по типу
-         * задания отрабатывает по событию change, и вернуть текст раньше значило
-         * бы положить его в блок, который вот-вот спрячут.
-         */
+        if (!withPrompt) {
+            return;
+        }
+
         var prompt = promptValue(form);
 
         if (prompt !== null && window.MyEduEditor && typeof window.MyEduEditor.setPromptHtml === 'function') {
             window.MyEduEditor.setPromptHtml(form, fields[prompt.name] === undefined ? '' : String(fields[prompt.name]));
-        }
-    }
-
-    function read(taskId) {
-        var place = storage();
-
-        if (!place || !taskId) {
-            return null;
-        }
-
-        var raw = place.getItem(draftKey(taskId));
-
-        if (!raw) {
-            return null;
-        }
-
-        try {
-            var parsed = JSON.parse(raw);
-
-            if (!parsed || typeof parsed !== 'object' || !parsed.fields) {
-                place.removeItem(draftKey(taskId));
-
-                return null;
-            }
-
-            return parsed;
-        } catch (e) {
-            // Битый черновик не должен ломать открытие задания.
-            place.removeItem(draftKey(taskId));
-
-            return null;
-        }
-    }
-
-    function drop(form) {
-        var place = storage();
-        var taskId = taskIdOf(form);
-
-        if (place && taskId) {
-            place.removeItem(draftKey(taskId));
-        }
-
-        var editor = form.closest('[data-editor-for]');
-
-        if (editor) {
-            editor.removeAttribute('data-draft-state');
-        }
-    }
-
-    function save(form) {
-        var place = storage();
-        var taskId = taskIdOf(form);
-
-        if (!place || !taskId) {
-            return;
-        }
-
-        var editor = form.closest('[data-editor-for]');
-
-        try {
-            place.setItem(draftKey(taskId), JSON.stringify({
-                at: Date.now(),
-                fields: capture(form),
-            }));
-
-            if (editor) {
-                editor.setAttribute('data-draft-state', 'stored');
-            }
-        } catch (e) {
-            // Хранилище переполнено или запрещено: форма работает и без черновика.
         }
     }
 
@@ -307,7 +239,13 @@
 
     /** «3 минуты назад», «час назад» — человек понимает, насколько черновик свеж. */
     function savedAgo(at) {
-        var minutes = Math.max(0, Math.round((Date.now() - Number(at || Date.now())) / 60000));
+        var stamp = Date.parse(String(at || '').replace(' ', 'T'));
+
+        if (isNaN(stamp)) {
+            return 'недавно';
+        }
+
+        var minutes = Math.max(0, Math.round((Date.now() - stamp) / 60000));
 
         if (minutes < 1) {
             return 'только что';
@@ -322,20 +260,96 @@
         return hours + ' ' + plural(hours, 'час', 'часа', 'часов') + ' назад';
     }
 
-    /**
-     * Начать запоминать правку.
-     *
-     * Пишет не на каждое нажатие клавиши, а через полсекунды после последнего
-     * изменения: запись на каждое движение упирается в запись хранилища, а на
-     * длинном вопросе нажатий тысячи.
-     */
-    function init(root) {
-        var place = storage();
+    /** Отправить поля на сервер: обычный ответ проверяется, отказ не роняет форму. */
+    function post(form, body, done) {
+        var url = endpoint(form);
 
-        if (!place) {
+        if (!url || !window.fetch) {
+            return false;
+        }
+
+        body.append('_token', csrfToken(form));
+
+        fetch(url, {
+            method: 'POST',
+            body: body,
+            credentials: 'same-origin',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+            },
+        }).then(function () {
+            if (done) {
+                done(true);
+            }
+        }).catch(function () {
+            /*
+             * Отказ по сети здесь не показывается: страница уже может закрываться.
+             * Форма работает и без черновика — это подстраховка, а не условие
+             * работы, — и крик об ошибке поверх уходящей вкладки только пугает.
+             */
+            if (done) {
+                done(false);
+            }
+        });
+
+        return true;
+    }
+
+    function save(form) {
+        var editor = editorOf(form);
+
+        if (!editor || !endpoint(form)) {
             return;
         }
 
+        var body = new FormData();
+
+        body.append('action', 'save');
+        body.append('fields', JSON.stringify(capture(form)));
+
+        post(form, body, function (ok) {
+            if (ok) {
+                editor.setAttribute('data-draft-state', 'stored');
+            }
+        });
+    }
+
+    /**
+     * Убрать черновик.
+     *
+     * Зовётся по кнопке «Отмена» и после успешного сохранения. Черновик, который
+     * пережил сохранение, вернулся бы при следующем открытии задания и выглядел
+     * бы откатом уже сделанной правки.
+     */
+    function drop(form) {
+        var editor = editorOf(form);
+
+        if (editor) {
+            editor.removeAttribute('data-draft-state');
+        }
+
+        if (!form || !endpoint(form)) {
+            return;
+        }
+
+        var body = new FormData();
+
+        body.append('action', 'drop');
+
+        post(form, body);
+    }
+
+    /**
+     * Начать запоминать правку.
+     *
+     * Пишет не на каждое нажатие клавиши, а через паузу после последнего
+     * изменения: запись на каждое движение упирается в запрос к серверу, а на
+     * длинном вопросе нажатий тысячи. Пауза чуть длиннее, чем была в браузере:
+     * запрос идёт по сети, и слишком частые записи ничего не дают, кроме
+     * лишней работы обоих.
+     */
+    function init(root) {
         formsIn(root).forEach(function (form) {
             if (form.getAttribute('data-draft-ready') === '') {
                 return;
@@ -345,32 +359,24 @@
 
             var timer = null;
 
-            form.addEventListener('input', function () {
+            function schedule() {
                 window.clearTimeout(timer);
                 timer = window.setTimeout(function () {
                     save(form);
                 }, DEBOUNCE_MS);
-            });
+            }
 
-            form.addEventListener('change', function () {
-                window.clearTimeout(timer);
-                timer = window.setTimeout(function () {
-                    save(form);
-                }, DEBOUNCE_MS);
-            });
+            form.addEventListener('input', schedule);
+            form.addEventListener('change', schedule);
         });
 
         /*
          * Уход со страницы при несохранённой правке.
          *
          * Отложенная запись к этому моменту не сработала: закрытие вкладки
-         * обрывает таймер. Поэтому пишется прямо здесь — иначе теряются
-         * последние полсекунды, то есть ровно то, что человек набирал в момент,
-         * когда нажал закрыть.
-         *
-         * Один обработчик на страницу, а не по одному на форму: формы приходят и
-         * уходят вместе с окном, и слушатель на каждой копии остался бы висеть
-         * после закрытия.
+         * обрывает таймер, а запрос к серверу при уходе просто не успевает.
+         * Поэтому последняя правка уходит отдельным сообщением, которое браузер
+         * отправляет сам и на ответ не смотрит.
          */
         if (watching) {
             return;
@@ -380,8 +386,23 @@
 
         window.addEventListener('pagehide', function () {
             formsIn(document).forEach(function (form) {
-                if (draftState(form.closest('[data-editor-for]')) === 'stored') {
-                    save(form);
+                var editor = editorOf(form);
+
+                if (!editor || draftState(editor) !== 'stored') {
+                    return;
+                }
+
+                var url = endpoint(form);
+                var body = new FormData();
+
+                body.append('_token', csrfToken(form));
+                body.append('action', 'save');
+                body.append('fields', JSON.stringify(capture(form)));
+
+                if (window.navigator && typeof window.navigator.sendBeacon === 'function') {
+                    window.navigator.sendBeacon(url, body);
+                } else {
+                    post(form, body);
                 }
             });
         });
@@ -391,8 +412,7 @@
          *
          * Только пока окно редактора открыто и в нём есть несохранённая правка:
          * закрытый редактор — это решение человека, и после него уход со
-         * страницы не должен его спрашивать. Черновик при этом остаётся и
-         * вернётся при следующем открытии задания.
+         * страницы не должен его спрашивать.
          */
         window.addEventListener('beforeunload', function (event) {
             var open = document.querySelectorAll('[data-editor-for][data-draft-state]');
@@ -413,25 +433,79 @@
      * не была сохранена, и вопрос «вернуть ли то, что вы не сохранили» был бы
      * лишним шагом перед работой, которую человек и так собирался продолжить.
      *
-     * @return {boolean} было ли что восстанавливать
+     * Теперь это запрос, а не чтение из хранилища, поэтому функция возвращает
+     * обещание, а не признак. Пришедшие значения кладутся в форму, как
+     * только она готова: визуальный редактор поднимается плагином позже формы,
+     * и текст вопроса, положенный раньше, просто потерялся бы.
+     *
+     * @return {Promise<boolean>} было ли что восстанавливать
      */
     function reopen(root) {
         var forms = formsIn(root);
 
         if (forms.length === 0) {
-            return false;
+            return Promise.resolve(false);
         }
 
         var form = forms[0];
-        var draft = read(taskIdOf(form));
+        var url = endpoint(form);
 
-        if (!draft) {
-            return false;
+        loaded.push(form);
+
+        if (!url || !window.fetch) {
+            return Promise.resolve(false);
         }
 
-        restore(form, draft.fields);
+        return fetch(url, {
+            credentials: 'same-origin',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+            },
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            if (!data || data.ok !== true || !data.fields || !Object.keys(data.fields).length) {
+                return false;
+            }
 
-        var editor = form.closest('[data-editor-for]');
+            return applyWhenReady(form, data, 0);
+        }).catch(function () {
+            /* Черновик не пришёл — это не поломка: форма открыта и работает. */
+
+            return false;
+        });
+    }
+
+    /**
+     * Дождаться готовности формы и положить значения.
+     *
+     * Ожидание конечное: если плагин так и не поднял редактор, возвращаться
+     * бессмысленно — обычные поля к этому времени уже на месте, теряется только
+     * текст вопроса, и его человек напишет заново.
+     */
+    function applyWhenReady(form, data, attempt) {
+        var ready = promptReady(form);
+        var promptName = null;
+        var fields = data.fields;
+
+        Object.keys(fields).forEach(function (name) {
+            if (fields[name] !== null && typeof fields[name] === 'string' && fields[name].indexOf('<') !== -1) {
+                promptName = promptName || name;
+            }
+        });
+
+        if (attempt < 20 && promptName !== null && !ready) {
+            return new Promise(function (resolve) {
+                window.setTimeout(function () {
+                    resolve(applyWhenReady(form, data, attempt + 1));
+                }, 100);
+            });
+        }
+
+        restore(form, fields, ready);
+
+        var editor = editorOf(form);
 
         if (editor) {
             editor.setAttribute('data-draft-state', 'restored');
@@ -439,7 +513,7 @@
 
         if (window.myEduToast) {
             window.myEduToast(
-                'Восстановлен черновик, сохранённый ' + savedAgo(draft.at) + '.'
+                'Восстановлен черновик, сохранённый ' + savedAgo(data.at) + '.'
                 + ' Если он не нужен — нажмите «Отмена».',
                 'success'
             );
@@ -453,27 +527,21 @@
         reopen: reopen,
         drop: drop,
 
-        /** Есть ли несохранённая правка — у этой задачи или у любой другой. */
-        exists: function (form) {
-            if (form) {
-                return read(taskIdOf(form)) !== null;
-            }
+        /**
+         * Есть ли несохранённая правка в открытом сейчас редакторе.
+         *
+         * Раньше это был вопрос «есть ли черновик вообще», и его можно было
+         * ответить мгновенно, по хранилищу браузера. Теперь черновик лежит на
+         * сервере, и мгновенного ответа нет: признак берётся из открытого
+         * редактора, а хранилище браузера больше не участвует.
+         */
+        exists: function () {
+            return document.querySelectorAll('[data-editor-for][data-draft-state]').length > 0;
+        },
 
-            var place = storage();
-
-            if (!place) {
-                return false;
-            }
-
-            for (var i = 0; i < place.length; i++) {
-                var key = place.key(i);
-
-                if (key && key.indexOf(PREFIX) === 0) {
-                    return true;
-                }
-            }
-
-            return false;
+        /** Формы, для которых черновик уже взят: используется при отладке. */
+        loadedForms: function () {
+            return loaded.slice();
         },
     };
 })();

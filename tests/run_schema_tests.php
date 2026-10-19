@@ -24,6 +24,49 @@ require __DIR__ . '/support/TestKit.php';
 $runner = new TestRunner();
 $schema = (string) file_get_contents(dirname(__DIR__) . '/database/schema.sql');
 
+/*
+ * Имена колонок `information_schema` читаются по порядку, а не по имени.
+ *
+ * Сервер отдаёт имя колонки в своём регистре, и на части шаред-хостингов оно
+ * приходит заглавными буквами. Обращение по ключу тогда даёт пустую строку, а
+ * пустое имя таблицы в `SHOW CREATE TABLE` обрывается ошибкой «Incorrect table
+ * name ''» — и человек видит сообщение про миграцию, хотя дело в чтении
+ * служебной таблицы.
+ *
+ * Здесь проверяется и сам порядок чтения, и то, что хрупкой формы в коде
+ * больше нет.
+ */
+$runner->group('Схема: чтение служебных таблиц не зависит от регистра');
+
+require dirname(__DIR__) . '/src/Core/Database.php';
+
+$runner->equals(
+    'users',
+    \MyEdu\Core\Database::firstValue(['TABLE_NAME' => 'users']),
+    'значение берётся по порядку, а не по имени колонки'
+);
+$runner->equals(
+    'users',
+    \MyEdu\Core\Database::firstValue(['table_name' => 'users']),
+    'и в том случае, когда имя пришло в своём регистре'
+);
+$runner->equals(
+    null,
+    \MyEdu\Core\Database::firstValue([]),
+    'пустая строка не превращается в имя таблицы'
+);
+
+$coreSources = '';
+
+foreach (['src/Core/SchemaState.php', 'src/Core/PhpDatabaseDump.php'] as $file) {
+    $coreSources .= (string) file_get_contents(dirname(__DIR__) . '/' . $file);
+}
+
+$runner->is(
+    !str_contains($coreSources, "['table_name']") && !str_contains($coreSources, "['column_name']"),
+    'имена таблиц и колонок не читаются по имени колонки'
+);
+
 // Разбор на таблицы: начало CREATE TABLE и следующее `) ENGINE=` — это её конец.
 //
 // `IF NOT EXISTS` допускается: снимок создаёт таблицы, которых ещё нет, и не

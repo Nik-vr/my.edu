@@ -35,6 +35,14 @@ final class AttemptReviewController
 {
     use ControllerHelpers;
 
+    /**
+     * Отметки, которые вправе прислать форма проверки.
+     *
+     * Список, а не любая строка: отметка попадает в результат и показывается
+     * ученику как его достижение, а приходит из браузера учителя.
+     */
+    private const REVIEW_STATUSES = ['correct', 'partial', 'wrong', 'skipped'];
+
     public function __construct(
         private readonly View $view,
         private readonly Session $session,
@@ -134,6 +142,20 @@ final class AttemptReviewController
             }
 
             $score = $this->number($scores[$itemId] ?? null);
+
+            /*
+             * Максимум приходит из формы — и это по замыслу, а не по недосмотру.
+             *
+             * У позиции может не быть своего максимума, и тогда его называет
+             * учитель здесь, в момент проверки: поле «Максимум» в форме для
+             * того и есть. Отнимать его у учителя означало бы запретить задавать
+             * стоимость текстового задания, а стоимость задаёт тот, кто проверяет.
+             *
+             * Отсекается другое: балл всё равно срезается до максимума, а отметка
+             * сверяется со списком — в результат попадает строка из браузера, и
+             * она показывается ученику.
+             */
+            $score = $this->number($scores[$itemId] ?? null);
             $maxScore = $this->number($maxScores[$itemId] ?? null) ?? (float) ($existing['max_score'] ?? 0.0);
             $comment = isset($comments[$itemId]) && is_scalar($comments[$itemId])
                 ? trim((string) $comments[$itemId])
@@ -145,7 +167,16 @@ final class AttemptReviewController
 
             $score = max(0.0, min($score, $maxScore > 0.0 ? $maxScore : $score));
             $percent = $maxScore > 0.0 ? round($score / $maxScore * 100, 2) : null;
-            $mark = isset($marks[$itemId]) && is_scalar($marks[$itemId]) ? (string) $marks[$itemId] : '';
+
+            /*
+             * Отметка приходит из формы, но из запроса не принимается что угодно:
+             * она попадает в результат и показывается ученику. Значение сверяется
+             * со списком, а неизвестное считается вычисленным по баллу.
+             */
+            $mark = isset($marks[$itemId]) && is_scalar($marks[$itemId])
+                ? (string) $marks[$itemId]
+                : '';
+            $mark = in_array($mark, self::REVIEW_STATUSES, true) ? $mark : '';
 
             $this->assignments->saveResult($attemptId, $itemId, [
                 'score'        => GradeAggregator::roundScore($score),

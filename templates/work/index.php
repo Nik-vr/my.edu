@@ -41,8 +41,7 @@ declare(strict_types=1);
  <li><?= $view->e($row['subject_name']) ?></li>
  <?php endif; ?>
  <li>
- <?= $view->e((int) $row['item_count']) ?>
- <?= $view->e($view->plural((int) $row['item_count'], 'задание', 'задания', 'заданий')) ?>
+<?= $view->e($view->count((int) ($row['item_count']),  'задание', 'задания', 'заданий')) ?>
  </li>
  <?php if (!empty($row['time_limit'])): ?>
  <li><?= $view->e((int) $row['time_limit']) ?> мин</li>

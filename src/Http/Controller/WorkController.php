@@ -305,38 +305,37 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
             return $this->resultRedirect($attempt);
         }
 
-        if ($this->expired($attempt)) {
-            return $this->finish($request, $params);
-        }
+        /*
+ * Время вышло.
+ *
+ * Раньше на истечении работа просто завершалась, и ответ на последнее задание
+ * пропадал: таймер на странице отправляет форму уже после истечения, то есть
+ * ровно тогда, когда ученик дописал ответ и нажал «Далее» или не успел нажать
+ * ничего. Работа уходила на проверку без последнего ответа, а человек узнавал
+ * об этом только на странице результата — и уже не мог ничего вернуть.
+ *
+ * Поэтому ответ сохраняется ДО завершения, и ученику говорится, что произошло.
+ * Дедлайн при этом не обходится: сервер и раньше не принимал ответ после
+ * истечения, и здесь он тоже не принимает — просто не выбрасывает уже отправленное.
+ */
+if ($this->expired($attempt)) {
+    $failed = $this->saveAnswerThroughPlugin($request, $attempt, $item);
 
-        $context = $this->context($attempt, $item);
-        $plugin = $this->plugins->get($context->task->pluginId);
+    $this->session->set('flash_notice', $failed === null
+        ? 'Время вышло. Ответ на последнее задание сохранён, работа отправлена на проверку.'
+        : 'Время вышло. Работа отправлена на проверку, но ответ на последнее задание '
+            . 'сохранить не удалось: ' . $failed . ' Обратитесь к учителю.');
 
-        if ($plugin === null) {
-            $this->rememberFailedAnswer($request, $attemptId, $itemId);
-            $this->session->set(
-                'flash_error',
-                'Плагин этого задания сейчас недоступен. Ответ оставлен в текущем сеансе; '
-                . 'вернитесь к заданию после включения плагина или обратитесь к учителю.'
-            );
+    return $this->finish($request, $params);
+}
 
-            return $this->attemptRedirect($attempt);
-        }
+        $failed = $this->saveAnswerThroughPlugin($request, $attempt, $item);
 
-        try {
-            $this->db->savepoint(function () use ($plugin, $context, $request): void {
-                $plugin->saveAnswer($context, $request);
-            });
-        } catch (\Throwable $e) {
-            $this->plugins->recordRuntimeFailure($context->task->pluginId, $e);
-            $this->reportPluginError($e, $attempt, $item);
-            $this->rememberFailedAnswer($request, $attemptId, $itemId);
-            $this->session->set('flash_error', 'Не удалось сохранить ответ. Попробуйте ещё раз; если проблема повторится, обратитесь к учителю.');
+        if ($failed !== null) {
+            $this->session->set('flash_error', $failed);
 
             return $this->attemptRedirect($attempt, $item);
         }
-
-        $this->clearFailedAnswer($attemptId, $itemId);
 
         if ($request->postParam('action') === 'finish') {
             return $this->finish($request, $params);
@@ -345,6 +344,49 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
         $step = $request->postParam('action') === 'prev' ? -1 : 1;
 
         return $this->attemptRedirect($attempt, $this->nextItem($attempt, $item, $step));
+    }
+
+    /**
+     * Сохранить ответ через плагин, не роняя страницу.
+     *
+     * Общая часть для обычного перехода и для истечения времени: раньше она
+     * была написана в одном месте, и второе место — истечение — её обходило,
+     * теряя ответ. Отдельный метод нужен ещё и потому, что у двух вызовов
+     * разные последствия отказа: обычный переход возвращает человека к
+     * заданию, истечение же всё равно завершает работу.
+     *
+     * Возвращает null, если ответ сохранён, иначе — что сказать человеку.
+     */
+    private function saveAnswerThroughPlugin(Request $request, array $attempt, array $item): ?string
+    {
+        $attemptId = (int) $attempt['id'];
+        $itemId = (int) $item['id'];
+        $context = $this->context($attempt, $item);
+        $plugin = $this->plugins->get($context->task->pluginId);
+
+        if ($plugin === null) {
+            $this->rememberFailedAnswer($request, $attemptId, $itemId);
+
+            return 'плагин этого задания сейчас недоступен, ответ оставлен только в этой сессии';
+        }
+
+        try {
+            $this->db->savepoint(function () use ($plugin, $context, $request): void {
+                $plugin->saveAnswer($context, $request);
+            });
+        } catch (\Throwable $e) {
+            // плагин остаётся включённым. Подробности — в журнале плагинов.
+            // Ответ ученика или его разбор, а не поломка плагина:
+            $this->plugins->recordItemFailure($context->task->pluginId, $e);
+            $this->reportPluginError($e, $attempt, $item);
+            $this->rememberFailedAnswer($request, $attemptId, $itemId);
+
+            return 'не удалось сохранить ответ, попробуйте ещё раз или обратитесь к учителю';
+        }
+
+        $this->clearFailedAnswer($attemptId, $itemId);
+
+        return null;
     }
 
     /**
@@ -462,7 +504,9 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
             try {
                 $grade = $plugin->grade($context);
             } catch (\Throwable $e) {
-                $this->plugins->recordRuntimeFailure((string) $item['plugin_id'], $e);
+            // плагин остаётся включённым. Подробности — в журнале плагинов.
+            // Ответ ученика или его разбор, а не поломка плагина:
+                $this->plugins->recordItemFailure((string) $item['plugin_id'], $e);
                 $this->reportPluginError($e, $attempt, $item);
 
                 $needsReview = true;
@@ -894,7 +938,9 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
                         $this->itemGrade($row)
                     );
                 } catch (\Throwable $e) {
-                    $this->plugins->recordRuntimeFailure((string) $row['plugin_id'], $e);
+            // плагин остаётся включённым. Подробности — в журнале плагинов.
+            // Ответ ученика или его разбор, а не поломка плагина:
+                    $this->plugins->recordItemFailure((string) $row['plugin_id'], $e);
                     $this->reportPluginError($e, $attempt, $row);
                     $error = 'Не удалось показать разбор. Учитель сможет проверить это задание.';
                 }

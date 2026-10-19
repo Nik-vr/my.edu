@@ -26,8 +26,9 @@ final class SchoolRoutes implements RouteFile
         $router->post('/classes', [$c->classes, 'store'], Role::CLASSES_MANAGE);
         $router->get('/classes/{id}', [$c->classes, 'show'], Role::CLASSES_MANAGE);
         $router->post('/classes/{id}', [$c->classes, 'update'], Role::CLASSES_MANAGE);
-        $router->get('/classes/{id}/delete', [$c->classes, 'confirmDestroy'], Role::CLASSES_MANAGE);
-        $router->post('/classes/{id}/delete', [$c->classes, 'destroy'], Role::CLASSES_MANAGE);
+$router->get('/classes/{id}/delete', [$c->classes, 'confirmDestroy'], Role::CLASSES_MANAGE);
+$router->get('/classes/{id}/delete/export', [$c->classes, 'exportForRemoval'], Role::CLASSES_MANAGE);
+$router->post('/classes/{id}/delete', [$c->classes, 'destroy'], Role::CLASSES_MANAGE);
         $router->get('/classes/{id}/roster', [$c->classes, 'roster'], Role::CLASSES_MANAGE);
         $router->post('/classes/{id}/subjects', [$c->classes, 'saveSubjects'], Role::CLASSES_MANAGE);
         $router->post('/classes/{id}/subjects/create', [$c->classes, 'createSubject'], Role::CLASSES_MANAGE);

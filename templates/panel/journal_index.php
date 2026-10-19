@@ -49,7 +49,7 @@ $view->crumbs([
                         <th scope="col">Попыток</th>
                         <th scope="col">Сдано</th>
                         <th scope="col">Ждут проверки</th>
-                        <th scope="col"></th>
+                        <th scope="col" data-orderable="false"></th>
                     </tr>
                 </thead>
                 <tbody>

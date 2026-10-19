@@ -37,6 +37,46 @@
     var READY_FLAG = 'data-validate-ready';
 
     /*
+     * Словарь сообщений.
+     *
+     * Вторая половина `src/Ui/Messages.php`: то же условие проверяет сервер, и
+     * раньше он объяснял его своими словами — на пустое поле браузер писал
+     * «Заполните «Фамилия»», а сервер на то же поле отвечал «Укажите
+     * фамилию». Читать PHP-файл из браузера нельзя, поэтому список живёт в
+     * обоих местах, а проверка интерфейса требует, чтобы они совпадали слово в
+     * слово: разъехались — набор красный.
+     *
+     * Слова, которые знает только сервер, сюда не попадают: «Класс «7-Б» уже
+     * существует» не то же самое условие, что пустое поле. Для них у поля есть
+     * своя подсказка `data-hint`, и тогда браузер говорит ровно то же, что
+     * скажет сервер.
+     *
+     * Подстановка `%s` и `%d` — как в `sprintf`, и это позволяет сравнивать
+     * сами шаблоны, а не готовые фразы.
+     */
+    var MESSAGES = {
+        REQUIRED_TEXT: 'Заполните «%s»',
+        REQUIRED_CHECK: 'Отметьте «%s»',
+        EMAIL: 'Похоже, это не адрес почты',
+        URL: 'Нужен полный адрес, например https://example.ru',
+        DATE: 'Введите дату в формате ГГГГ-ММ-ДД',
+        NUMBER: 'Нужно число',
+        MIN_LENGTH: 'Минимум %d символов',
+        MAX_LENGTH: 'Не больше %d символов',
+        MIN: 'Не меньше %s',
+        MAX: 'Не больше %s',
+        STEP: 'Дробное значение не подходит: шаг %s',
+        FORMAT: 'Значение не подходит по формату',
+        GROUP: 'Отметьте хотя бы один вариант'
+    };
+
+    function format(template, value) {
+        return template.replace(/%[sd]/, function () {
+            return String(value);
+        });
+    }
+
+    /*
      * Подпись поля: ближайшая метка рядом с ним.
      *
      * Берётся из разметки, а не из имени поля: «name=» в сообщении человек не
@@ -143,10 +183,10 @@ function dependentFields(form, name) {
 
         if (isRequired(field) && isBlank(field)) {
             if (field.type === 'checkbox') {
-                return hint || 'Отметьте «' + what + '»';
+                return hint || format(MESSAGES.REQUIRED_CHECK, what);
             }
 
-            return hint || 'Заполните «' + what + '»';
+            return hint || format(MESSAGES.REQUIRED_TEXT, what);
         }
 
         if (isBlank(field)) {
@@ -158,37 +198,37 @@ function dependentFields(form, name) {
         var max = field.getAttribute('maxlength');
 
         if (min && value.length < Number(min)) {
-            return hint || 'Минимум ' + min + ' символов';
+            return hint || format(MESSAGES.MIN_LENGTH, min);
         }
 
         if (max && value.length > Number(max)) {
-            return hint || 'Не больше ' + max + ' символов';
+            return hint || format(MESSAGES.MAX_LENGTH, max);
         }
 
         if (field.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) {
-            return hint || 'Похоже, это не адрес почты';
+            return hint || MESSAGES.EMAIL;
         }
 
         if (field.type === 'url' && !/^https?:\/\/[^\s/]+/i.test(value)) {
-            return hint || 'Нужен полный адрес, например https://example.ru';
+            return hint || MESSAGES.URL;
         }
 
         if (field.type === 'number' || field.type === 'range') {
             var number = Number(value);
 
             if (isNaN(number)) {
-                return hint || 'Нужно число';
+                return hint || MESSAGES.NUMBER;
             }
 
             var lowest = field.getAttribute('min');
             var highest = field.getAttribute('max');
 
             if (lowest !== null && number < Number(lowest)) {
-                return hint || 'Не меньше ' + lowest;
+                return hint || format(MESSAGES.MIN, lowest);
             }
 
             if (highest !== null && number > Number(highest)) {
-                return hint || 'Не больше ' + highest;
+                return hint || format(MESSAGES.MAX, highest);
             }
 
             var step = field.getAttribute('step');
@@ -198,7 +238,7 @@ function dependentFields(form, name) {
                 var steps = (number - base) / Number(step);
 
                 if (Math.abs(steps - Math.round(steps)) > 0.0001) {
-                    return hint || 'Дробное значение не подходит: шаг ' + step;
+                    return hint || format(MESSAGES.STEP, step);
                 }
             }
         }
@@ -210,14 +250,14 @@ function dependentFields(form, name) {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
                 // Формат в подсказке — тот, в котором значение приходит в
                 // серверную проверку: год, месяц, день.
-                return hint || 'Введите дату в формате ГГГГ-ММ-ДД';
+                return hint || MESSAGES.DATE;
             }
         }
 
         var pattern = field.getAttribute('pattern');
 
         if (pattern && !new RegExp('^(?:' + pattern + ')$', 'u').test(value)) {
-            return hint || 'Значение не подходит по формату';
+            return hint || MESSAGES.FORMAT;
         }
 
         return null;
@@ -241,8 +281,8 @@ function dependentFields(form, name) {
         var node = errorNodeFor(field);
 
         if (!node && field.parentNode) {
-            node = document.createElement('p');
-            node.className = 'banner ' + ERROR_NODE;
+            node = document.createElement('div');
+            node.className = ERROR_NODE;
             node.setAttribute('role', 'alert');
             field.parentNode.appendChild(node);
         }
@@ -262,9 +302,9 @@ function dependentFields(form, name) {
         if (node) {
             /*
              * Подпись ошибки не удаляется, а прячется: сервер рисует её в том же
-             * самом месте, и пустой <p class="form-error"> оставлял бы пустое
-             * место под полем. Скрытый узел при этом остаётся в разметке — и
-             * сервер, и браузер пишут в одно и то же место.
+             * самом месте, и пустой узел ошибки оставлял бы пустое место под
+             * полем. Скрытый узел при этом остаётся в разметке — и сервер, и
+             * браузер пишут в одно и то же место.
              */
             node.hidden = true;
         }
@@ -369,7 +409,7 @@ function dependentFields(form, name) {
             return null;
         }
 
-        return group.getAttribute('data-hint') || 'Отметьте хотя бы один вариант';
+        return group.getAttribute('data-hint') || MESSAGES.GROUP;
     }
 
     function groupErrorNode(group) {

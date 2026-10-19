@@ -22,8 +22,7 @@ $token = $attempt === null ? '' : (string) $attempt['token'];
 <div class="page-header">
  <h1 class="page-title"><?= $view->e($assignment['title']) ?></h1>
  <p class="muted">
- <?= $view->e($totalItems) ?>
- <?= $view->e($view->plural($totalItems, 'задание', 'задания', 'заданий')) ?>
+<?= $view->e($view->count((int) ($totalItems),  'задание', 'задания', 'заданий')) ?>
 
  <?php if (!empty($assignment['subject_name'])): ?>
  · <?= $view->e($assignment['subject_name']) ?>

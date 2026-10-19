@@ -8,6 +8,7 @@ use MyEdu\Auth\Auth;
 use MyEdu\Core\App;
 use MyEdu\Core\Database;
 use MyEdu\Core\View;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -21,6 +22,26 @@ use Throwable;
  */
 final class PluginManager
     {
+    /**
+     * Префиксы, которые плагину нельзя занимать.
+     *
+     * Список вынесен наружу, потому что на него ссылается `plugins/README.md`:
+     * пока он жил внутри метода, документация описывала префиксы по памяти и
+     * разошлась с кодом — в README не было `uploads`, а объяснение про `tests`
+     * ссылалось на правила `.htaccess`, которых после волны 4 уже нет.
+     *
+     * Открыт наружу, а не просто аккуратно отформатирован, ещё и потому, что
+     * набор проверяет совпадение списков: код и документация обязаны называть
+     * один и тот же набор, иначе плагин занимает адрес, который README
+     * объявил свободным.
+     *
+     * @var list<string>
+     */
+    public const RESERVED_PREFIXES = [
+        'src', 'config', 'database', 'plugins', 'tools', 'vendor', 'var', 'resources', 'public',
+        'assets', 'uploads', 'auth', 'classes', 'confirm', 'health', 'login', 'logout',
+        'panel', 'portal', 'profile', 'register', 'student', 'work', 'works',
+    ];
     /**
      * Основной плагин: без него работа не собирается.
      *
@@ -120,6 +141,26 @@ final class PluginManager
                 continue;
             }
 
+            /*
+             * Два плагина с одним `id` — это не «один победил», а поломанная
+             * установка: ключ в списке один, и вторая папка затирает первую
+             * молча. Рабочие позиции указывают на `id`, а не на папку, поэтому
+             * половина работ перестала бы открываться — и не сказала бы почему.
+             *
+             * Оба объявляются сломанными: выбрать, кому из них верить, по
+             * порядку обхода каталога нельзя, порядок тут произволен.
+             */
+            if (isset($this->discovered[$descriptor->id])) {
+                $existing = $this->discovered[$descriptor->id];
+                $clash = 'id «' . $descriptor->id . '» занят папкой «'
+                    . basename($existing->dir) . '»; переименуйте одну из папок или смените id';
+
+                $this->discovered[$descriptor->id] = $existing->withError($clash);
+                $this->failures[$descriptor->id] = $clash;
+
+                continue;
+            }
+
             $this->discovered[$descriptor->id] = $descriptor;
         }
 
@@ -139,10 +180,26 @@ final class PluginManager
         }
 
         $this->booted = true;
-        $available = $this->availableIds();
+
+        /*
+         * Подключаются все плагины, включённые общим переключателем, — а не
+         * только те, что оставлены в личном наборе учителя.
+         *
+         * Личный переключатель убирает вид задания из палитры, и это всё, что
+         * он должен делать. Раньше он же и подключение запрещал: работа, в
+         * которой это задание уже лежит, переставала публиковаться с объяснением
+         * «плагин выключен или не загрузился» — то есть виноватым выглядел
+         * плагин, а человек как раз этим переключателем и воспользовался.
+         * Выключенный учителем вид пропадал из палитры, а из готовой работы —
+         * вместе с возможностью её отдать ученикам.
+         *
+         * Личный набор остаётся там, где он и нужен, — в `availableIds()`, из
+         * которого берётся палитра и подсказка о недоступных видах.
+         */
+        $enabled = $this->enabledIds();
 
         foreach ($this->discover() as $id => $descriptor) {
-            if (!in_array($id, $available, true)) {
+            if (!in_array($id, $enabled, true)) {
                 continue;
             }
 
@@ -221,13 +278,23 @@ final class PluginManager
     /**
      * Все виды заданий от включённых плагинов — то, что видит учитель.
      *
+     * Именно палитра, поэтому здесь личный набор и применяется: выключенный
+     * учителем вид из неё пропадает. Подключение плагина при этом осталось
+     * прежним — см. `all()`: работа, где такое задание уже лежит, должна
+     * публиковаться.
+     *
      * @return array<string,array<string,TaskKind>> plugin_id => список видов
      */
     public function taskKindsByPlugin(): array
     {
         $result = [];
+        $available = $this->availableIds();
 
         foreach (array_keys($this->all()) as $pluginId) {
+            if (!in_array((string) $pluginId, $available, true)) {
+                continue;
+            }
+
             $kinds = [];
 
             foreach ($this->taskKinds((string) $pluginId) as $kind) {
@@ -495,6 +562,27 @@ final class PluginManager
         }
     }
 
+    /**
+     * Сбой, из-за которого пострадал один ответ, а не плагин.
+     *
+     * Отличается от `recordRuntimeFailure()` тем, что плагин остаётся включённым.
+     * Это разделение нужно потому, что исключение при обработке ответа ученика
+     * чаще всего означает не поломку плагина, а данные: человек вставил в поле
+     * то, чего плагин не ждёт. Раньше такой ответ помечал плагин «не загрузился»
+     * и записывал это в таблицу, то есть один неудачный ответ выключал вид
+     * задания у всего учителя — до похода в панель плагинов, где это надо ещё
+     * заметить и снять.
+     *
+     * Ничего не помечает и ничего не пишет: причина с работающим журналом
+     * плагинов уже записана вызывающей стороной, у которой есть работа,
+     * задание и попытка. Здесь важно только не выключать плагин, поэтому метод
+     * и оставлен: вызвать его трудно перепутать с другим.
+     */
+    public function recordItemFailure(string $id, Throwable $e): void
+    {
+        unset($id, $e);
+    }
+
     /** @return list<string> */
     public function enabledIds(): array
     {
@@ -634,6 +722,33 @@ final class PluginManager
     }
 
     /**
+     * Каталог миграций плагина.
+     *
+     * Собирается из каталога плагина, а не из его `id`.
+     *
+     * Разница видна на любой переименованной папке: `plugins/olivki/` с
+     * `id: test` — совершенно обычное дело при копировании заготовки. Путь,
+     * собранный как `plugins/{id}/migrations`, указывал бы в
+     * `plugins/test/migrations`, которого нет, — и плагин молча отметился бы
+     * установленным, оставив базу без своих таблиц. Плагин включается, в
+     * палитре появляется, а первая попытка ученика падает на
+     * `Table ... doesn't exist`, и чинить это приходится вручную.
+     *
+     * `null` означает, что плагина нет на диске: вызывающий обязан на это
+     * отреагировать, а не идти дальше.
+     */
+    public function migrationsDir(string $id): ?string
+    {
+        $descriptor = $this->discover()[$id] ?? null;
+
+        if ($descriptor === null || $descriptor->dir === '') {
+            return null;
+        }
+
+        return rtrim($descriptor->dir, '/\\') . '/migrations';
+    }
+
+    /**
      * Забыть загруженные плагины: список зависит от прав человека, а право
      * могло смениться в том же запросе.
      */
@@ -650,13 +765,23 @@ final class PluginManager
     }
 
     /**
-     * Включение плагина.
-     *
-     * При первой установке и при обновлении версии накатываются недостающие
-     * миграции. Ошибка установки оставляет плагин выключенным: включённый, но
-     * не установленный плагин упал бы на первой же попытке ученика.
-     */
-    public function enable(string $id): array
+ * Включение плагина.
+ *
+ * При первой установке и при обновлении версии накатываются недостающие
+ * миграции. Ошибка установки оставляет плагин выключенным: включённый, но
+ * не установленный плагин упал бы на первой же попытке ученика.
+ *
+ * `$globally` различает два разных действия, которые выглядят одинаково.
+ * Общее включение — решение администратора: плагин становится доступен всем.
+ * Личное — решение учителя: включается только ему. Но и то и другое требует,
+ * чтобы плагин был установлен, — миграции общие для всех, и без них личная
+ * галочка дала бы учителю вид задания, падающий на первой попытке ученика.
+ * Поэтому личное включение тоже ставит плагин на место, но не двигает общий
+ * флаг: иначе переключатель одного учителя включал бы вид задания у всех.
+ *
+ * @return array{ok:bool,message:string}
+ */
+    public function enable(string $id, bool $globally = true): array
     {
         $descriptor = $this->discover()[$id] ?? null;
 
@@ -693,26 +818,35 @@ final class PluginManager
              * Флаг ставится здесь, а не в remember(): запись о плагине
              * появляется уже при первом просмотре панели, и включение не
              * должно зависеть от того, существовала ли она раньше.
+             *
+             * При личном включении общий флаг не трогается — см. описание
+             * метода. Отдельно снимается и отметка об ошибке: плагин только что
+             * загрузился, и старая ошибка от прежней версии к нему отношения
+             * не имеет.
              */
             $this->db->run(
-                'UPDATE plugins SET enabled = 1, error = NULL, updated_at = NOW() WHERE id = :id',
-                ['id' => $id]
+                'UPDATE plugins SET enabled = :enabled, error = NULL, updated_at = NOW() WHERE id = :id',
+                ['enabled' => $globally ? 1 : (int) $wasEnabled, 'id' => $id]
             );
         } catch (Throwable $e) {
             $this->recordRuntimeFailure($id, $e);
-            $this->db->run('UPDATE plugins SET enabled = 0, updated_at = NOW() WHERE id = :id', ['id' => $id]);
+
+            if ($globally) {
+                $this->db->run('UPDATE plugins SET enabled = 0, updated_at = NOW() WHERE id = :id', ['id' => $id]);
+            }
 
             return ['ok' => false, 'message' => 'Ошибка установки: ' . $e->getMessage()];
         }
 
         $this->forget();
 
-
         return [
             'ok' => true,
-            'message' => $wasEnabled
-                ? 'Плагин уже включён; проверка обновлений завершена'
-                : 'Плагин «' . $descriptor->name . '» включён',
+            'message' => !$globally
+                ? 'Плагин установлен'
+                : ($wasEnabled
+                    ? 'Плагин уже включён; проверка обновлений завершена'
+                    : 'Плагин «' . $descriptor->name . '» включён'),
         ];
     }
 
@@ -855,6 +989,34 @@ final class PluginManager
         }
 
         try {
+            /*
+             * Синтаксис проверяется до подключения.
+             *
+             * `try/catch` ловит исключения, но не ловит ошибку разбора: если в
+             * точке входа опечатка, `require_once` обрывает весь запрос, и
+             * «сайт не должен падать из-за одного плохого плагина» оказывается
+             * неправдой именно там, где нужнее всего. Разбор с `TOKEN_PARSE`
+             * бросает обычное `ParseError` — то же самое, что ловится.
+             *
+             * Файл читается целиком: это мелочь по размеру и единственный способ
+             * узнать о синтаксисе, не выполняя код.
+             */
+            $source = @file_get_contents($entry);
+
+            if (!is_string($source)) {
+                $this->failures[$descriptor->id] = 'Файл точки входа не читается: ' . $descriptor->entry;
+
+                return null;
+            }
+
+            try {
+                token_get_all($source, TOKEN_PARSE);
+            } catch (\ParseError $e) {
+                $this->failures[$descriptor->id] = 'Синтаксическая ошибка в ' . $descriptor->entry . ': ' . $e->getMessage();
+
+                return null;
+            }
+
             require_once $entry;
 
             /*
@@ -872,9 +1034,10 @@ final class PluginManager
                 return null;
             }
 
-            // Контейнер передаётся всегда: плагину нужны база, шаблоны и
-            // настройки, а знать, как ядро их собирает, он не должен.
-            $plugin = new $class($this->app);
+            // Плагин получает не контейнер, а перечень того, что ему положено:
+            // см. PluginServices. Отдавать ему App целиком означало бы отдать
+            // и настройки, и соседние плагины — не по нужде, а по недосмотру.
+            $plugin = new $class(new PluginServices($this->app, $descriptor->id));
 
             if (!$plugin instanceof AssessmentPlugin) {
                 $this->failures[$descriptor->id] = 'Класс не реализует AssessmentPlugin';
@@ -972,13 +1135,7 @@ final class PluginManager
         }
 
         if ($routePrefix !== '') {
-            $reserved = [
-                'src', 'config', 'database', 'plugins', 'tools', 'vendor', 'var', 'resources', 'public',
-                'assets', 'uploads', 'auth', 'classes', 'confirm', 'health', 'login', 'logout',
-                'panel', 'portal', 'profile', 'register', 'student', 'work', 'works',
-            ];
-
-            if (in_array($routePrefix, $reserved, true)) {
+            if (in_array($routePrefix, self::RESERVED_PREFIXES, true)) {
                 return $make('url_prefix совпадает со служебным или системным адресом');
             }
         }

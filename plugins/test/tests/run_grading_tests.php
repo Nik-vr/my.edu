@@ -753,6 +753,120 @@ foreach ([0.0, 0.5, 1.0, 2.0, 2.5, 7.5, 20.0, 37.5] as $total) {
  );
 }
 
+/*
+ * Границы по умолчанию обязаны быть кратны шагу поля.
+ *
+ * Это не про «красивые числа», а про то, что форма их принимает. Поле в баллах
+ * объявлено с шагом, браузер и проверка браузера отвергают число, не кратное
+ * шагу, — и на заполненной форме человек получал «не отправлено: проверьте 4
+ * пол.», отмечать было нечего, а значения стояли те, что подставил сервер.
+ *
+ * Деление суммы на четыре части давало четверти: при сумме 17 это 12.75 и 4.25,
+ * а сверху ещё 12.25 и 3.75 — ровно четыре поля на любой работе, чья сумма не
+ * делится на два.
+ */
+$gridOffenders = [];
+
+foreach (range(1, 200) as $cents) {
+ $total = $cents / 10;
+ $grid = GradeScaleValidator::scoreGrid($total);
+
+ foreach (GradeScaleValidator::scoreDefaults($total) as $row) {
+  foreach (['from', 'to'] as $edge) {
+   $steps = (float) $row[$edge] / $grid;
+
+   if ((float) $row[$edge] < 0.0) {
+    $gridOffenders[] = sprintf(
+     'сумма %s: %s=%s отрицательно',
+     GradeScaleValidator::formatNumber($total),
+     $edge,
+     GradeScaleValidator::formatNumber((float) $row[$edge])
+    );
+   } elseif (abs($steps - round($steps)) > 0.0001) {
+    $gridOffenders[] = sprintf(
+     'сумма %s: %s=%s не кратно шагу %s',
+     GradeScaleValidator::formatNumber($total),
+     $edge,
+     GradeScaleValidator::formatNumber((float) $row[$edge]),
+     GradeScaleValidator::formatNumber($grid)
+    );
+   }
+  }
+
+  if ($row['from'] > $row['to']) {
+   $gridOffenders[] = sprintf(
+    'сумма %s: диапазон оценки %s вывернут',
+    GradeScaleValidator::formatNumber($total),
+    GradeScaleValidator::formatNumber((float) $row['grade'])
+   );
+  }
+ }
+}
+
+$t->is(
+ $gridOffenders === [],
+ 'все границы по умолчанию кратны шагу своего поля, неотрицательны и не вывернуты'
+ . ($gridOffenders === [] ? '' : '; ' . implode('; ', array_slice($gridOffenders, 0, 3)))
+);
+
+/*
+ * Нижний диапазон начинается с нуля.
+ *
+ * Накопление округляет шаг вверх, и на суммах, не делящихся ровно на четыре
+ * шага, остаток не съедался: у работы на 2.1 балла диапазон двойки начинался с
+ * 0.1, и всё, что набрано ниже, не попадало ни в одну оценку.
+ */
+$bottomIsZero = true;
+$bottomOffender = '';
+
+foreach (range(1, 200) as $cents) {
+ $total = $cents / 10;
+ $rows = GradeScaleValidator::scoreDefaults($total);
+ $bottom = $rows[count($rows) - 1];
+
+ if ((float) $bottom['from'] !== 0.0) {
+  $bottomIsZero = false;
+  $bottomOffender = GradeScaleValidator::formatNumber($total) . ' → от ' . GradeScaleValidator::formatNumber((float) $bottom['from']);
+ }
+}
+
+$t->is($bottomIsZero, 'диапазон самой низкой оценки начинается с нуля' . ($bottomOffender === '' ? '' : '; не так при ' . $bottomOffender));
+
+/*
+ * Верхняя граница самой высокой оценки равна сумме цен — это обещает подпись
+ * под набором, и проверять надо обещание.
+ */
+$topIsTotal = true;
+$topOffender = '';
+
+foreach (range(1, 200) as $cents) {
+ $total = $cents / 10;
+ $rows = GradeScaleValidator::scoreDefaults($total);
+
+ if (abs((float) $rows[0]['to'] - $total) > 0.0001) {
+  $topIsTotal = false;
+  $topOffender = GradeScaleValidator::formatNumber($total) . ' → до ' . GradeScaleValidator::formatNumber((float) $rows[0]['to']);
+ }
+}
+
+$t->is($topIsTotal, 'верхняя граница пятёрки равна сумме цен' . ($topOffender === '' ? '' : '; не так при ' . $topOffender));
+
+/* Шаг обязан делить сумму: верхняя граница равна сумме, и вне шага она не влезает. */
+$gridDivides = true;
+$gridOffender = '';
+
+foreach (range(1, 200) as $cents) {
+ $total = $cents / 10;
+ $grid = GradeScaleValidator::scoreGrid($total);
+
+ if (abs($total / $grid - round($total / $grid)) > 0.0001) {
+  $gridDivides = false;
+  $gridOffender = GradeScaleValidator::formatNumber($total) . ' не делится на ' . GradeScaleValidator::formatNumber($grid);
+ }
+}
+
+$t->is($gridDivides, 'шаг поля делит сумму цен' . ($gridOffender === '' ? '' : '; не так: ' . $gridOffender));
+
 // ------------------------------------------------------- оценка по баллам
 
 $t->group('Оценка по явным диапазонам');

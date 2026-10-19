@@ -11,8 +11,11 @@
    уходила: человек и так видит, что нажал, — и ему нужно знать только, чем
    это кончилось.
 
-   Сообщение об ошибке не исчезает само: нажатый и не сработавший ключ —
-   это то, о человеке надо сказать, а не мимо него проскочить.
+   Сообщение об ошибке держится вдвое дольше обычного: его успевают прочесть и
+   понять, что нажатый ключ не сработал. Написать его на миг — значит сообщить
+   о поломке тому, кто мимо смотрел в этот момент, и промолчать о том, кто
+   ждал ответа. И то, и другое гаснет само; щёлкнуть по нему тоже можно — но
+   по ошибке человек щёлкает нечасто, а тишина на экране остаётся.
    ========================================================================== */
 
 (function () {
@@ -26,6 +29,19 @@
      * неоформленный серый прямоугольник.
      */
     var VARIANTS = ['success', 'error', 'warning', 'default'];
+
+    /*
+     * Время жизни сообщения.
+     *
+     * Отказ держится вдвое дольше обычного — так обещает подсказка к
+     * `showToast`, и раньше обещание было неправдой: сообщение об ошибке не
+     * гасло никогда. Оно и правда живёт до щелчка, но человек уходит за
+     * клавиатуру, вспоминает про ошибку через полминуты и находит пустое
+     * место — сообщение уже исчезло, а что именно не сработало, он не понял.
+     */
+    var DURATION = 2600;
+    var ERROR_DURATION = 5200;
+
     var host = null;
 
     function getHost() {
@@ -33,10 +49,16 @@
             return host;
         }
 
+        /*
+         * У самого контейнера роли нет намеренно: он собирает и подтверждения,
+         * и ошибки, а вслух они должны произноситься по-разному. Роль на
+         * контейнере означала бы одно и то же отношение ко всем сообщениям
+         * разом — ошибка произносилась бы так же вежливо, как «сохранено», и
+         * при чтении с экрана не была бы даже замечена. Роль задаётся каждому
+         * сообщению отдельно, в `showToast`.
+         */
         host = document.createElement('div');
         host.className = 'toast-host';
-        host.setAttribute('role', 'status');
-        host.setAttribute('aria-live', 'polite');
         document.body.appendChild(host);
 
         return host;
@@ -47,8 +69,7 @@
      *
      * @param {string} message Текст
      * @param {string} variant 'success' | 'error' | 'warning' | 'info'
-     * @param {number} duration Сколько живёт, миллисекунды. Отказ держится
-     *                          вдвое дольше обычного: его успевают прочесть.
+     * @param {number} duration Сколько живёт, миллисекунды
      */
     function showToast(message, variant, duration) {
         if (!message) {
@@ -60,6 +81,19 @@
 
         node.className = kind === 'default' ? 'toast' : 'toast toast-' + kind;
         node.textContent = message;
+
+        /*
+         * Ошибка объявляется тревогой: `role="alert"` прерывает то, что
+         * вспомогательная технология читает сейчас, иначе она произносит её
+         * после следующего сообщения — а следующим может оказаться уже другое
+         * дело, и человек услышит не то, что случилось.
+         */
+        node.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+
+        if (kind !== 'error') {
+            node.setAttribute('aria-live', 'polite');
+        }
+
         getHost().appendChild(node);
 
         // Отрисовка заранее, иначе переход появления не сработает: браузер
@@ -72,13 +106,10 @@
             node.addEventListener('transitionend', function () { node.remove(); }, { once: true });
         }
 
-        if (kind === 'error') {
-            node.style.cursor = 'pointer';
-            node.addEventListener('click', dismiss);
-        } else {
-            setTimeout(dismiss, duration || 2600);
-            node.addEventListener('click', dismiss);
-        }
+        node.style.cursor = 'pointer';
+        node.addEventListener('click', dismiss);
+
+        setTimeout(dismiss, duration || (kind === 'error' ? ERROR_DURATION : DURATION));
 
         return node;
     }

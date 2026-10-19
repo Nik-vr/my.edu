@@ -22,6 +22,7 @@ use MyEdu\Plugin\EditorContext;
 use MyEdu\Plugin\PluginManager;
 use MyEdu\Plugin\TaskRef;
 use MyEdu\Repository\AssignmentRepository;
+use MyEdu\Repository\AssignmentDraftRepository;
 use MyEdu\Repository\WorkTree;
 
 /**
@@ -75,6 +76,7 @@ final class AssignmentController
         private readonly Auth $auth,
         private readonly Database $db,
         private readonly AssignmentRepository $assignments,
+        private readonly AssignmentDraftRepository $drafts,
         private readonly PluginManager $plugins
     ) {
     }
@@ -400,7 +402,7 @@ public function saveNewStart(Request $request): Response
 
         try {
             $this->deleteAssignmentWithPluginData($id);
-        } catch (PluginRemovalUnavailable $e) {
+        } catch (TaskRemovalBlocked $e) {
             $this->session->set('flash_error', $e->getMessage());
 
             return $this->redirect('panel/assignments/' . $id);
@@ -558,7 +560,7 @@ public function saveNewStart(Request $request): Response
 
             try {
                 $removed = $this->deleteItemWithPluginData($assignmentId, $item);
-            } catch (PluginRemovalUnavailable $e) {
+            } catch (TaskRemovalBlocked $e) {
                 $this->session->set('flash_error', $e->getMessage());
 
                 return $this->redirect('panel/assignments/' . $assignmentId);
@@ -657,7 +659,7 @@ public function saveNewStart(Request $request): Response
         $plugin = $this->plugins->get($ref->pluginId);
 
         if (!$plugin instanceof AssessmentPlugin) {
-            throw new PluginRemovalUnavailable(
+            throw new TaskRemovalBlocked(
                 'Нельзя безопасно удалить задание: плагин «' . $ref->pluginId
                 . '» выключен или не загружается. Включите его и повторите удаление.'
             );
@@ -1235,21 +1237,7 @@ return [
             return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');
         }
 
-        try {
-            $taskId = $plugin->createTask($kind, [
-                'author_id' => (int) $assignment['author_id'],
-                'title'     => trim((string) $request->postParam('title', '')),
-            ]);
-        } catch (\Throwable $e) {
-            $pluginName = $this->plugins->descriptor($pluginId)?->name ?? $pluginId;
-            $this->session->set('flash_error', 'Плагин «' . $pluginName . '» не смог создать задание: ' . $e->getMessage());
-
-            return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');
-        }
-
-        $ref = new TaskRef($pluginId, $kind, $taskId);
-
-        /*
+/*
          * Куда именно положить карточку.
          *
          * Форма палитры присылает ячейку, в которую её бросили: строка задаёт
@@ -1273,23 +1261,46 @@ return [
             return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');
         }
 
+        /*
+         * Создание задания и вставка карточки — одна операция.
+         *
+         * Плагин пишет своё задание в свою таблицу, ядро кладёт на него
+         * карточку. Пока это были две операции, вторая могла отказаться — строка
+         * уже занята — и всё, что записал плагин, оставалось сиротой: задание
+         * есть в его списке, в работе его нет, и почему так вышло человек
+         * узнаёт через месяц. Раньше это лечилось вручную вызовом deleteTask,
+         * а тот мог упасть — и тогда оставалось оба.
+         *
+         * Транзакция убирает саму возможность: отказ откатывает обе записи.
+         * Плагин пишет через то же соединение, поэтому его вставка откатывается
+         * вместе с ядровой.
+         */
         try {
-            $this->assignments->addItem(
-                $assignmentId,
-                $ref,
-                $this->weight($request->postParam('weight')),
-                $this->postFloatParam($request->postParam('max_score')),
-                $row,
-                $variant
-            );
-        } catch (\DomainException $e) {
-            // Строка занята: третьего места нет, а задание плагин уже создал.
-            // Убираем его обратно — иначе оно осталось бы в его собственном
-            // списке заданием без работы, и человек обнаружил бы это позже и
-            // уже не понял бы почему.
-            $plugin->deleteTask($ref);
+            $this->db->transaction(function () use ($plugin, $pluginId, $kind, $request, $assignment, $assignmentId, $row, $variant): void {
+                $taskId = $plugin->createTask($kind, [
+                    'author_id' => (int) $assignment['author_id'],
+                    'title'     => trim((string) $request->postParam('title', '')),
+                ]);
 
+                $this->assignments->addItem(
+                    $assignmentId,
+                    new TaskRef($pluginId, $kind, $taskId),
+                    $this->weight($request->postParam('weight')),
+                    $this->postFloatParam($request->postParam('max_score')),
+                    $row,
+                    $variant
+                );
+            });
+        } catch (\DomainException $e) {
             $this->session->set('flash_error', $e->getMessage() . ' — добавьте новую строку');
+
+            return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');
+        } catch (\Throwable $e) {
+            $pluginName = $this->plugins->descriptor($pluginId)?->name ?? $pluginId;
+            $this->session->set(
+                'flash_error',
+                'Плагин «' . $pluginName . '» не смог добавить задание: ' . $e->getMessage()
+            );
 
             return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');
         }
@@ -1297,6 +1308,97 @@ return [
         $this->session->set('flash_notice', 'Задание добавлено. Наполните его и вернитесь сюда.');
 
         return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');
+    }
+
+    /**
+ * * Отдать черновик позиции.
+ *
+ * Отдаётся только автору работы: чужой черновик — это чужое несохранённое, и
+ * отдавать его вместе с открытой формой значило бы показать человеку то, чего
+ * он не писал.
+ */
+public function itemDraft(Request $request, array $params): Response
+    {
+        $assignmentId = $this->intParam($params, 'id');
+        $itemId = $this->intParam($params, 'itemId');
+        $this->requireOwned($assignmentId);
+        $this->requireItemOf($assignmentId, $itemId);
+
+        $draft = $this->drafts->find($this->authorId(), $itemId);
+
+        if ($draft === null) {
+            return Response::json(['ok' => true, 'draft' => null]);
+        }
+
+        return Response::json([
+            'ok'     => true,
+            'fields' => $draft['fields'],
+            'at'     => $draft['savedAt'],
+        ]);
+    }
+
+    /**
+ * Записать или убрать черновик позиции.
+ *
+ * Черновик не публикует ничего: он лежит отдельно от задания, и ученик его не
+ * видит. Успешное сохранение черновик убирает — иначе он пережил бы правку и
+ * вернулся при следующем открытии уже сохранённого задания, то есть выглядел бы
+ * как откат только что сделанного.
+ */
+public function saveItemDraft(Request $request, array $params): Response
+    {
+        $this->requireToken($request, $this->csrf);
+
+        $assignmentId = $this->intParam($params, 'id');
+        $itemId = $this->intParam($params, 'itemId');
+        $this->requireOwned($assignmentId);
+        $this->requireItemOf($assignmentId, $itemId);
+        $authorId = $this->authorId();
+
+        if ($request->postParam('action') === 'drop') {
+            $this->drafts->drop($authorId, $itemId);
+
+            return Response::json(['ok' => true, 'dropped' => true]);
+        }
+
+        $fields = $request->postParam('fields', '');
+
+        /*
+         * Значения приходят строкой JSON, а не поимённым полем.
+         *
+         * У позиции десятки полей, имена которых знает только плагин: ядро их
+         * не перечисляет и не может проверить. Поэтому разбор один на всех, а
+         * отказ называет причину — иначе человек увидел бы пустую форму и решил
+         * бы, что правка потерялась.
+         */
+        $decoded = is_string($fields) && $fields !== '' ? json_decode($fields, true) : null;
+
+        if (!is_array($decoded)) {
+            return Response::json(
+                ['ok' => false, 'error' => 'Черновик не разобран: пришлите его заново'],
+                422
+            );
+        }
+
+        $this->drafts->save($authorId, $assignmentId, $itemId, $decoded);
+
+        return Response::json(['ok' => true, 'savedAt' => date('Y-m-d H:i:s')]);
+    }
+
+    /**
+     * Позиция принадлежит этой работе.
+     *
+     * Отдельный метод, потому что адрес `/assignments/{id}/items/{itemId}` сам по
+     * себе ничего не проверяет: номер позиции можно назвать от другой работы, и
+     * без такой сверки черновик уехал бы не туда.
+     */
+    private function requireItemOf(int $assignmentId, int $itemId): void
+    {
+        $item = $this->assignments->findItem($itemId);
+
+        if ($item === null || (int) $item['assignment_id'] !== $assignmentId) {
+            throw new HttpException(404, 'Позиция не найдена');
+        }
     }
 
     public function updateItemInWork(Request $request, array $params): Response
@@ -1403,7 +1505,7 @@ return [
 
             try {
                 $removed = $this->deleteItemWithPluginData($assignmentId, $item);
-            } catch (PluginRemovalUnavailable $e) {
+            } catch (TaskRemovalBlocked $e) {
                 $this->session->set('flash_error', $e->getMessage());
 
                 return $this->redirect('panel/assignments/' . $assignmentId . '/edit/items');

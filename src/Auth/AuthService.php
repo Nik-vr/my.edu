@@ -6,6 +6,7 @@ namespace MyEdu\Auth;
 
 use MyEdu\Core\Config;
 use MyEdu\Core\Database;
+use MyEdu\Ui\Messages;
 
 /**
  * Регистрация по e-mail с подтверждением, восстановление пароля и вход.
@@ -66,11 +67,11 @@ final class AuthService
         $password = $data['password'];
 
         if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-            return ['ok' => false, 'error' => 'Укажите корректный адрес электронной почты'];
+            return ['ok' => false, 'error' => Messages::EMAIL];
         }
 
         if (mb_strlen($fullName, 'UTF-8') < 3) {
-            return ['ok' => false, 'error' => 'Укажите фамилию и имя (не менее 3 символов)'];
+            return ['ok' => false, 'error' => Messages::minLength(3) . ': укажите фамилию и имя'];
         }
 
         $minLength = $this->auth->minPasswordLength();
@@ -510,8 +511,18 @@ if ((string) $row['status'] === 'pending') {
 
     /**
      * Смена пароля самим пользователем (нужен текущий пароль).
+     *
+     * Текущий пароль — это пароль, а не второе имя: его тоже можно перебирать.
+     * Сессия у человека уже есть, поэтому ограничение на вход её не спасает —
+     * украденная сессия даёт возможность проверять пароль сколько угодно раз,
+     * пока не угадают. Поэтому здесь тот же счётчик, что и на входе: ключом
+     * служит логин, а не адрес, и смена адреса перебор не возобновляет.
+     *
+     * Счётчик общий со входом намеренно: перебирающий текущий пароль и
+     * перебирающий пароль на входе — один и тот же противник, и блокировка
+     * должна накрывать оба пути сразу.
      */
-    public function changeOwnPassword(int $userId, string $current, string $new): array
+public function changeOwnPassword(int $userId, string $current, string $new, string $ip = ''): array
     {
         $row = $this->users->findRow($userId);
 
@@ -519,7 +530,21 @@ if ((string) $row['status'] === 'pending') {
             return ['ok' => false, 'error' => 'Пользователь не найден'];
         }
 
+        $identifier = (string) ($row['login'] ?? $row['email'] ?? (string) $userId);
+        $ip = $ip === '' ? 'local' : $ip;
+
+        if ($this->throttle !== null && $this->throttle->waitSeconds($identifier, $ip) > 0) {
+            $wait = $this->throttle->waitSeconds($identifier, $ip);
+
+            return [
+                'ok'    => false,
+                'error' => 'Слишком много попыток. Повторите через ' . $this->formatWait($wait),
+            ];
+        }
+
         if (!$this->auth->checkPassword($current, (string) $row['password_hash'])) {
+            $this->throttle?->registerFailure($identifier, $ip);
+
             return ['ok' => false, 'error' => 'Текущий пароль указан неверно'];
         }
 
@@ -530,6 +555,11 @@ if ((string) $row['status'] === 'pending') {
         }
 
         $this->users->update($userId, ['password_hash' => $this->auth->hashPassword($new)]);
+
+        // Успешная смена обнуляет счётчик: человек вспомнил пароль, и считать
+        // дальше нечего. Иначе после пяти неудачных попыток смена была бы
+        // закрыта даже с верным паролем.
+        $this->throttle?->registerSuccess($identifier, $ip);
 
         return ['ok' => true];
     }

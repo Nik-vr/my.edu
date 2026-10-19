@@ -101,7 +101,13 @@ server {
         rewrite ^ /public/index.php last;
     }
 
-    location ~ \.php$ {
+    # Только PHP из public/.
+    #
+    # Правило на любой .php$ исполняло файлы по всему проекту: /tools/…php,
+    # /tests/…php и /src/…php доставались интерпретатору, если адрес до них
+    # доходил. Исполняется то, что лежит под public/, всё остальное наружу не
+    # отдаётся.
+    location ~ ^/public/.+\.php$ {
         include fastcgi_params;
         fastcgi_pass unix:/run/php/php8.1-fpm.sock;   # путь зависит от хостинга
 
@@ -110,6 +116,12 @@ server {
         # второй раз нельзя, иначе PHP получит путь public/public/index.php.
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         fastcgi_read_timeout 300;
+    }
+
+    # PHP вне public/ не исполняется и не отдаётся: даже если файл попал под
+    # корень иначе, до интерпретатора он не дойдёт.
+    location ~ \.php$ {
+        return 404;
     }
 
     # -------------------------------------------------------------------------

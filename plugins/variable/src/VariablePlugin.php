@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace MyEduPlugin\Variable;
 
 use MyEdu\Auth\Role;
-use MyEdu\Core\App;
+use MyEdu\Plugin\PluginServices;
 use MyEdu\Core\Config;
 use MyEdu\Core\Database;
 use MyEdu\Core\DatabaseDump;
@@ -24,6 +24,7 @@ use MyEdu\Plugin\TaskKind;
 use MyEdu\Plugin\TaskRef;
 use MyEduPlugin\Variable\Http\TaskEditorController;
 use MyEduPlugin\Variable\Repository\AttemptRepository;
+use MyEduPlugin\Variable\ProblemConfig;
 use MyEduPlugin\Variable\Repository\TaskRepository;
 use RuntimeException;
 
@@ -43,7 +44,6 @@ final class VariablePlugin implements AssessmentPlugin, PortablePlugin
     /** Вид задания, который видит учитель в списке типов. */
     public const KIND = 'generated';
 
-    private const VERSION = '1.0.0';
 
     /** Адрес раздела плагина. */
     private const PREFIX = 'variables';
@@ -71,24 +71,34 @@ final class VariablePlugin implements AssessmentPlugin, PortablePlugin
 
     private ?WorkItemHandler $work = null;
 
-    public function __construct(private readonly App $app)
-    {
-    }
+/**
+ * Идентификатор, известный классу.
+ *
+ * Одно значение, ради которого плагин узнаёт себя в манифесте: название и
+ * версию он берёт оттуда и не повторяет здесь. Повторение расходилось с
+ * `plugin.json` при первом же переименовании, и расхождение было тихим:
+ * обновление приходило по одной версии, а плагин называл себя по другой.
+ */
+private const PLUGIN_ID = 'variable';
 
-    public function id(): string
-    {
-        return 'variable';
-    }
+public function __construct(private readonly PluginServices $services)
+{
+}
 
-    public function name(): string
-    {
-        return 'Вариативная задача';
-    }
+public function id(): string
+{
+    return self::PLUGIN_ID;
+}
 
-    public function version(): string
-    {
-        return self::VERSION;
-    }
+public function name(): string
+{
+    return $this->services->manifest()?->name ?? self::PLUGIN_ID;
+}
+
+public function version(): string
+{
+    return $this->services->manifest()?->version ?? '0.0.0';
+}
 
     /**
      * @return list<TaskKind>
@@ -131,13 +141,17 @@ final class VariablePlugin implements AssessmentPlugin, PortablePlugin
      */
 public function install(): void
     {
-        $dir = $this->app->rootDir() . '/plugins/' . self::id() . '/migrations';
+        $dir = $this->services->ownPlugin(self::id())->migrationsDir();
+
+        if ($dir === null) {
+            throw new RuntimeException('Каталог плагина не найден на диске — миграции применить некуда');
+        }
 
         (new PluginMigrationRunner(
             $this->database(),
             self::id(),
             $dir,
-            $this->app->get(DatabaseDump::class)
+            $this->services->dump()
         ))->apply();
     }
 
@@ -284,7 +298,7 @@ public function taskEditorUrl(TaskRef $task): ?string
             return null;
         }
 
-        $item = $this->app->get(\MyEdu\Repository\AssignmentRepository::class)->findItem($itemId);
+        $item = $this->services->assignments()->findItem($itemId);
 
         if ($item === null || $item['max_score'] === null) {
             return null;
@@ -428,12 +442,12 @@ public function taskPreview(TaskRef $task): string
     {
         return $this->editor ??= new TaskEditorController(
             $this->view(),
-            $this->app->get(\MyEdu\Core\Session::class),
-            $this->app->get(\MyEdu\Core\Csrf::class),
-            $this->app->get(\MyEdu\Auth\Auth::class),
+            $this->services->session(),
+            $this->services->csrf(),
+            $this->services->auth(),
             $this->config(),
             $this->taskRepository(),
-            $this->app->get(\MyEdu\Repository\AssignmentRepository::class),
+            $this->services->assignments(),
             $this->urlPrefix()
         );
     }
@@ -450,17 +464,17 @@ public function taskPreview(TaskRef $task): string
 
     public function view(): View
     {
-        return $this->app->get(View::class);
+        return $this->services->view();
     }
 
     private function database(): Database
     {
-        return $this->app->get(Database::class);
+        return $this->services->database();
     }
 
     private function config(): Config
     {
-        return $this->app->get(Config::class);
+        return $this->services->config();
     }
 
     /**
@@ -469,7 +483,7 @@ public function taskPreview(TaskRef $task): string
      */
 private function urlPrefix(): string
     {
-        return $this->app->get(PluginManager::class)->urlPrefix(self::id());
+        return $this->services->ownPlugin(self::id())->url();
     }
 
     /**
@@ -499,19 +513,48 @@ private function urlPrefix(): string
         ];
     }
 
-    public function importTask(array $data, string $kind, int $authorId, ?int $subjectId = null): int
+public function importTask(array $data, string $kind, int $authorId, ?int $subjectId = null): int
     {
+        /*
+         * Настройки проверяются до записи, тем же правилом, что и в редакторе.
+         *
+         * Раньше `config` из чужого пакета ложился в базу как есть, и ошибка
+         * всплывала на живой работе: формула без переменных, пример из
+         * неизвестных имён — и ученик получает задание, которое не считается.
+         * Импорт при этом отчитывался как успешный.
+         *
+         * Ядро ловит исключение плагина и откатывает вставку, а позиция попадает
+         * в отчёт как «плагин не смог создать задание» с текстом причины.
+         */
+        $prompt = (string) ($data['prompt'] ?? '');
+        $rawConfig = $data['config'] ?? [];
+
+        if (is_string($rawConfig)) {
+            $decoded = json_decode($rawConfig, true);
+            $rawConfig = is_array($decoded) ? $decoded : null;
+        }
+
+        if (!is_array($rawConfig)) {
+            throw new RuntimeException('настройки задачи не читаются — это должен быть JSON');
+        }
+
+        try {
+            ProblemConfig::validate($rawConfig, $prompt);
+        } catch (InvalidProblemException $e) {
+            throw new RuntimeException('настройки задачи неверны: ' . $e->getMessage(), 0, $e);
+        }
+
         $id = $this->taskRepository()->create(
             $authorId,
             mb_substr(trim((string) ($data['title'] ?? 'Задача')), 0, 191),
             $subjectId,
-            (string) ($data['prompt'] ?? '')
+            $prompt
         );
 
         $status = (string) ($data['status'] ?? 'draft');
 
         $this->taskRepository()->update($id, [
-            'config' => (string) ($data['config'] ?? ''),
+            'config' => (string) json_encode($rawConfig, JSON_UNESCAPED_UNICODE),
             'status' => $status === 'published' ? 'published' : 'draft',
         ]);
 

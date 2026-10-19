@@ -32,7 +32,7 @@ final class StudentRepository
     }
 
     /** @return array<string,mixed>|null */
-    public function findByName(string $fullName): ?array
+    public function findByName(string $fullName, ?int $classId = null): ?array
     {
         $normalized = $this->normalizeName($fullName);
 
@@ -40,15 +40,71 @@ final class StudentRepository
             return null;
         }
 
+        $classSql = '';
+
+        if ($classId !== null) {
+            $classSql = ' AND EXISTS (SELECT 1 FROM class_students cs WHERE cs.student_id = u.id AND cs.class_id = :class)';
+        }
+
         return $this->db->one(
             "SELECT u.* FROM users u
                JOIN user_roles ur ON ur.user_id = u.id
               WHERE ur.role_code = 'student'
-                AND LOWER(TRIM(REPLACE(REPLACE(u.full_name, '  ', ' '), 'ё', 'е'))) = :normalized
+                AND LOWER(TRIM(REPLACE(REPLACE(u.full_name, '  ', ' '), 'ё', 'е'))) = :normalized"
+            . $classSql
+            . '
            ORDER BY u.id
-              LIMIT 1",
-            ['normalized' => $this->lower($normalized)]
+              LIMIT 1',
+            $classId === null
+                ? ['normalized' => $this->lower($normalized)]
+                : ['normalized' => $this->lower($normalized), 'class' => $classId]
         );
+    }
+
+    /**
+     * Однофамилец, которого ещё можно склеить с новой записью.
+     *
+     * Склеивать можно того, у кого ещё нет ни одной попытки: смешивать нечего, и
+     * почти наверняка это тот же человек — перешёл в другой класс или был заведён
+     * повторно из списка. А вот у ученика с работами имя совпадает уже с
+     * кем-то другим: два «Иванов Иван Иванович» в разных классах — обычное дело,
+     * и склейка отдала бы одному из них чужие оценки и логин.
+     *
+     * Поэтому наличие попыток — граница: после неё совпадение имени перестаёт
+     * быть основанием считать, что это один и тот же человек.
+     */
+    public function findMergeableByName(string $fullName): ?array
+    {
+        $existing = $this->findByName($fullName);
+
+        if ($existing === null) {
+            return null;
+        }
+
+        $hasAttempts = $this->db->value(
+            'SELECT 1 FROM assignment_attempts WHERE student_id = :id LIMIT 1',
+            ['id' => (int) $existing['id']]
+        );
+
+        return $hasAttempts === null ? $existing : null;
+    }
+
+    /**
+     * В каких классах числится ученик.
+     *
+     * @return list<string>
+     */
+    public function classNames(int $studentId): array
+    {
+        $rows = $this->db->all(
+            'SELECT c.name FROM class_students cs
+               JOIN classes c ON c.id = cs.class_id
+              WHERE cs.student_id = :id
+           ORDER BY c.name',
+            ['id' => $studentId]
+        );
+
+        return array_map(static fn (array $row): string => (string) $row['name'], $rows);
     }
 
     /**

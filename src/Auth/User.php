@@ -23,7 +23,16 @@ final class User
         public readonly ?int $classId = null,
         public readonly ?string $emailVerifiedAt = null,
         public readonly ?string $birthDate = null,
-        public readonly ?string $vkUrl = null
+        public readonly ?string $vkUrl = null,
+        /*
+         * Отпечаток пароля — не сам хеш и не сам пароль.
+         *
+         * Нужен сессии: смена пароля должна обрывать все входы человека, а
+         * сравнивать для этого нечего — хеш пароля в объект пользователя не
+         * кладут специально, чтобы он не оказался в шаблоне. Отпечаток занимает
+         * 32 знака, ничего не говорит о пароле и меняется вместе с ним.
+         */
+        public readonly ?string $passwordStamp = null
     ) {
     }
 
@@ -41,7 +50,8 @@ final class User
             classId: isset($row['class_id']) && $row['class_id'] !== null ? (int) $row['class_id'] : null,
             emailVerifiedAt: !empty($row['email_verified_at']) ? (string) $row['email_verified_at'] : null,
             birthDate: !empty($row['birth_date']) ? (string) $row['birth_date'] : null,
-            vkUrl: !empty($row['vk_url']) ? (string) $row['vk_url'] : null
+            vkUrl: !empty($row['vk_url']) ? (string) $row['vk_url'] : null,
+            passwordStamp: substr(hash('sha256', (string) ($row['password_hash'] ?? '')), 0, 32)
         );
     }
 

@@ -77,6 +77,28 @@ final class Response
         return $response;
     }
 
+    /**
+     * Файл для скачивания.
+     *
+     * Имя файла обязательно: без него браузер предложит сохранить страницу под
+     * именем адреса, и человек, качающий выгрузку перед удалением класса,
+     * получал файл без расширения и не понимал, что с ним делать.
+     *
+     * `attachment` — тоже обязательный: выгрузку открывают не для просмотра, и
+     * браузер, показавший CSV на странице, тут же предложил бы «сохранить как».
+     */
+    public static function download(string $body, string $filename, string $contentType): self
+    {
+        $safe = str_replace(['"', "\r", "\n"], '', $filename);
+
+        $response = new self($body, 200);
+        $response->headers['Content-Type'] = $contentType;
+        $response->headers['Content-Disposition'] = 'attachment; filename="' . $safe . '"';
+        $response->headers['Content-Length'] = (string) strlen($body);
+
+        return $response;
+    }
+
     public function withHeader(string $name, string $value): self
     {
         $this->headers[$name] = $value;

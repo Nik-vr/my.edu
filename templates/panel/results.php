@@ -45,8 +45,7 @@ $view->crumbs([
     </p>
     <?php if ($pendingTotal > 0): ?>
         <p class="muted">
-            Требуют проверки: <?= $view->e($pendingTotal) ?>
-            <?= $view->e($view->plural($pendingTotal, 'работа', 'работы', 'работ')) ?>.
+            Требуют проверки: <?= $view->e($view->count((int) $pendingTotal, 'работа', 'работы', 'работ')) ?>.
             Значок стоит у выдачи — по нему видно, какую открыть.
         </p>
     <?php endif; ?>
@@ -68,7 +67,7 @@ $view->crumbs([
                     <th scope="col">Выполнили</th>
                     <th scope="col">Ждут проверки</th>
                     <th scope="col">Когда выдана</th>
-                    <th scope="col"></th>
+                    <th scope="col" data-orderable="false"></th>
                 </tr>
             </thead>
             <tbody>

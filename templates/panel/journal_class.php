@@ -35,8 +35,7 @@ $view->crumbs([
 
 </h1>
  <p class="muted">
- <?= $view->e($total['students']) ?>
- <?= $view->e($view->plural($total['students'], 'ученик', 'ученика', 'учеников')) ?>
+<?= $view->e($view->count((int) ($total['students']),  'ученик', 'ученика', 'учеников')) ?>
  <?php if (!empty($class['title'])): ?>
  · <?= $view->e($class['title']) ?>
  <?php endif; ?>

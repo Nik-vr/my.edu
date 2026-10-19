@@ -1154,6 +1154,83 @@ $t->contains($tryLogin('nepravilno'), 'Неверный логин или пар
 
 $db->run('DELETE FROM login_throttle');
 
+/*
+ * Перебор, размазанный по чужим адресам.
+ *
+ * Счётчик по паре «логин + адрес» перестаёт считать, стоит атакующему менять
+ * адрес на каждый запрос: ключ меняется, и каждая попытка начинается с нуля.
+ * Так перебор одного логина идёт с темпа одного запроса в секунду вместо
+ * пауз после порога.
+ *
+ * Проверяется сменой адреса источника между попытками — ровно то, что делает
+ * перебор из чужой сети.
+ */
+$t->group('Перебор с разных адресов');
+
+$db->run('DELETE FROM login_throttle');
+
+$throttle = new \MyEdu\Auth\LoginThrottle($db, 5, 300);
+
+// Один и тот же логин, разные адреса: счёт по логину обязан копиться.
+for ($hop = 1; $hop <= 6; $hop++) {
+    $throttle->registerFailure('raznye-adresa@example.edu', '10.0.0.' . $hop);
+}
+
+$t->is($throttle->waitSeconds('raznye-adresa@example.edu', '10.0.0.99') > 0,
+    'логин заблокирован, хотя каждый запрос шёл со своего адреса');
+$t->is($throttle->waitSeconds('raznye-adresa@example.edu', '10.0.0.99') > 0,
+    'блокировка по логину держится на последнем чужом адресе');
+
+$t->is($throttle->waitSeconds('drugoy-login@example.edu', '10.0.0.1') === 0,
+    'другой логин с того же адреса не заблокирован');
+
+$throttle->registerSuccess('raznye-adresa@example.edu', '10.0.0.99');
+
+$t->is($throttle->waitSeconds('raznye-adresa@example.edu', '10.0.0.99') === 0,
+    'успешный вход снимает блокировку по логину');
+
+/*
+ * Гонка на первой неудаче.
+ *
+ * Неудачи раньше считали чтением, а запись делали следом. Две одновременные
+ * попытки по несуществующему логину обе видели пустую строку, обе вставляли
+ * свою — вторая падала с «Duplicate entry», и вместо отказа на входе человек
+ * получал 500. Настоящая гонка воспроизводится параллельными процессами,
+ * поэтому проверяется то же условие, на котором она держалась: повторная
+ * вставка существующей строки обязана обновить счётчик, а не упасть.
+ */
+$t->group('Гонка при первом промахе');
+
+$db->run('DELETE FROM login_throttle');
+
+$raceThrottle = new \MyEdu\Auth\LoginThrottle($db, 5, 300);
+
+$failed = false;
+
+try {
+    $raceThrottle->registerFailure('gonochnyy@example.edu', '10.1.0.1');
+    // Повтор того же ключа: раньше это было второй вставкой и падало.
+    $raceThrottle->registerFailure('gonochnyy@example.edu', '10.1.0.1');
+    $raceThrottle->registerFailure('gonochnyy@example.edu', '10.1.0.1');
+} catch (\Throwable $e) {
+    $failed = true;
+}
+
+$t->is($failed === false, 'повторная неудача не роняет вход 500-й ошибкой');
+
+$raceRows = (int) $db->value(
+    'SELECT COALESCE(SUM(failures), 0) FROM login_throttle
+      WHERE throttle_key IN (:a, :b)',
+    [
+        'a' => hash('sha256', 'gonochnyy@example.edu|10.1.0.1'),
+        'b' => hash('sha256', 'gonochnyy@example.edu|'),
+    ]
+);
+
+$t->equals(6, $raceRows, 'три неудачи дали три счётчика — по одному на каждый ключ');
+
+$db->run('DELETE FROM login_throttle');
+
 // ---------------------------------------------------------- частота запросов
 
 $t->group('Ограничение частоты на чувствительных адресах');
@@ -1486,6 +1563,27 @@ $t->is($tokens->hasActive($adminResetToken, TokenRepository::PURPOSE_RESET),
 $t->is($guest->get('/auth/reset?token=' . $adminResetToken)['status'] === 200,
     'с той же ссылкой можно повторить ввод');
 
+/*
+ * Токен возвращается на форму, но не в адрес.
+ *
+ * Адрес с токеном попадает в историю браузера, в журналы сервера и прокси и в
+ * `Referer` следующего запроса, а токен одноразовый. Поэтому в `Location` его
+ * быть не должно, а сама форма обязана работать: токен лежит в скрытом поле.
+ */
+/*
+ * Проверяется сам токен, а не слово `token` в адресе: имя параметра в адресе
+ * безобидно, опасен именно его значение.
+ */
+$t->is(
+    !str_contains($tooShortReset['location'], $adminResetToken),
+    'токен сброса не возвращается в Location; адрес: ' . $tooShortReset['location']
+);
+
+$backToForm = $guest->get($tooShortReset['location']);
+$t->is($backToForm['status'] === 200, 'форма сброса открывается без токена в адресе');
+$t->contains($backToForm['body'], $adminResetToken,
+    'токен остался в форме, поэтому её можно отправить повторно');
+
 $guest->post('/auth/reset', [
     '_token'    => $guest->tokenFrom($resetForm) ?? '',
     'token'     => $adminResetToken,
@@ -1517,6 +1615,141 @@ $t->is($withOld->get('/portal')['status'] === 302, 'прежний пароль 
 
 $t->is(!$tokens->hasActive($adminResetToken, TokenRepository::PURPOSE_RESET),
     'ссылка сброса одноразовая');
+
+/*
+ * Смена пароля обрывает все сессии человека, а не только текущую.
+ *
+ * Именно это и нужно при взломе: человек меняет пароль, чтобы чужой вход
+ * перестал работать. Если бы сессия пережила смену пароля, человек вышел бы,
+ * вернулся — и снова был внутри, уже с новым паролем на руках.
+ *
+ * Проверяется на двух входах сразу: тот, кто менял, и тот, кто сидел в соседней
+ * вкладке. Первый после смены пароля тоже выходит — пароль у него теперь другой,
+ * а сессия заведена со старым.
+ */
+$t->group('Смена пароля обрывает чужие входы');
+
+$stolenLogin = 'ukorenennyy-vhod@example.edu';
+$stolenPassword = 'do-smeny-2026';
+
+$stolenId = (int) $db->insert('users', [
+    'login'         => $stolenLogin,
+    'email'         => $stolenLogin,
+    'password_hash' => password_hash($stolenPassword, PASSWORD_DEFAULT),
+    'full_name'     => 'Кража Учётной Записи',
+    'is_owner'      => 0,
+    'status'        => 'active',
+    'email_verified_at' => date('Y-m-d H:i:s'),
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$loginAs = static function (string $login, string $password): TestClient {
+    $client = new TestClient($GLOBALS['baseUrl']);
+    $page = $client->get('/login');
+
+    $client->post('/login', [
+        '_token'     => $client->tokenFrom($page) ?? '',
+        'identifier' => $login,
+        'password'   => $password,
+    ]);
+
+    return $client;
+};
+
+$GLOBALS['baseUrl'] = $baseUrl;
+
+$thief = $loginAs($stolenLogin, $stolenPassword);
+
+$t->is($thief->get('/portal')['status'] === 200, 'чужий вход работает до смены пароля');
+
+$honest = $loginAs($stolenLogin, $stolenPassword);
+
+$t->is($honest->get('/portal')['status'] === 200, 'свой вход работает до смены пароля');
+
+$honest->post('/profile/password', [
+    '_token'          => $honest->tokenFrom($honest->get('/profile')) ?? '',
+    'current_password' => $stolenPassword,
+    'new_password'    => 'posle-smeny-2026',
+    'password2'       => 'posle-smeny-2026',
+]);
+
+$t->is($honest->get('/portal')['status'] === 302, 'сменивший пароль сам выходит и входит заново');
+$t->is($thief->get('/portal')['status'] === 302,
+    'чужой вход отвалился после смены пароля — иначе смена была бы бесполезной');
+
+$reentered = $loginAs($stolenLogin, 'posle-smeny-2026');
+
+$t->is($reentered->get('/portal')['status'] === 200, 'с новым паролем войти можно');
+
+// Человек вымышленный: убираем, иначе он попадёт в счётчики следующих проверок.
+$db->run('DELETE FROM user_roles WHERE user_id = :id', ['id' => $stolenId]);
+$db->run('DELETE FROM users WHERE id = :id', ['id' => $stolenId]);
+
+$t->group('Перебор текущего пароля в профиле ограничен');
+
+/*
+ * Текущий пароль — тоже пароль, и перебирать его можно с уже украденной
+ * сессией: ограничение на вход такую сессию не спасает, проверка пароля идёт
+ * мимо него. Счётчик тот же, что и на входе, и ключом служит логин, поэтому
+ * смена адреса перебор не возобновляет.
+ */
+$guessedLogin = 'podbor-parolya@example.edu';
+$guessedPassword = 'nastoyashchiy-parol-2026';
+
+$guessedId = $users->create([
+    'login'         => $guessedLogin,
+    'email'         => $guessedLogin,
+    'password_hash' => password_hash($guessedPassword, PASSWORD_DEFAULT),
+    'full_name'     => 'Перебор Пароля',
+    'status'        => 'active',
+    'is_owner'      => 0,
+]);
+
+$guesser = $loginAs($guessedLogin, $guessedPassword);
+$t->is($guesser->get('/profile')['status'] === 200, 'переборщик открыл профиль по своей сессии');
+
+$wrongAnswers = [];
+$lockMessageSeen = false;
+
+for ($attempt = 0; $attempt < 6; $attempt++) {
+    $guesser->post('/profile/password', [
+        '_token'          => $guesser->tokenFrom($guesser->get('/profile')) ?? '',
+        'current_password' => 'nepravilno-' . $attempt,
+        'new_password'    => 'novy-parol-2026',
+        'password2'       => 'novy-parol-2026',
+    ]);
+
+    $wrongAnswers[] = (string) $guesser->get('/profile')['body'];
+}
+
+$lockMessageSeen = (bool) preg_grep('/Слишком много попыток/u', $wrongAnswers);
+
+$t->is($lockMessageSeen, 'после серии неудач перебор текущего пароля останавливается');
+
+$verified = $guesser->post('/profile/password', [
+    '_token'          => $guesser->tokenFrom($guesser->get('/profile')) ?? '',
+    'current_password' => $guessedPassword,
+    'new_password'    => 'dazhe-vernyy-2026',
+    'password2'       => 'dazhe-vernyy-2026',
+]);
+
+/*
+ * Верный пароль тоже не проходит, пока идёт блокировка.
+ *
+ * Иначе ограничение не значит ничего: подбор идёт, а верный пароль человека,
+ * который вводит его после неудачных попыток, проходит с первого раза —
+ * и человек понимает, что неудачные попытки считает не он.
+ */
+$t->is(
+    password_verify($guessedPassword, (string) $users->findRow($guessedId)['password_hash']),
+    'во время блокировки пароль не меняется даже с верным текущим'
+);
+$t->is($verified['status'] === 302, 'попытка обработана и не упала');
+
+$db->run('DELETE FROM login_throttle');
+$db->run('DELETE FROM user_roles WHERE user_id = :id', ['id' => $guessedId]);
+$db->run('DELETE FROM users WHERE id = :id', ['id' => $guessedId]);
 
 $t->group('Сброс пароля не снимает блокировку');
 
@@ -1678,7 +1911,7 @@ $t->is($noName['status'] === 302, 'имя без фамилии и имени о
  * проверяется и подпись под полем, и её отметка — .is-invalid.
  */
 $profileNoName = $owner->get('/profile');
-$t->contains($profileNoName['body'], 'Укажите имя', 'показано объяснение про ФИО');
+$t->contains($profileNoName['body'], 'Заполните «имя»', 'показано объяснение про ФИО');
 $t->contains($profileNoName['body'], 'form-control is-invalid', 'пустое имя подсвечено');
 $t->contains($profileNoName['body'], 'form-error', 'под полем написано, что не так');
 $t->contains($profileNoName['body'], 'aria-invalid="true"', 'поле объявлено неверным для чтения с экрана');

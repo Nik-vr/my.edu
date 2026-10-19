@@ -44,6 +44,21 @@ final class WorkImporter
     {
         $work = $package['work'];
 
+        /*
+         * Чужой файл проверяется до того, как что-либо записывается.
+         *
+         * Значения из пакета шли в базу как есть: `grade_mode` и `criteria_mode` —
+         * перечисления с закрытым списком, и чужое значение обрывало импорт
+         * ошибкой СУБД посреди работы, без указания, что именно не так. Вес и
+         * цена задания — числа, которыми считают баллы: минус в весе переворачивал
+         * порядок позиций в итоге работы, а «время на работу в минутах» в
+         * миллиарде минут делало работу непроходимой для живого человека.
+         *
+         * Отказ с объяснением приходит раньше и называет поле: файл присылает
+         * человек, и он может его пересобрать.
+         */
+        $this->validate($work);
+
         $subjectName = trim((string) ($work['subject'] ?? ''));
         $mediaMap = $this->saveMedia($package['media'], $uploadsDir);
 
@@ -165,6 +180,66 @@ final class WorkImporter
      *
      * @return list<array<string,mixed>>
      */
+    /**
+     * Проверка полей чужого файла — до того, как что-либо записывается.
+     *
+     * Значения из пакета шли в базу как есть: `grade_mode` и `criteria_mode` —
+     * перечисления с закрытым списком, и чужое значение обрывало импорт ошибкой
+     * СУБД посреди работы, без указания, что именно не так. Вес и цена задания —
+     * числа, которыми считают баллы: минус в весе переворачивал порядок позиций
+     * в итоге работы, а «время в миллиарде минут» делало работу непроходимой
+     * для живого человека.
+     *
+     * Отказ приходит раньше и называет поле: файл присылает человек, и он может
+     * его пересобрать.
+     *
+     * @param array<string,mixed> $work
+     */
+    private function validate(array $work): void
+    {
+        $gradeMode = (string) ($work['grade_mode'] ?? 'weighted');
+
+        if (!in_array($gradeMode, ['weighted', 'per_item'], true)) {
+            throw new TransferException(
+                'В файле переноса недопустимый способ выставления оценок: ' . $gradeMode
+            );
+        }
+
+        $criteriaMode = (string) ($work['criteria_mode'] ?? 'percent');
+
+        if (!in_array($criteriaMode, ['percent', 'score'], true)) {
+            throw new TransferException(
+                'В файле переноса недопустимый способ пересчёта баллов: ' . $criteriaMode
+            );
+        }
+
+        $timeLimit = $work['time_limit'] ?? null;
+
+        if ($timeLimit !== null
+            && (!is_numeric($timeLimit) || (int) $timeLimit < 0 || (int) $timeLimit > 1440)) {
+            throw new TransferException(
+                'В файле переноса недопустимое время на работу: должно быть 0 или от 1 до 1440 минут'
+            );
+        }
+
+        foreach ($this->sortedItems($work) as $item) {
+            $label = 'задание №' . (string) ($item['position'] ?? '?');
+            $weight = $item['weight'] ?? 1;
+
+            if (!is_numeric($weight) || (float) $weight <= 0.0 || (float) $weight > 1000.0) {
+                throw new TransferException('В файле переноса ' . $label . ' имеет недопустимый вес');
+            }
+
+            $maxScore = $item['max_score'] ?? null;
+
+            if ($maxScore !== null
+                && (!is_numeric($maxScore) || (float) $maxScore < 0.0 || (float) $maxScore > 10000.0)) {
+                throw new TransferException(
+                    'В файле переноса ' . $label . ' имеет недопустимую цену в баллах'
+                );
+            }
+        }
+    }
     private function sortedItems(array $work): array
     {
         $items = [];

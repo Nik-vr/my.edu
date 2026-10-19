@@ -87,17 +87,69 @@ try {
         $bombRejected = true;
     }
 
-    $runner->is($bombRejected, 'архив отклоняется по заявленному размеру до распаковки содержимого');
+$runner->is($bombRejected, 'архив отклоняется по заявленному размеру до распаковки содержимого');
 
-    $fallbackBombRejected = false;
+$fallbackBombRejected = false;
+
+try {
+    $reflection->invoke(null, $bomb);
+} catch (TransferException) {
+    $fallbackBombRejected = true;
+}
+
+$runner->is($fallbackBombRejected, 'fallback ограничивает распакованный размер до inflate');
+
+/*
+ * Архив, который врёт в заголовках.
+ *
+ * Классическая бомба: центральный каталог обещает килобайт, а локальный
+ * заголовок — терабайты. Распаковщик верит локальному заголовку, поэтому
+ * сверка `strlen($content) !== $size` срабатывает уже после того, как память
+ * занята. Единственное место, где проверка что-то значит, — до распаковки.
+ */
+$runner->group('ZIP-перенос: расхождение в заголовках');
+
+/*
+ * Тот же архив, но размер в центральном каталоге уменьшен до килобайта.
+ * Локальный заголовок не трогается: именно на этом и строится бомба.
+ */
+$liar = $singleEntryZip('media/large.txt', str_repeat('B', 64 * 1024));
+
+$liarPos = strpos($liar, "\x50\x4b\x01\x02");
+
+if ($liarPos === false) {
+    $runner->is(false, 'в собранном архиве есть центральный каталог');
+} else {
+    // 24 знака центрального заголовка: 8 — время и дата, затем размеры.
+    $centralHead = substr($liar, $liarPos + 20, 24);
+    $centralFixed = $centralHead;
+    $realSize = unpack('V', substr($centralHead, 8, 4))[1];
+    $liar = substr($liar, 0, $liarPos + 20)
+        . $centralFixed
+        . pack('V', 1024) . pack('V', 1024)
+        . substr($liar, $liarPos + 20 + 24);
+
+    file_put_contents($path, $liar);
+
+    $liarRejected = false;
+    $liarMessage = '';
 
     try {
-        $reflection->invoke(null, $bomb);
-    } catch (TransferException) {
-        $fallbackBombRejected = true;
+        Zip::read($path);
+    } catch (TransferException $e) {
+        $liarRejected = true;
+        $liarMessage = $e->getMessage();
     }
 
-    $runner->is($fallbackBombRejected, 'fallback ограничивает распакованный размер до inflate');
+    $runner->is($liarRejected, 'архив с расхождением в заголовках отклонён до распаковки');
+
+    /*
+     * Слова в отказе зависят от того, какой разбор доступен: с расширением zip
+     * отказ приходит от сверки заголовков, без него — от ограничения inflate.
+     * Проверяется поэтому сам отказ, а не его формулировка: обе ветки означают
+     * одно — содержимое не распаковано.
+     */
+}
 } finally {
     @unlink($path);
 }
@@ -132,6 +184,54 @@ $sortReflection->setAccessible(true);
 
 // Сортировке ни база, ни плагины не нужны, а конструктор требует и то и другое.
 $sort = static fn (array $work): array => $sortReflection->invoke($importer, $work);
+
+/*
+ * Чужой файл проверяется до записи.
+ *
+ * Значения из пакета шли в базу как есть, и недопустимые обрывали импорт ошибкой
+ * СУБД посреди работы — без указания, что именно не так. Проверяется то, что
+ * видно до базы: перечисления, вес, цену и время.
+ */
+$validateReflection = new ReflectionMethod(WorkImporter::class, 'validate');
+$validateReflection->setAccessible(true);
+
+$validate = static function (array $work) use ($importer, $validateReflection): string {
+    try {
+        $validateReflection->invoke($importer, $work);
+
+        return '';
+    } catch (Throwable $e) {
+        return $e->getMessage();
+    }
+};
+
+$goodWork = [
+    'grade_mode'    => 'weighted',
+    'criteria_mode' => 'percent',
+    'time_limit'    => 45,
+    'items'         => [['position' => 1, 'variant' => 1, 'weight' => 1.5, 'max_score' => 2]],
+];
+
+$runner->equals('', $validate($goodWork), 'обычный пакет проходит проверку');
+
+$cases = [
+    'недопустимый grade_mode' => ['grade_mode' => 'как-угодно', 'want' => 'оценок'],
+    'недопустимый criteria_mode' => ['criteria_mode' => 'магией', 'want' => 'баллов'],
+    'время в миллиарде минут' => ['time_limit' => 999999999, 'want' => 'время'],
+    'минус в весе' => ['items' => [['position' => 1, 'weight' => -3]], 'want' => 'вес'],
+    'цена в миллиард баллов' => ['items' => [['position' => 1, 'max_score' => 1e12]], 'want' => 'недопустимую цену'],
+];
+
+foreach ($cases as $title => $case) {
+    $want = $case['want'];
+    unset($case['want']);
+    // Значения проверки должны перекрывать исходный пакет, а не наоборот,
+// поэтому объединение идёт от случая: в PHP ключ из левого операнда
+// побеждает, и порядок здесь решает, что именно проверяется.
+$message = $validate($case + $goodWork);
+
+    $runner->is(str_contains($message, $want), $title . ' отклонён с объяснением: ' . $message);
+}
 
 $labels = static fn (array $items): array => array_map(
     static fn (array $i): string => (string) ($i['title'] ?? ''),

@@ -27,6 +27,15 @@
     /* Повторный клик по кнопке после первого — игнорируем. */
     var submitting = false;
 
+    /*
+     * Человек уже сказал «завершай», и форма отправляется заново.
+     *
+     * Без этой отметки вопрос задался бы второй раз: отправка после согласия
+     * проходит через тот же обработчик, а он не может отличить «человек нажал
+     * кнопку» от «человек нажал кнопку и подтвердил в окне».
+     */
+    var finishing = false;
+
     /* ---------------------------------------------------------- таймер */
 
     function initTimer() {
@@ -256,7 +265,7 @@
             var submitter = event.submitter;
             var isFinish = submitter && submitter.value === 'finish';
 
-            if (isFinish) {
+            if (isFinish && !finishing) {
                 var left = countUnanswered();
                 var here = currentIsEmpty();
 
@@ -267,15 +276,71 @@
                         + (left > 0 ? question + '. ' : '')
                         + 'Завершить работу? Отменить будет нельзя.';
 
-                    if (!window.confirm(message)) {
-                        event.preventDefault();
-                        return;
-                    }
+                    askFinish(message, submitter, event);
+
+                    return;
                 }
             }
 
             lockForm();
         });
+    }
+
+    /**
+     * Спросить окном сайта и отправить форму, только если ответ «да».
+     *
+     * Отправка отменяется здесь и повторяется после согласия — одним и тем же
+     * нажатием той же кнопки, поэтому сервер получает и «завершить», и все
+     * ответы, как если бы человек нажал один раз.
+     *
+     * Если окна нет, работа просто завершается: без него вопрос задавать
+     * нечем, а неотменяемое действие без вопроса лучше, чем действие, которое
+     * нельзя завершить вовсе.
+     */
+    function askFinish(body, submitter, event) {
+        event.preventDefault();
+
+        if (!window.MyEduConfirm) {
+            sendFinish(submitter);
+
+            return;
+        }
+
+        window.MyEduConfirm.open({
+            title: 'Завершить работу?',
+            body: body,
+            confirm: 'Завершить',
+            cancel: 'Продолжить работу',
+            danger: false
+        }).then(function (yes) {
+            if (yes) {
+                sendFinish(submitter);
+            }
+        });
+    }
+
+    function sendFinish(submitter) {
+        finishing = true;
+
+        if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit(submitter);
+
+            return;
+        }
+
+        /*
+         * Браузер без requestSubmit: клик по кнопке сам вызывает отправку формы
+         * вместе с её name/value. Прямой form.submit() здесь не годится — он
+         * отправил бы форму без «завершить», и сервер счёл бы нажатие обычным
+         * переходом к следующему заданию вместо завершения работы.
+         */
+        if (submitter) {
+            submitter.click();
+
+            return;
+        }
+
+        form.submit();
     }
 
     /**

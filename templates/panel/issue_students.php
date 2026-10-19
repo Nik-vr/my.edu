@@ -67,8 +67,7 @@ $view->crumbs([
 
  echo $view->e(implode(', ', $labels));
  ?>
- · всего <?= $view->e(count($students)) ?>
- <?= $view->e($view->plural(count($students), 'ученик', 'ученика', 'учеников')) ?>
+ · всего <?= $view->e($view->count(count($students), 'ученик', 'ученика', 'учеников')) ?>
  </p>
 
  <?php

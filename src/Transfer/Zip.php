@@ -218,6 +218,23 @@ final class Zip
     /** @return array<string,string> */
     private static function readWithExtension(string $path): array
     {
+        /*
+         * Сверка заголовков — до распаковки.
+         *
+         * ZipArchive доверяет локальному заголовку файла, а проверяет размер,
+         * объявленный в центральном каталоге. В нормальном архиве они совпадают,
+         * а в бомбе — нет: каталог обещает килобайт, а по локальному заголовку
+         * там терабайты. Проверка `strlen($content) !== $size` срабатывает уже
+         * после того, как память занята и процесс упал, — то есть слишком
+         * поздно, чтобы что-то предотвратить.
+         *
+         * Поэтому файл читается как обычный набор байт и сравнивается то, что
+         * обещают центральный каталог и локальные заголовки. Расхождение — отказ
+         * до распаковки; совпадение означает, что заявленный размер верен и
+         * следующая проверка ограничит его сверху.
+         */
+        self::assertHeadersAgree($path);
+
         $zip = new ZipArchive();
 
         if ($zip->open($path) !== true) {
@@ -413,6 +430,113 @@ final class Zip
         }
 
         return $files;
+    }
+
+    /**
+     * Центральный каталог и локальные заголовки обязаны говорить одно и то же.
+     *
+     * Файл читается напрямую, без ZipArchive: сверять надо то, что распаковщик
+     * возьмёт на веру, — то есть локальные заголовки, — с тем, что видно в
+     * каталоге. Бомба выглядит именно так: каталог обещает малый размер, а
+     * заголовок — огромный, и распаковщик верит заголовку.
+     *
+     * Проверяются размер и контрольная сумма по каждому файлу, а также сам
+     * объём распаковки по заголовкам: даже если каталог врёт только про сумму,
+     * сумма по заголовкам уже покажет настоящий порядок величины.
+     */
+    private static function assertHeadersAgree(string $path): void
+    {
+        $raw = @file_get_contents($path);
+
+        if (!is_string($raw) || $raw === '') {
+            throw new TransferException('Файл переноса не читается');
+        }
+
+        if (strlen($raw) > self::maxUploadBytes()) {
+            throw new TransferException('Файл переноса слишком велик');
+        }
+
+        $endOffset = strrpos($raw, "\x50\x4b\x05\x06");
+
+        if ($endOffset === false || $endOffset + 22 > strlen($raw)) {
+            throw new TransferException('Файл переноса не распаковывается');
+        }
+
+        $end = unpack(
+            /*
+             * Размер центрального каталога — четыре байта. Объявить его двухбайтным
+             * «по ошибке» не выдаёт себя: значение помещается в два байта и читается
+             * верно, а вот следующее поле начинается на два байта раньше, и смещение
+             * каталога приходит случайным числом. Ошибка выглядит как «архив
+             * повреждён» на любом файле, и диагностируется только сверкой сырых байт.
+             */
+            'vdisk/vstartDisk/ventriesOnDisk/ventries/VdirectorySize/VdirectoryOffset/vcommentLength',
+            substr($raw, $endOffset + 4, 18)
+        );
+
+        if ($end === false) {
+            throw new TransferException('Файл переноса не распаковывается');
+        }
+
+        $entries = (int) $end['entriesOnDisk'];
+        $cursor = (int) $end['directoryOffset'];
+        $directoryEnd = $cursor + (int) $end['directorySize'];
+
+        if ($entries > self::MAX_ENTRIES || $cursor < 0 || $directoryEnd > $endOffset) {
+            throw new TransferException('Состав архива не читается');
+        }
+
+        $total = 0;
+
+        for ($index = 0; $index < $entries; $index++) {
+            if ($cursor + 46 > $directoryEnd || substr($raw, $cursor, 4) !== "\x50\x4b\x01\x02") {
+                throw new TransferException('Состав архива не читается');
+            }
+
+            /*
+             * Окно начинается с размера и заканчивается смещением локального
+             * заголовка, а между ними лежат четыре поля: номер диска, внутренние
+             * и внешние атрибуты. Их нельзя перепрыгивать — unpack читает подряд,
+             * и без них «смещение» приходит из атрибутов. Окно — все 26 байт от
+             * третьего до конца заголовка, то есть ровно до начала имени.
+             */
+            $header = unpack(
+                'VcompressedSize/Vsize/vnameLength/vextraLength/vcommentLength'
+                    . '/vdiskStart/vinternalAttributes/VexternalAttributes/Voffset',
+                substr($raw, $cursor + 20, 26)
+            );
+
+            if ($header === false) {
+                throw new TransferException('Состав архива не читается');
+            }
+
+            $cursor += 46 + (int) $header['nameLength']
+                + (int) $header['extraLength'] + (int) $header['commentLength'];
+
+            $size = (int) $header['size'];
+            $total = self::addUncompressedSize($total, $size);
+
+            $local = (int) $header['offset'];
+
+            if ($local < 0 || $local + 30 > $directoryEnd || substr($raw, $local, 4) !== "\x50\x4b\x03\x04") {
+                throw new TransferException('Локальный заголовок файла повреждён');
+            }
+
+            $localSizes = unpack('VcompressedSize/Vsize', substr($raw, $local + 18, 8));
+
+            if ($localSizes === false
+                || (int) $localSizes['size'] !== $size
+                || (int) $localSizes['compressedSize'] !== (int) $header['compressedSize']) {
+                /*
+                 * Расхождение — и есть признак бомбы: каталог обещает одно,
+                 * а распаковщик возьмёт другое. Отказ до распаковки — единственное
+                 * место, где он ещё что-то значит.
+                 */
+                throw new TransferException(
+                    'В архиве расходятся заголовки файла: возможно, это архив-бомба'
+                );
+            }
+        }
     }
 
     private static function addUncompressedSize(int $total, int $size): int

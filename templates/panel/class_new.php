@@ -21,14 +21,13 @@ $view->crumbs([
     ]);
 ?>
 
+<?php
+$title = 'Новый класс';
+$subtitle = 'Создайте класс — потом добавьте в него учеников и укажете предметы с учителями.';
+require __DIR__ . '/_page_header.php';
+?>
+
 <div class="card">
- <h1 class="card-title">Новый класс</h1>
-
- <p class="card-subtitle">
- Создайте класс — потом добавьте в него учеников и укажете предметы с
- учителями.
- </p>
-
  <form method="post" action="<?= $view->e($view->url('classes')) ?>
 
 ">

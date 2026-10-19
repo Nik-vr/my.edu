@@ -42,9 +42,21 @@ $view->crumbs([
  <?php else: ?>
  <span class="chip">черновик</span>
  <?php endif; ?>
- <?= $view->e(count($items)) ?>
- <?= $view->e($view->plural(count($items), 'задание', 'задания', 'заданий')) ?>
+<?= $view->e($view->count((int) (count($items)),  'задание', 'задания', 'заданий')) ?>
  </p>
+
+ <?php if (! $isAuthor): ?>
+ <?php /*
+ Пояснение о чужой работе стоит в шапке, а не в ряду кнопок.
+
+ Раньше оно стояло рядом с «Пройти работу», и ряд кнопок превращался в два
+ разных предмета: кнопку и абзац. Взгляд цеплялся за текст вместо
+ действия, а на узкой странице кнопка уезжала на вторую строку сама по себе.
+ Пояснение — о том, что страница для чтения, и читать его нужно там, где
+ стоит заголовок работы.
+ */ ?>
+ <p class="muted">Это работа другого автора. Посмотреть её можно, изменить — нет.</p>
+ <?php endif; ?>
 </div>
 
 <div class="page-actions">
@@ -122,14 +134,12 @@ data-confirm-yes="Удалить работу">
  Выгрузить перенос
  </a>
  <?php else: ?>
- <?php /*
- * Чужая работа — только для чтения. Кнопки правки убираются целиком, а
- * не делаются отключёнными: они всё равно упёрлись бы в отказ по
- * авторству, и человек увидел бы возможность, которой нет.
+<?php /*
+ Чужая работа — только для чтения. Кнопки правки убираются целиком, а
+ не делаются отключёнными: они всё равно упёрлись бы в отказ по
+ авторству, и человек увидел бы возможность, которой нет. Пояснение
+ переехало в шапку страницы — см. выше.
  */ ?>
- <p class="muted">
- Это работа другого автора. Посмотреть её можно, изменить — нет.
- </p>
  <?php endif; ?>
 </div>
 
@@ -163,8 +173,7 @@ data-confirm-yes="Удалить работу">
 <span class="facts__label">Параллель</span>
 <span class="facts__value">
 <?php if ($parallel !== null): ?>
-<?= $view->e($parallel) ?>
-<?= $view->e($view->plural($parallel, 'класс', 'класса', 'классы')) ?>
+<?= $view->e($view->count((int) ($parallel),  'класс', 'класса', 'классы')) ?>
 <br><span class="muted">Для порядка в списке. Кому выдана работа, решает мастер выдачи.</span>
 <?php else: ?>
 <span class="muted">не указана</span>
@@ -254,36 +263,47 @@ echo $issueLimits === []
  <th scope="col">Выдана</th>
  <th scope="col">Доступна</th>
  <th scope="col">Учеников</th>
- <th scope="col">Выполнили</th>
- <th scope="col"></th>
- </tr>
- </thead>
- <tbody>
- <?php foreach ($issues as $issue): ?>
- <tr>
- <td><?= $view->e($issue['created_at']) ?></td>
- <td>
- <?php if ($issue['available_from'] === null && $issue['available_until'] === null): ?>
- всегда
- <?php else: ?>
- <?= $view->e((string) ($issue['available_from'] ?? 'сейчас')) ?>
- —
- <?= $view->e((string) ($issue['available_until'] ?? 'бессрочно')) ?>
- <?php endif; ?>
- </td>
- <td><?= $view->e((int) $issue['issued_count']) ?></td>
- <td><?= $view->e((int) $issue['finished_count']) ?></td>
- <td>
- <?php if ((int) $issue['pending_review_count'] > 0): ?>
- <?php require __DIR__ . '/_needs_review_badge.php'; ?>
- <?php endif; ?>
- <a class="btn btn-sm" href="<?= $view->e($view->url('panel/issues/' . (int) $issue['id'])) ?>">
- Открыть
- </a>
- </td>
- </tr>
- <?php endforeach; ?>
- </tbody>
+<th scope="col">Выполнили</th>
+<th scope="col">Ждут проверки</th>
+<th scope="col"></th>
+</tr>
+</thead>
+<tbody>
+<?php foreach ($issues as $issue): ?>
+<tr>
+<td><?= $view->e($issue['created_at']) ?></td>
+<td>
+<?php if ($issue['available_from'] === null && $issue['available_until'] === null): ?>
+всегда
+<?php else: ?>
+<?= $view->e((string) ($issue['available_from'] ?? 'сейчас')) ?>
+—
+<?= $view->e((string) ($issue['available_until'] ?? 'бессрочно')) ?>
+<?php endif; ?>
+</td>
+<td><?= $view->e((int) $issue['issued_count']) ?></td>
+<td><?= $view->e((int) $issue['finished_count']) ?></td>
+<?php /*
+ Значок «требует проверки» и кнопка «Открыть» стояли в одной ячейке, и
+ кнопки разных строк не выравнивались: у первой строки перед кнопкой
+ оказывался значок, у остальных — ничего, и глазам приходилось искать
+ кнопку в каждой строке отдельно. Теперь это две колонки: состояние и
+ действие. Пустая ячейка состояния оставлена всё равно — иначе колонка
+ прыгала бы по ширине от строки к строке.
+*/ ?>
+<td class="nowrap">
+<?php if ((int) $issue['pending_review_count'] > 0): ?>
+<?php require __DIR__ . '/_needs_review_badge.php'; ?>
+<?php endif; ?>
+</td>
+<td class="row-actions">
+<a class="btn btn-sm" href="<?= $view->e($view->url('panel/issues/' . (int) $issue['id'])) ?>">
+Открыть
+</a>
+</td>
+</tr>
+<?php endforeach; ?>
+</tbody>
  </table>
  </div>
  <?php endif; ?>

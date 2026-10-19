@@ -68,11 +68,34 @@ $users = $app->get(MyEdu\Auth\UserRepository::class);
 $session = $app->get(MyEdu\Core\Session::class);
 $session->start();
 
+/*
+ * Кем входить.
+ *
+ * Сначала — владелец демонстрационной базы, потом любой сотрудник: база
+ * набора меняется от прогона к прогону, и человек с номером 4 или с адресом
+ * director@school.test на ней есть не всегда. Прежний выбор из двух строк
+ * оставлял пробы без входа — и они молча измеряли страницу входа, ничего не
+ * находя, — поэтому берётся тот, у кого есть право видеть панель.
+ *
+ * Администратор идёт первым: список сотрудников открыт только ему, и проба
+ * смотрит именно его.
+ */
 $row = $users->findRowByEmail('director@school.test') ?? $users->findRow(4);
 
 if ($row === null) {
+    foreach ([MyEdu\Auth\Role::ADMIN, MyEdu\Auth\Role::HEAD_TEACHER, MyEdu\Auth\Role::TEACHER] as $wanted) {
+        foreach ($users->allWithRoles() as $candidate) {
+            if (in_array($wanted, $users->rolesOf((int) $candidate['id']), true)) {
+                $row = $candidate;
+                break 2;
+            }
+        }
+    }
+}
+
+if ($row === null) {
     http_response_code(500);
-    echo 'Тестовый владелец не найден';
+    echo 'В базе нет сотрудника: временный вход нужен только для проверок на тестовой базе';
 
     return;
 }
@@ -102,21 +125,32 @@ if (isset($_GET['probe'])) {
 
     header('Content-Type: text/html; charset=utf-8');
 
+    /*
+     * Окно страницы стоит в разметке, а не создаётся скриптом.
+     *
+     * Проба запускается браузером с выгрузкой DOM по виртуальному времени: он
+     * читает страницу, когда виртуальное время кончилось. Созданное скриптом
+     * окно к этому моменту успевает загрузиться не всегда, и проба молча
+     * остаётся со словом «ожидание» — выглядит как поломка страницы, хотя
+     * ничего не сломано. Окно в разметке грузится вместе с документом, и
+     * событие загрузки на него всегда приходит.
+     */
     echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>PROBE:ожидание</title></head><body>'
         . '<pre id="probe">ожидание</pre>'
+        . '<iframe id="page" width="1500" height="900" src="' . htmlspecialchars($path, ENT_QUOTES) . '"></iframe>'
         . '<script>'
-        . 'var target=' . json_encode($path) . ';'
         . 'var selector=' . json_encode($selector) . ';'
         . 'var props=' . json_encode($props) . '.split(",");'
-        . 'var f=document.createElement("iframe");f.width=1500;f.height=900;'
-        . 'f.onload=function(){var d;try{d=f.contentDocument}catch(e){d=null}'
-        . 'var el=d&&d.querySelector(selector);'
-        . 'if(!el){document.getElementById("probe").textContent="PROBE:not-found;url="+(d?d.location.pathname:"?");return}'
-        . 'var cs=f.contentWindow.getComputedStyle(el);var b=el.getBoundingClientRect();'
-        . 'var out=props.map(function(p){return p+"="+cs.getPropertyValue(p)});'
+        . 'var frame=document.getElementById("page");'
+        . 'var probe=document.getElementById("probe");'
+        . 'frame.onload=function(){var d;try{d=frame.contentDocument}catch(e){d=null}'
+        . 'if(!d){probe.textContent="PROBE:no-document";return}'
+        . 'var el=d.querySelector(selector);'
+        . 'if(!el){probe.textContent="PROBE:not-found;url="+d.location.pathname;return}'
+        . 'var cs=frame.contentWindow.getComputedStyle(el);var b=el.getBoundingClientRect();'
+        . 'var out=props.map(function(p){return p+"="+cs.getPropertyValue(p).trim()});'
         . 'out.unshift("box="+Math.round(b.width)+"x"+Math.round(b.height));'
-        . 'document.getElementById("probe").textContent="PROBE:"+out.join("; ");};'
-        . 'f.src=target;document.body.appendChild(f);'
+        . 'probe.textContent="PROBE:"+out.join("; ");};'
         . '<\/script></body></html>';
 
     return;

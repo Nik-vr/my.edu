@@ -92,6 +92,25 @@ final class Config
     }
 
     /** @return array<mixed> */
+    /**
+     * Все настройки разом.
+     *
+     * Массивы в PHP копируются по значению, поэтому отданная копия не даёт
+     * изменить исходную. Нужен там, где настройку кладут в другой объект: так
+     * плагин получает свою копию конфигурации и не может дописать в неё то,
+     * что увидит весь сайт.
+     *
+     * @return array<string,mixed>
+     */
+    public function all(): array
+    {
+        return $this->items;
+    }
+
+    /**
+     * @param array<string,mixed> $key
+     * @return array<string,mixed>
+     */
     public function array(string $key): array
     {
         $value = $this->get($key, []);
@@ -155,6 +174,25 @@ final class Config
     }
 
     /**
+     * Наложить локальное переопределение на общую конфигурацию.
+     *
+     * Словари (ключи — названия) накладываются поимённо: это то, ради чего
+     * переопределение и нужно, иначе пришлось бы повторять весь раздел.
+     *
+     * Списки перекрываются целиком. Склеивать их по индексу нельзя, и последствия
+     * здесь неочевидны, а обходятся дёшево:
+     *
+     * - владелец пишет в config.local.php список из двух адресов, а в общей
+     *   конфигурации их три — третий адрес остаётся доверенным, и прокси, которого
+     *   владелец вычеркнул, продолжает решать, кому верить;
+     * - список нельзя очистить вообще: пустой список перекрытия сливается с
+     *   непустым основанием и выходит основанием целиком. Человек пишет
+     *   `'trusted_proxies' => []`, чтобы доверять никому, и продолжает доверять
+     *   всем, кто был в списке.
+     *
+     * Смешивать в одну структуру два разных вида данных тоже бессмысленно, поэтому
+     * накладываются только два словаря; во всех остальных случаях берётся перекрытие.
+     *
      * @param array<string,mixed> $base
      * @param array<string,mixed> $override
      * @return array<string,mixed>
@@ -162,7 +200,11 @@ final class Config
     private static function mergeDeep(array $base, array $override): array
     {
         foreach ($override as $key => $value) {
-            if (is_array($value) && isset($base[$key]) && is_array($base[$key])) {
+            if (is_array($value)
+                && isset($base[$key])
+                && is_array($base[$key])
+                && !array_is_list($value)
+                && !array_is_list($base[$key])) {
                 $base[$key] = self::mergeDeep($base[$key], $value);
                 continue;
             }

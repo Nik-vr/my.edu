@@ -34,6 +34,16 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/support/TestKit.php';
+require __DIR__ . '/../src/Core/Config.php';
+require __DIR__ . '/../src/Core/Request.php';
+
+/*
+ * Загрузчик нужен ради одного класса: список зарезервированных префиксов
+ * объявлен константой в `PluginManager`, и сверять с ним надо само значение,
+ * а не список, продублированный здесь.
+ */
+require dirname(__DIR__) . '/src/Core/Autoloader.php';
+MyEdu\Core\Autoloader::create(dirname(__DIR__));
 
 $root = str_replace('\\', '/', dirname(__DIR__));
 $runner = new TestRunner();
@@ -165,6 +175,22 @@ $knownMigrations = [
     'docs/план-устранения-по-ревью-2026-10-18.md → 015_issues_and_parallel.sql' => 'цитата из отчёта',
 ];
 
+/*
+ * Упоминание миграции в документации — это ссылка на файл, а не на слово.
+ *
+ * Список известных дополняется файлами, которые действительно лежат в
+ * `database/migrations`: настоящая миграция, названная в документе, — это
+ * нормально, и запрещать такие упоминания нельзя. Несуществующие имена
+ * по-прежнему считаются ошибкой.
+ */
+foreach (glob($root . '/database/migrations/*.sql') ?: [] as $path) {
+    $name = basename((string) $path);
+
+    foreach (array_keys($currentDocs($texts)) as $doc) {
+        $knownMigrations[$doc . ' → ' . $name] = 'миграция, лежащая в database/migrations';
+    }
+}
+
 $newMigrations = array_values(array_diff($migrationMentions, array_keys($knownMigrations)));
 
 $runner->equals(
@@ -228,7 +254,8 @@ preg_match("/'version'\s*=>\s*'([^']+)'/", $config, $versionMatch);
 if (!isset($versionMatch[1])) {
     Fail:
     $runner->is(false, 'в config/config.php есть app.version');
-    exit($runner->report());
+
+exit($runner->report());
 }
 
 $version = trim($versionMatch[1]);
@@ -554,5 +581,477 @@ if (!str_contains($schema, 'is_owner')) {
 }
 
 $runner->equals([], $roleProblems, 'роли названы в README и есть в коде: ' . implode('; ', $roleProblems));
+
+/*
+ * Наружу отдаётся только public/.
+ *
+ * Правило доступа не проверяется запросом к серверу: тестовая машина отдаёт
+ * каталог своим сервером без Apache, и проверка на такой выдаче означала бы
+ * ничего. Проверяется само правило — и это ровно то место, где ошибка остаётся
+ * незамеченной: белый список легко превращается обратно в чёрный, и служебные
+ * файлы снова уходят наружу.
+ *
+ * Проверяются обе половины: в Apache нет перечисления закрытого, а адрес вне
+ * public/ уводится внутрь; в nginx PHP исполняется только из public/.
+ */
+$runner->group('Правила: наружу отдаётся только public/');
+
+$htaccess = (string) file_get_contents($root . '/.htaccess');
+
+$runner->is(
+    preg_match('#RewriteRule\s+\^\(\?!public/\)\(\.\*\)\$\s+public/\$1#', $htaccess) === 1,
+    'Apache уводит любой адрес вне public/ внутрь, а не перечисляет закрытое'
+);
+
+$forbiddenInHtaccess = ['templates', 'docs', 'src', 'config', 'tools', 'tests', 'database'];
+
+$stillListed = [];
+
+foreach ($forbiddenInHtaccess as $dir) {
+    if (preg_match('#RewriteRule[^\\n]*' . preg_quote($dir, '#') . '[^\\n]*\[F,L\]#', $htaccess) === 1) {
+        $stillListed[] = $dir;
+    }
+}
+
+$runner->equals(
+    [],
+    $stillListed,
+    'в Apache нет чёрного списка каталогов — новый каталог иначе пришлось бы вносить руками: '
+    . implode(', ', $stillListed)
+);
+
+$runner->notContains(
+    $htaccess,
+    'RewriteCond %{REQUEST_FILENAME} !-f',
+    'Apache не отдаёт существующий файл вне public/ как есть — это обходило бы правило целиком'
+);
+
+$nginx = (string) file_get_contents($root . '/deploy/nginx-shared-hosting.conf.example');
+
+$runner->is(
+    preg_match('#location\s+~\s+\^/public/\.\+\\\.php\$#', $nginx) === 1,
+    'nginx исполняет PHP только из public/'
+);
+
+$runner->is(
+    preg_match('#location\s+~\s+\\\\\.php\$\s*\{\s*return\s+404#', $nginx) === 1,
+    'PHP вне public/ в nginx не исполняется'
+);
+
+/*
+ * Прокси и адрес клиента.
+ *
+ * Обратный прокси подменяет `REMOTE_ADDR`, и без доверия к нему все, кто пришёл
+ * через прокси, выглядят одним адресом: лимиты на неудачные входы делятся между
+ * всеми сразу. Но заголовок `X-Forwarded-For` подделывает кто угодно, поэтому
+ * читать его без явного списка нельзя — иначе человек подставит себе чужой адрес
+ * и обойдёт лимит.
+ *
+ * Проверяется именно это: без доверия заголовок игнорируется, с доверием читается
+ * первый адрес цепочки, а соседний адрес в той же сети доверия не получает.
+ */
+$runner->group('Адрес клиента за обратным прокси');
+
+// Короткое имя класса: блок проверок должен читаться как чтение, а не как
+// набор длинных ссылок на пространство имён.
+class_alias(\MyEdu\Core\Request::class, 'Request');
+
+$forwarded = static fn (string $remote, string $chain): Request => new Request(
+    [],
+    [],
+    ['REMOTE_ADDR' => $remote, 'HTTP_X_FORWARDED_FOR' => $chain]
+);
+
+Request::setTrustedProxies([]);
+
+$runner->equals(
+    '10.0.0.1',
+    $forwarded('10.0.0.1', '203.0.113.7')->ip(),
+    'без списка доверенных заголовок не читается'
+);
+
+Request::setTrustedProxies(['10.0.0.1']);
+
+$runner->equals(
+    '203.0.113.7',
+    $forwarded('10.0.0.1', '203.0.113.7')->ip(),
+    'доверенному прокси верится'
+);
+
+$runner->equals(
+    '203.0.113.9',
+    $forwarded('10.0.0.1', '198.51.100.4, 203.0.113.9')->ip(),
+    'из цепочки берётся дописанный прокси адрес, а не подставленный клиентом'
+);
+
+$runner->equals(
+    '198.51.100.4',
+    $forwarded('10.0.0.1', '198.51.100.4')->ip(),
+    'единственный адрес цепочки берётся как есть'
+);
+
+Request::setTrustedProxies(['10.0.0.1', '10.0.0.2']);
+
+$runner->equals(
+    '203.0.113.9',
+    $forwarded('10.0.0.1', '203.0.113.9, 10.0.0.2')->ip(),
+    'цепочка из двух доверенных прокси проходится до конца'
+);
+
+$runner->equals(
+    '10.0.0.9',
+    $forwarded('10.0.0.9', '203.0.113.7')->ip(),
+    'соседний адрес в той же сети доверия не получает'
+);
+
+Request::setTrustedProxies(['10.0.0.0/24']);
+
+$runner->equals(
+    '203.0.113.7',
+    $forwarded('10.0.0.5', '203.0.113.7')->ip(),
+    'сеть в списке доверенных целиком'
+);
+
+Request::setTrustedProxies([]);
+
+/*
+ * Токен не должен возвращаться в адрес.
+ *
+ * Ссылка с токеном попадает в историю браузера, в журналы сервера и прокси и в
+ * `Referer`, а токен одноразовый: им можно открыть чужую попытку или сменить
+ * чужой пароль. Проверяется, что адрес чистится и что скрипт очистки подключён.
+ */
+$runner->group('Токены не остаются в адресе');
+
+$authController = (string) file_get_contents($root . '/src/Http/Controller/AuthController.php');
+
+$runner->is(
+    preg_match('#[\'"]auth/reset\?token=#', $authController) !== 1,
+    'токен сброса не подставляется в адрес возврата'
+);
+
+$shellPublic = (string) file_get_contents($root . '/templates/_shell_public.php');
+
+$runner->contains(
+    $shellPublic,
+    'assets/js/token-in-url.js',
+    'оболочка ученика подключает очистку адреса'
+);
+
+$tokenScript = (string) file_get_contents($root . '/public/assets/js/token-in-url.js');
+
+$runner->contains(
+    $tokenScript,
+    "['t', 'token']",
+    'из адреса убираются и токен попытки, и токен сброса пароля'
+);
+
+$runner->contains(
+    $tokenScript,
+    'params.delete(name)',
+    'токен удаляется из строки запроса'
+);
+
+$runner->contains(
+    $tokenScript,
+    'history.replaceState',
+    'адрес подменяется без новой записи истории'
+);
+
+/*
+ * Локальное переопределение конфигурации.
+ *
+ * Проверяется настоящий путь: два настоящих файла во временном каталоге и
+ * Config::load(). Через отражение проверялась бы приватная функция, а сломанная
+ * именно тут — то, что владелец не может вычеркнуть адрес из списка и не может
+ * очистить список вовсе, — осталась бы незамеченной: в файле конфигурации всё
+ * выглядит правильно.
+ */
+/*
+ * Плагинный README обязан совпадать с кодом.
+ *
+ * Расхождение тут не бумажное: README перечисляет, какие адреса плагин занимать
+ * не может. Пока список жил внутри метода, документация описывала его по памяти
+ * — в README не было `uploads`, а объяснение про `tests` ссылалось на правила
+ * `.htaccess`, которых после волны 4 уже нет. Плагин, написанный по README,
+ * занимал адрес, который README же и объявил свободным.
+ */
+$runner->group('README плагинов совпадает с кодом');
+
+$pluginReadme = (string) file_get_contents(dirname(__DIR__) . '/plugins/README.md');
+
+$runner->notContains(
+    $pluginReadme,
+    'taskTitle',
+    'README не называет метода, которого в контракте нет'
+);
+
+$runner->contains(
+    $pluginReadme,
+    'taskPreview',
+    'README называет метод, который есть в контракте'
+);
+
+/** @var list<string> $reservedPrefixes */
+$reservedPrefixes = (new ReflectionClass(MyEdu\Plugin\PluginManager::class))
+    ->getConstant('RESERVED_PREFIXES');
+
+$missingPrefixes = [];
+
+foreach ($reservedPrefixes as $prefix) {
+    if (str_contains($pluginReadme, '`' . $prefix . '`') === false) {
+        $missingPrefixes[] = $prefix;
+    }
+}
+
+$runner->is(
+    $missingPrefixes === [],
+    'README перечисляет каждый зарезервированный префикс'
+    . ($missingPrefixes === [] ? '' : '; не названы: ' . implode(', ', $missingPrefixes))
+);
+
+$runner->contains(
+    $pluginReadme,
+    'RESERVED_PREFIXES',
+    'README ссылается на список в коде, а не перечисляет его повторно'
+);
+
+$runner->group('Конфигурация: локальное переопределение');
+
+$configDir = sys_get_temp_dir() . '/myedu-config-' . bin2hex(random_bytes(4));
+
+if (!is_dir($configDir)) {
+    mkdir($configDir, 0777, true);
+}
+
+file_put_contents(
+    $configDir . '/config.php',
+    '<?php return ' . var_export([
+        'security' => [
+            'trusted_proxies' => ['10.0.0.1', '10.0.0.2', '10.0.0.3'],
+            'login_attempts' => 5,
+        ],
+        'session' => ['secure_cookies' => true, 'name' => 'myedu'],
+    ], true) . ';'
+);
+
+$writeLocal = static function (array $local) use ($configDir): array {
+    file_put_contents($configDir . '/config.local.php', '<?php return ' . var_export($local, true) . ';');
+
+    return MyEdu\Core\Config::load($configDir)->array('security.trusted_proxies');
+};
+
+$runner->equals(
+    ['10.0.0.9'],
+    $writeLocal(['security' => ['trusted_proxies' => ['10.0.0.9']]]),
+    'список перекрывается целиком: вычеркнутые адреса не остаются доверенными'
+);
+
+$runner->equals(
+    [],
+    $writeLocal(['security' => ['trusted_proxies' => []]]),
+    'список очищается пустым списком, а не остаётся основанием'
+);
+
+file_put_contents(
+    $configDir . '/config.local.php',
+    '<?php return ' . var_export([
+        'security' => ['login_attempts' => 3],
+        'session' => ['secure_cookies' => false],
+    ], true) . ';'
+);
+
+$loaded = MyEdu\Core\Config::load($configDir);
+
+$runner->is(
+    $loaded->int('security.login_attempts') === 3,
+    'словарь накладывается поимённо'
+);
+
+$runner->is(
+    $loaded->bool('session.secure_cookies') === false,
+    'соседние ключи словаря не теряются при наложении'
+);
+
+$runner->is(
+    $loaded->string('session.name') === 'myedu',
+    'не названный ключ сохраняет значение из общей конфигурации'
+);
+
+foreach (glob($configDir . '/*') ?: [] as $file) {
+    unlink($file);
+}
+
+rmdir($configDir);
+
+/*
+ * Документация о плагинах.
+ *
+ * Здесь нет охоты за опечатками — есть проверка одного: пример в README должен
+ * совпадать с настоящим плагином. Пока пример был выдуман, он молча разошёлся
+ * с кодом сразу по трём пунктам: неймспейс, конструктор раннера и способ взять
+ * каталог миграций. Человек, скопировавший такое, получил бы плагин, который не
+ * грузится, и ошибку в файле, которого у него нет.
+ */
+$runner->group('Документация о плагинах говорит правду о коде');
+
+$readme = (string) file_get_contents($root . '/README.md');
+$pluginReadme = (string) file_get_contents($root . '/plugins/README.md');
+$testPlugin = (string) file_get_contents($root . '/plugins/test/src/TestPlugin.php');
+
+$runner->is(
+    str_contains($pluginReadme, 'private readonly App $app') === false,
+    'плагинам больше не обещают контейнер приложения'
+);
+
+$runner->is(
+    str_contains($pluginReadme, 'private readonly PluginServices $services') === true,
+    'конструктор в документации — тот, что в коде'
+);
+
+$runner->is(
+    str_contains($testPlugin, 'private readonly PluginServices $services') === true,
+    'плагин из поставки действительно получает список сервисов'
+);
+
+$runner->is(
+    str_contains($testPlugin, 'private readonly App $app') === false,
+    'плагин из поставки не держит контейнер'
+);
+
+/*
+ * Пример в README проверяется по существующим файлам, а не по написанному
+ * тексту: каждый путь, упомянутый в примере, обязан быть на диске.
+ */
+foreach (['plugins/test/plugin.json', 'plugins/test/src/TestPlugin.php', 'plugins/test/migrations'] as $path) {
+    $runner->is(
+        file_exists($root . '/' . $path),
+        'путь примера существует: ' . $path
+    );
+}
+
+$runner->is(
+    str_contains($readme, 'plugins/test/plugin.json') === true,
+    'пример ведёт к плагину из поставки, а не к выдуманному'
+);
+
+$runner->is(
+    str_contains($readme, 'plugins/example') === false,
+    'выдуманного примера в README не осталось'
+);
+
+/*
+ * Методы сервисов перечислены в документации и существуют в коде.
+ *
+ * Список API, написанный по памяти, выглядит убедительно и не проверяется
+ * ничем, пока кто-нибудь не напишет по нему плагин. Таблица сверяется с
+ * объявлениями: названного метода в сервисах нет — значит документация врёт.
+ *
+ * Сравнивается только таблица сервисов. Таблица контракта рядом перечисляет
+ * методы `AssessmentPlugin`, их в `PluginServices` нет и быть не должно — иначе
+ * проверка ругалась бы на верно написанное.
+ */
+$servicesSection = '';
+
+if (preg_match('/Через `\$services` доступно:\s*\n(.*?)\n\s*\n/s', $pluginReadme, $section)) {
+    $servicesSection = $section[1];
+}
+
+preg_match_all('/^\| `([a-z][A-Za-z]*)\(\)`?/m', $servicesSection, $found);
+preg_match_all('/public function ([a-z][A-Za-z]*)\(/', (string) file_get_contents($root . '/src/Plugin/PluginServices.php'), $real);
+
+$runner->is(
+    $servicesSection !== '' && $found[1] !== [],
+    'таблица сервисов в plugins/README найдена и разобрана'
+);
+
+foreach (['manifest', 'database', 'view', 'session', 'csrf', 'auth', 'config', 'dump', 'assignments', 'ratings', 'ownPlugin'] as $method) {
+    $runner->is(
+        in_array($method, $real[1], true),
+        'метод, названный в документации, есть в сервисах: ' . $method
+    );
+}
+
+foreach ($found[1] as $documented) {
+    $runner->is(
+        in_array($documented, $real[1], true),
+        'всё, что перечислено таблицей сервисов, существует: ' . $documented
+    );
+}
+
+/*
+ * Резервная копия: документ обязан называть оба поведения.
+ *
+ * «Копия снимается всегда» — неправда, если копия не снялась: при
+ * `backup_before_migrations_blocking => false` миграция всё равно применяется.
+ * Хостер, который это не прочёл, будет считать, что точка отката есть всегда.
+ */
+$runner->is(
+    str_contains($readme, 'security.backup_before_migrations_blocking') === true,
+    'README называет ключ, которым выбирается поведение при сбое копии'
+);
+
+$runner->is(
+    str_contains($readme, 'миграция не применяется') === true
+    && str_contains($readme, 'применяется без точки отката') === true,
+    'README описывает оба поведения, а не только удачное'
+);
+
+/*
+ * Формат списка учеников зафиксирован в коде, и README обязан совпадать с ним.
+ *
+ * Раньше здесь была выдуманная таблица из шести колонок с логином и паролем.
+ * Такого формата нет: файл принимает ровно Фамилия; Имя; Отчество, а логины и
+ * пароли система придумывает сама. Учитель, поверивший заголовку, приготовил бы
+ * файл, который импорт не примет.
+ */
+$csv = (string) file_get_contents($root . '/src/Auth/StudentListCsv.php');
+
+$runner->is(
+    str_contains($csv, "'Фамилия', 'Имя', 'Отчество'") === true,
+    'формат файла учеников прежний: три колонки'
+);
+
+$runner->is(
+    str_contains($readme, 'Три колонки') === false
+    && str_contains($readme, 'три колонки — Фамилия; Имя; Отчество') === true,
+    'README называет те же три колонки, что и код'
+);
+
+$runner->is(
+    str_contains($readme, 'Логин;Пароль') === false && str_contains($readme, '| Пароль |') === false,
+    'в README нет колонок логина и пароля: система генерирует их сама'
+);
+
+/*
+ * Переменные окружения перечислены в README и читаются кодом.
+ *
+ * Список из памяти расходится с кодом на первой же незнакомой переменной:
+ * человек ставит MYEDU_SKIP_BACKUP, а программа её не видит и снимает копию
+ * мимо его воли — или наоборот.
+ */
+$source = '';
+
+foreach (['src', 'database'] as $dir) {
+    foreach (glob($root . '/' . $dir . '/**/*.php', GLOB_BRACE) ?: [] as $file) {
+        $source .= (string) file_get_contents($file);
+    }
+}
+
+foreach (glob($root . '/database/*.php') ?: [] as $file) {
+    $source .= (string) file_get_contents($file);
+}
+
+foreach (['MYEDU_DB_NAME', 'MYEDU_ALLOW_DESTRUCTIVE', 'MYEDU_SKIP_BACKUP', 'MYSQLDUMP', 'MYEDU_CREATE_PASSWORD'] as $var) {
+    $runner->is(
+        str_contains($source, "'" . $var . "'") === true,
+        'переменная из README читается кодом: ' . $var
+    );
+
+    $runner->is(
+        str_contains($readme, '`' . $var . '`') === true,
+        'переменная, читаемая кодом, названа в README: ' . $var
+    );
+}
 
 exit($runner->report());
