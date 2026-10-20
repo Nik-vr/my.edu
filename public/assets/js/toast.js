@@ -115,4 +115,36 @@
     }
 
     window.myEduToast = showToast;
+
+    /*
+     * Сообщение, оставленное сервером на странице.
+     *
+     * Сервер кладёт текст в метку `data-toast`, и скрипт показывает его как
+     * обычное всплывающее сообщение. Так сообщают о сохранении там, где
+     * страница не уходила: человек видит на ней же то, что изменилось, и баннер
+     * был бы второй вещью об одном.
+     *
+     * Метка снимается сразу: сообщение показывается один раз, и перезагрузка
+     * страницы не должна приносить его снова.
+     */
+    function showServerToast() {
+        var nodes = document.querySelectorAll('[data-toast]');
+
+        Array.prototype.forEach.call(nodes, function (node) {
+            var text = (node.getAttribute('data-toast') || '').trim();
+            var variant = node.getAttribute('data-toast-variant') || 'success';
+
+            node.remove();
+
+            if (text) {
+                showToast(text, variant);
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', showServerToast);
+    } else {
+        showServerToast();
+    }
 }());

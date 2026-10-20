@@ -66,7 +66,7 @@ final class AssignmentController
      * сохранения. Держать его в трёх местах — значило бы получить страницу, где
      * вкладка есть в меню, но не открывается по своему адресу.
      */
-    private const EDITOR_TABS = ['start', 'items', 'result', 'publish'];
+    private const EDITOR_TABS = ['start', 'items', 'result', 'about'];
 
     public function __construct(
         private readonly View $view,
@@ -114,8 +114,24 @@ final class AssignmentController
          * должен переживать перезагрузку и быть пересылаемым. Всё подряд не
          * показывается никогда — смешанные черновики и готовые работы в одной
          * папке читаются как список готовых, а черновик среди них незаметен.
+         *
+         * И при этом раздел помнится: адрес без `state` открывает тот, который
+         * открыт был. Иначе после удаления работы человек возвращался бы на
+         * «Опубликованные» из вкладки «Черновики», а список показывал бы ему
+         * пустоту — и он решил бы, что работа удалилась вся.
          */
-        $state = (string) $request->queryParam('state', 'published') === 'drafts' ? 'drafts' : 'published';
+        $requested = $request->queryParam('state');
+        $state = is_string($requested) && $requested === 'drafts' ? 'drafts' : 'published';
+
+        if ($requested === null || $requested === '') {
+            $remembered = $this->session->get('assignments_state');
+
+            if (is_string($remembered) && $remembered === 'drafts') {
+                $state = 'drafts';
+            }
+        }
+
+        $this->session->set('assignments_state', $state);
 
         $drafts = 0;
         $published = 0;
@@ -170,7 +186,7 @@ public function create(Request $request): Response
          * редактора: пустая строка в списке видна как «Без названия» и не
          * выглядит забытой работой.
          */
-        $id = (int) $this->assignments->create(['title' => '', 'author_id' => $this->authorId()]);
+        $id = (int) $this->assignments->create(['title' => 'Новая работа', 'author_id' => $this->authorId()]);
 
         /*
          * Поля пустой работы ставятся те же, что ставил первый шаг мастера.
@@ -180,7 +196,7 @@ public function create(Request $request): Response
          * вкладке «Начало» то, чего не видел никогда.
          */
         $this->assignments->update([
-            'title'        => '',
+            'title'        => 'Новая работа',
             'description'  => '',
             'subject_id'   => null,
             'parallel'     => null,
@@ -297,17 +313,22 @@ public function saveNewStart(Request $request): Response
         $assignment = $this->requireReadable($id);
         $isAuthor = (int) $assignment['author_id'] === $this->authorId();
 
+        /*
+         * Кнопок на странице больше нет: они были копией кнопок редактора
+         * («Собрать по шагам», «Опубликовать», «Удалить»), и два одинаковых
+         * набора на двух страницах требовали держать в голове, какой из них
+         * сейчас открыт. Те же сведения лежат последней вкладкой редактора —
+         * «О работе», и в списке работ название ведёт прямо туда.
+         *
+         * Страница остаётся отдельной для того, кому работа доступна на
+         * чтение, и для старых ссылок: переадресация уводила бы и туда, и
+         * обратно, а после правки задания возвращала бы человека не туда,
+         * откуда он пришёл.
+         */
         return $this->render('panel/assignment', [
             'title'      => (string) $assignment['title'],
             'assignment' => $assignment,
             'isAuthor'   => $isAuthor,
-            /*
-             * Пройти работу может любой сотрудник, и не только автор: завуч
-             * проверяет, что работа вообще выдаётся, а автор после правки
-             * задания прогоняет её на себе. Черновик проходить незачем — его не
-             * видно ученикам, и такая попытка ничего не проверяет.
-             */
-            'canTakeWork' => (string) $assignment['status'] === 'published',
             'items'      => $this->itemRows($id),
             'subjectName' => $this->subjectName($assignment),
             'issues'      => $this->assignments->issuesForAssignment($id),
@@ -390,9 +411,11 @@ public function saveNewStart(Request $request): Response
         $this->requireToken($request, $this->csrf);
 
         $id = $this->intParam($params, 'id');
-        $this->requireOwned($id);
+        $assignment = $this->requireOwned($id);
 
-        $message = match ((string) $request->postParam('action', '')) {
+        $action = (string) $request->postParam('action', '');
+
+        $message = match ($action) {
             'publish' => $this->assignments->publish($id),
             'archive' => $this->assignments->archive($id),
             'draft'   => $this->assignments->toDraft($id),
@@ -402,6 +425,25 @@ public function saveNewStart(Request $request): Response
         $ok = !in_array($message, ['Работа не найдена', 'Добавьте в работу хотя бы одно задание'], true);
 
         $this->session->set($ok ? 'flash_notice' : 'flash_error', $message);
+
+        /*
+         * Отказ публикации из редактора возвращает в редактор и открывает окно
+         * с препятствиями.
+         *
+         * Переключатель «Опубликовать» стоит в шапке редактора, и уводить
+         * человека из него на страницу работы — значит терять то, что он
+         * правил. Поэтому адрес возврата приходит с формой, а препятствия
+         * ожидают в редакторе.
+         */
+        $back = (string) $request->postParam('return_to', '');
+
+        if ($back !== '' && str_starts_with($back, 'panel/assignments/' . $id)) {
+            if (!$ok && $action === 'publish') {
+                $this->session->set('publish_blocked', $this->publishBlockers($id, $assignment));
+            }
+
+            return $this->redirect($back);
+        }
 
         return $this->redirect('panel/assignments/' . $id);
     }
@@ -436,6 +478,24 @@ public function saveNewStart(Request $request): Response
         $id = $this->intParam($params, 'id');
         $this->requireOwned($id);
 
+        /*
+         * Удаление без перезагрузки страницы.
+         *
+         * Список работ — длинная страница, и после удаления работы человек
+         * оказывался в начале списка, потеряв место. Теперь строка убирается на
+         * месте, а сервер отвечает данными; без скриптов всё работает как
+         * раньше — обычная отправка формы и переход на страницу списка.
+         */
+        if ($request->wantsJson()) {
+            try {
+                $this->deleteAssignmentWithPluginData($id);
+            } catch (TaskRemovalBlocked $e) {
+                return Response::json(['ok' => false, 'message' => $e->getMessage()], 409);
+            }
+
+            return Response::json(['ok' => true]);
+        }
+
         try {
             $this->deleteAssignmentWithPluginData($id);
         } catch (TaskRemovalBlocked $e) {
@@ -446,7 +506,17 @@ public function saveNewStart(Request $request): Response
 
         $this->session->set('flash_notice', 'Работа удалена вместе с попытками');
 
-        return $this->redirect('panel/assignments');
+        /*
+         * Возврат на тот раздел списка, который был открыт.
+         *
+         * Иначе после удаления черновика человек попадал в «Опубликованные»,
+         * где его работы нет, и решал бы, что удалилось больше, чем он нажал.
+         */
+        $state = $this->session->get('assignments_state');
+
+        return $this->redirect(
+            'panel/assignments?state=' . (is_string($state) && $state === 'drafts' ? 'drafts' : 'published')
+        );
     }
 
     // ---------------------------------------------------------------- позиции
@@ -780,15 +850,6 @@ public function saveNewStart(Request $request): Response
         return $this->renderEdit($request, $this->intParam($params, 'id'), 'result');
     }
 
-    /**
-     * Прежний этап публикации: та же страница, вкладка «Опубликовать».
-     *
-     * @param array<string,mixed> $params
-     */
-    public function editPublish(Request $request, array $params): Response
-    {
-        return $this->renderEdit($request, $this->intParam($params, 'id'), 'publish');
-    }
 
     /**
      * Вкладка из адреса.
@@ -841,6 +902,7 @@ public function saveNewStart(Request $request): Response
 
         $total = $this->itemsMaxScore($id);
         $rows = $this->scaleRows($assignment, $total);
+        $blockers = $this->publishBlockers($id, $assignment);
 
         $badFrom = [];
         $badTo = [];
@@ -869,6 +931,11 @@ public function saveNewStart(Request $request): Response
             'title'       => 'Редактор работы',
             'notice'      => $this->session->pull('flash_notice'),
             'error'       => $this->session->pull('flash_error'),
+            /*
+             * Всплывающее сообщение: страница не уходила, и человек видит
+             * результат на ней же — баннер был бы лишним.
+             */
+            'toast'       => $this->session->pull('toast_notice'),
             'assignment'  => $assignment + ['max_score_total' => $total],
             'subjects'    => $this->subjects(),
             'parallel'    => WorkTree::parallelOf($assignment),
@@ -883,12 +950,46 @@ public function saveNewStart(Request $request): Response
             'scale'       => GradeAggregator::create($this->config)->scale(),
             'percent'     => $rows['percent'],
             'score'       => $rows['score'],
-            'badFrom'     => $badFrom,
-            'badTo'       => $badTo,
-            'messages'    => $messages,
-            'blockers'    => $this->publishBlockers($id, $assignment),
+              'badFrom'     => $badFrom,
+              'badTo'       => $badTo,
+              'messages'    => $messages,
+              /*
+               * Последняя вкладка «О работе» показывает сведения о собранной
+               * работе: те же, что раньше были на отдельной странице работы.
+               * Страница осталась для тех, кому работа доступна на чтение.
+               */
+              'subjectName' => $this->subjectName($assignment),
+              'issues'      => $this->assignments->issuesForAssignment($id),
+              'attempts'    => $this->assignments->attemptsForAssignment($id),
+              'isAuthor'    => true,
+            'blockers'    => $blockers,
             'items'       => $this->itemRows($id),
             'status'      => (string) $assignment['status'],
+            /*
+             * Выдавалась ли работа хоть раз.
+             *
+             * От этого зависит предупреждение: пока работу никто не получал,
+             * правки в её составе и шкале никого не задевают, и предупреждение
+             * было бы шумом.
+             */
+            'issued'      => $this->assignments->issuesForAssignment($id) !== [],
+            /*
+             * Открыто ли поле правки названия.
+             *
+             * Так же, как имя ученика в списке класса: адрес решает, что
+             * открыто, и скрипт только убирает перезагрузку. Ссылка ведёт на
+             * `?edit=title`, и без скриптов поле всё равно откроется.
+             */
+            'editTitle'   => (string) $request->queryParam('edit', '') === 'title',
+            /*
+             * Отказ публикации.
+             *
+             * Переключатель «Опубликовать» стоит в шапке, и при отказе человек
+             * должен увидеть, чего не хватает, а не уйти на другую страницу.
+             * Поэтому сервер оставляет препятствия в сессии, а редактор открывает
+             * окно с ними.
+             */
+            'publishBlocked' => $this->session->pull('publish_blocked', []),
         ]);
     }
 
@@ -909,18 +1010,40 @@ public function saveNewStart(Request $request): Response
         $id = $this->intParam($params, 'id');
         $this->requireOwned($id);
 
-        if (trim((string) $request->postParam('title', '')) === '') {
+        /*
+         * Название приходит не всегда: в редакторе его правят в шапке, отдельной
+         * формой, а общая форма за вкладками названия не содержит.
+         *
+         * Отдельная правка названия (форма в шапке) и общее сохранение вкладок —
+         * разные дела, и отказ в одном не должен отменять другое: иначе пустое
+         * название в общей форме сбрасывало бы всю работу автора.
+         */
+        if ($request->postParam('title_only') === '1') {
+            $title = trim((string) $request->postParam('title', ''));
+
+            if ($title === '') {
+                $this->session->set('flash_error', 'Название работы не может быть пустым');
+
+                return $this->redirect('panel/assignments/' . $id . '/edit');
+            }
+
+            $this->assignments->update(
+                ['title' => $this->limit($title, 191)],
+                ['id' => $id]
+            );
+
             /*
-             * Отказ не должен стоить остального: человек назвал работу, описал
-             * её, выбрал предмет и срок, и ошибка была в одном поле. Всё
-             * введённое возвращается на страницу — иначе шесть полей пришлось
-             * бы заполнять заново из-за пустого названия.
+             * Успех — всплывающим сообщением, а не баннером.
+             *
+             * Баннер остаётся для сообщений после перехода, но здесь переход
+             * ничего не меняет: страница та же, вкладка та же, и человек видит
+             * на ней то же самое название, что и секунду назад. Баннер об этом
+             * только напоминал: «Название сохранено» — и название на глазах
+             * меняется на другое.
              */
-            $this->keepInput('assignment_start_old', $request);
+            $this->session->set('toast_notice', 'Название сохранено');
 
-            $this->session->set('flash_error', 'Название работы не может быть пустым');
-
-            return $this->redirect('panel/assignments/' . $id . '/edit?tab=start');
+            return $this->redirect('panel/assignments/' . $id . '/edit');
         }
 
         $this->applyStartFields($request, $id);
@@ -961,12 +1084,22 @@ public function saveNewStart(Request $request): Response
         $id = $this->intParam($params, 'id');
         $this->requireOwned($id);
 
-        if (trim((string) $request->postParam('title', '')) === '') {
+        /*
+         * Название приходит не всегда.
+         *
+         * В редакторе его правят в шапке, отдельной формой, а общая форма — за
+         * вкладками — названия не содержит. Поэтому пустое название отказом
+         * считается только тогда, когда его действительно прислали: иначе
+         * обычное сохранение вкладок стирало бы имя работы.
+         */
+        $title = $request->postParam('title', null);
+
+        if ($title !== null && trim((string) $title) === '') {
             /*
              * Отказ не должен стоить остального: человек назвал работу, описал
              * её, выбрал предмет и срок, и ошибка была в одном поле. Всё
              * введённое возвращается на страницу — иначе шесть полей пришлось
-             бы заполнять заново из-за пустого названия.
+             * бы заполнять заново из-за пустого названия.
              */
             $this->keepInput('assignment_start_old', $request);
 
@@ -997,14 +1130,43 @@ public function saveNewStart(Request $request): Response
      */
     private function applyStartFields(Request $request, int $assignmentId): void
     {
-        $this->assignments->update([
-            'title'        => $this->limit(trim((string) $request->postParam('title', '')), 191),
+        $data = [
             'description'  => trim((string) $request->postParam('description', '')),
             'subject_id'   => $this->subjectId($request->postParam('subject_id')),
             'parallel'     => $this->parallel($request->postParam('parallel')),
             'show_results' => $request->postParam('show_results') === null ? 0 : 1,
             'time_limit'   => $this->timeLimit($request->postParam('time_limit')),
-        ], ['id' => $assignmentId]);
+            /*
+             * Порядок заданий для ученика.
+             *
+             * Значение приходит строкой «0» или «1», и никаким другим: переключатель
+             * не может прийти пустым, иначе выключенное перемешивание молча
+             * включалось бы при любом другом сохранении вкладки — форма общая, и
+             * поля на ней не приходят все сразу.
+             */
+            'shuffle_items' => $request->postParam('shuffle_items') === '1' ? 1 : 0,
+            /*
+             * Запрет копирования — так же, как перемешивание: переключатель
+             * приходит строкой «0» или «1», и никаким другим.
+             */
+            'no_copy' => $request->postParam('no_copy') === '1' ? 1 : 0,
+        ];
+
+        /*
+         * Название пишется только когда его прислали и оно не пустое.
+         *
+         * В редакторе название правят в шапке, отдельной формой, а общая форма
+         * за вкладками названия не содержит. Без этой оговорки обычное
+         * сохранение вкладок стирало бы имя работы, и человек увидел бы пустую
+         * шапку рядом со своим текстом.
+         */
+        $title = $request->postParam('title', null);
+
+        if ($title !== null && trim((string) $title) !== '') {
+            $data['title'] = $this->limit(trim((string) $title), 191);
+        }
+
+        $this->assignments->update($data, ['id' => $assignmentId]);
     }
 
     /**
@@ -2002,12 +2164,16 @@ foreach ($this->assignments->items($assignmentId) as $item) {
         return $blockers;
     }
 
+
     /**
-     * Публикация работы: решение об одном действии целиком.
+     * Публикация работы.
      *
-     * Отдельная вкладка, а не кнопка на странице задания: публикуется работа
-     * целиком, и решение принимает автор работы, а не тот, кто правил одно из
-     * её заданий.
+     * В редакторе публикация — переключатель в шапке, но адрес остаётся:
+     * публиковать работу можно и со страницы работы, и по прямой ссылке.
+     *
+     * Отказ не теряет работу автора: он возвращает в редактор и открывает там
+     * окно с препятствиями, — иначе человек, нажавший «Опубликовать» в
+     * последний раз, ушёл бы со страницы без ответа.
      */
     public function publish(Request $request, array $params): Response
     {
@@ -2018,18 +2184,16 @@ foreach ($this->assignments->items($assignmentId) as $item) {
 
         /*
          * Проверки повторяются на самом POST, а не только при показе страницы:
-         * между открытием шага и нажатием кнопки автор мог убрать последнее
+         * между открытием редактора и нажатием кнопки автор мог убрать последнее
          * задание или стереть шкалу на соседней вкладке.
          */
         $blockers = $this->publishBlockers($id, $assignment);
 
         if ($blockers !== []) {
-            $this->session->set(
-                'flash_error',
-                'Опубликовать нельзя: ' . implode('; ', $blockers)
-            );
+            $this->session->set('publish_blocked', $blockers);
+            $this->session->set('flash_error', 'Опубликовать нельзя: ' . implode('; ', $blockers));
 
-            return $this->redirect('panel/assignments/' . $id . '/edit/publish');
+            return $this->redirect('panel/assignments/' . $id . '/edit');
         }
 
         $message = $this->assignments->publish($id);
@@ -2040,7 +2204,7 @@ foreach ($this->assignments->items($assignmentId) as $item) {
     }
 
     /**
- * Общее для всех этапов: меню мастера, заголовок, сообщения.
+     * Общее для всех этапов: меню мастера, заголовок, сообщения.
      *
      * Отметка «этап пройден» не вычисляется из полноты данных: половина
      * работы не приходит к концу за один присест, и человек возвращается
@@ -2067,7 +2231,12 @@ private function wizardView(array $assignment, string $current, array $extra = [
         'start'   => ['label' => 'Начальная страница', 'icon' => 'step_start', 'url' => $base . ($id > 0 ? '/edit/start' : '/start')],
         'items'   => ['label' => 'Задания',           'icon' => 'step_items', 'url' => $base . ($id > 0 ? '/edit/items' : '/start')],
         'result'  => ['label' => 'Результат',         'icon' => 'step_result', 'url' => $base . ($id > 0 ? '/edit/result' : '/start')],
-        'publish' => ['label' => 'Опубликовать',      'icon' => 'step_publish', 'url' => $base . ($id > 0 ? '/edit/publish' : '/start')],
+        /*
+         * Публикация — переключатель в шапке редактора, отдельного шага нет.
+         *
+         * Поэтому шага «Опубликовать» в полосе этапов больше нет: он вёл бы в
+         * адрес, которого больше не существует.
+         */
     ];
     $order = array_keys($steps);
     $reached = $id > 0

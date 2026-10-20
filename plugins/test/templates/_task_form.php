@@ -53,7 +53,20 @@ $taskId = (int) $task['id'];
  странице просто не будет.
 */ ?>
 
- <?php require __DIR__ . '/_question_fields.php'; ?>
+  <?php /*
+  Вкладки редактора: «Задание» с полями вопроса и «Настройки» с тем, что к
+  вопросу отношения не имеет. Ядро даёт сами вкладки, плагин — наполнение:
+  полей у разных систем проверки разное, и ядро о них ничего не знает.
+  */ ?>
+  <?= $view->raw($view->render('panel/_task_editor_tabs', ['settings' => true], '')) ?>
+
+ <div class="task-editor-pane" data-task-pane="task">
+  <?php require __DIR__ . '/_question_fields.php'; ?>
+ </div>
+
+ <div class="task-editor-pane" data-task-pane="settings" hidden>
+  <?php require __DIR__ . '/_task_settings.php'; ?>
+ </div>
 
  <?php /*
  Одна кнопка сохранения. Раньше рядом с «Сохранить задание» стояла

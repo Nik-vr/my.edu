@@ -79,16 +79,20 @@ final class PanelRoutes implements RouteFile
          * Перенос теста из OnlineTestPad — вторая вкладка той же страницы.
          *
          * Тот же адрес, что у вноса своего файла: оба живут на «Переносе
-         * работ», и разводить их на разные страницы незачем. Шаг с файлом и
-         * шаг с настройкой разведены адресом, а не формой на одной странице:
-         * разбор файла занимает время, и его результат должен пережить
-         * перезагрузку — иначе учителю пришлось бы держать файл в руках,
-         * пока он заполняет параллель.
+         * работ», и разводить их на разные страницы незачем. Разбор файла и
+         * создание работы — на одной странице: решение владельца, финальный
+         * шаг должен быть там же, где и разбор.
+         *
+         * Адреса формы и самой страницы разные: отправка должна попадать на
+         * адрес, который обрабатывает форму, а не на адрес, который её
+         * открывает. Старый адрес второго шага остаётся: он отправляет на
+         * страницу разбора, чтобы ссылка из закладки не приводила в отказ.
          */
-        $router->get('/panel/assignments/import/otp', [$c->otpImport, 'start'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/import/otp/upload', [$c->otpImport, 'upload'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/import/otp/setup', [$c->otpImport, 'setup'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/import/otp/setup', [$c->otpImport, 'setup'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/import/otp', [$c->otpImport, 'start'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/import/otp/upload', [$c->otpImport, 'upload'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/import/otp/setup', [$c->otpImport, 'setup'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/import/otp/setup', [$c->otpImport, 'setup'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/import/otp/reset', [$c->otpImport, 'reset'], Role::TESTS_MANAGE);
 
         // Картинки в текст вопроса: адрес один для всех плагинов.
         $router->post('/panel/editor/image', [$c->editorAssets, 'upload'], Role::TESTS_MANAGE);
@@ -128,12 +132,11 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/assignments/{id}/edit/items/{itemId}/delete', [$c->assignments, 'destroyItemInWork'], Role::TESTS_MANAGE);
     $router->get('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->assignments, 'itemDraft'], Role::TESTS_MANAGE);
     $router->post('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->assignments, 'saveItemDraft'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/{id}/edit/result', [$c->assignments, 'editResult'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/result', [$c->assignments, 'saveResult'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/{id}/edit/publish', [$c->assignments, 'editPublish'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/publish', [$c->assignments, 'publish'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/{id}/attempts/{attemptId}', [$c->attemptsReview, 'show'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/attempts/{attemptId}', [$c->attemptsReview, 'save'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/{id}/edit/result', [$c->assignments, 'editResult'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/edit/result', [$c->assignments, 'saveResult'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/edit/publish', [$c->assignments, 'publish'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/{id}/attempts/{attemptId}', [$c->attemptsReview, 'show'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/attempts/{attemptId}', [$c->attemptsReview, 'save'], Role::TESTS_MANAGE);
 
         // ---------------------------------------------------------- выдача и итоги
 

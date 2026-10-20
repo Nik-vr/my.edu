@@ -52,7 +52,21 @@ $startUrl = $isNew
  <form method="post" action="<?= $view->e($view->url($startUrl)) ?>">
  <?= $view->raw($view->csrfField()) ?>
 
-<?php require __DIR__ . '/_assignment_start_pane.php'; ?>
+ <?php /*
+  * У этого шага своё поле названия, а не то, что в общей панели.
+  *
+  * Название в редакторе работы правят в шапке, рядом с заголовком, и в общей
+  * панели его нет. Здесь же работа ещё не создана, и назвать её надо здесь:
+  * пустая работа в списке выглядит забытой.
+  */
+  ?>
+ <label class="form-group">
+ <span class="form-label">Название</span>
+ <input type="text" name="title" required maxlength="191" autofocus
+ value="<?= $view->e((string) ($assignment['title'] ?? '')) ?>">
+ </label>
+
+ <?php require __DIR__ . '/_assignment_start_pane.php'; ?>
 
  <button type="submit" class="btn btn-primary">Сохранить и перейти к заданиям</button>
  </form>

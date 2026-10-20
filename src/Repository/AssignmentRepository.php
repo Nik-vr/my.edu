@@ -46,6 +46,13 @@ final class AssignmentRepository
 
     private Database $db;
 
+    /**
+     * Перемешиваются ли задания работы — по одному разу на работу.
+     *
+     * @var array<int,bool>
+     */
+    private array $shuffleFlags = [];
+
     public function __construct(Database $db)
     {
         $this->db = $db;
@@ -630,6 +637,128 @@ final class AssignmentRepository
     }
 
     /**
+     * Позиции работы в том порядке, в котором их видит ученик.
+     *
+     * Обычный порядок — тот, в котором задания расставлены в редакторе.
+     * Перемешанный — случайный, но один и тот же на всю попытку: порядок
+     * считается от номера попытки, поэтому задания не ездят при переходе туда-
+     * обратно, а у разных учеников и у разных попыток порядок разный.
+     *
+     * @return list<int> номера позиций по порядку для ученика
+     */
+    public function positionOrder(int $assignmentId, int $attemptId): array
+    {
+        $positions = array_map(
+            static fn (array $row): int => (int) $row['position'],
+            $this->rows($assignmentId)
+        );
+
+        if (!$this->shufflesItems($assignmentId)) {
+            return $positions;
+        }
+
+        usort(
+            $positions,
+            static fn (int $a, int $b): int => strcmp(
+                self::shuffleKey($attemptId, $a),
+                self::shuffleKey($attemptId, $b)
+            )
+        );
+
+        return $positions;
+    }
+
+    /**
+     * Задание по номеру, под которым его видит ученик.
+     *
+     * Номер у ученика — это место в его порядке, а не номер позиции в
+     * редакторе. При перемешивании они не совпадают, и путать их нельзя:
+     * «дальше» ходит по номеру ученика, а хранить надо номер в редакторе.
+     *
+     * @param int $position номер у ученика, начиная с 1
+     */
+    public function itemByStudentNumber(int $assignmentId, int $attemptId, int $position): ?array
+    {
+        $order = $this->positionOrder($assignmentId, $attemptId);
+        $editorPosition = $order[$position - 1] ?? null;
+
+        if ($editorPosition === null) {
+            return null;
+        }
+
+        $variants = $this->variantsAt($assignmentId, $editorPosition);
+
+        if ($variants === []) {
+            return null;
+        }
+
+        $item = $this->pickVariantFor($variants, $attemptId, $editorPosition);
+
+        if ($item === null) {
+            return null;
+        }
+
+        /*
+         * Номер позиции заменяется на номер у ученика.
+         *
+         * Именно он печатается в шапке задания («Задание 2 из 5») и в списке
+         * работы, и ученик должен видеть сплошную нумерацию своего порядка.
+         * Номер в редакторе остаётся в базе: по нему учитель правит задание.
+         */
+        $item['position'] = $position;
+
+        return $item;
+    }
+
+    /**
+     * Номер позиции в порядке ученика.
+     *
+     * Обратная задача к positionOrder(): «какое место у этого задания у
+     * ученика». Нужна там, где задание известно по номеру, а показать надо
+     * номер ученика: в шапке задания и в списке работы.
+     *
+     * @param int $editorPosition номер позиции в редакторе
+     */
+    public function studentNumber(int $assignmentId, int $attemptId, int $editorPosition): int
+    {
+        $order = $this->positionOrder($assignmentId, $attemptId);
+        $number = array_search($editorPosition, $order, true);
+
+        return $number === false ? $editorPosition : (int) $number + 1;
+    }
+
+    /**
+     * Перемешиваются ли задания этой работы.
+     *
+     * Флаг читается один и запоминается: без этого каждое обращение к списку
+     * позиций ходило бы в базу лишний раз, а список позиций читают часто.
+     */
+    private function shufflesItems(int $assignmentId): bool
+    {
+        if (!array_key_exists($assignmentId, $this->shuffleFlags)) {
+            $this->shuffleFlags[$assignmentId] = (int) $this->db->value(
+                'SELECT shuffle_items FROM assignments WHERE id = :id',
+                ['id' => $assignmentId]
+            ) === 1;
+        }
+
+        return $this->shuffleFlags[$assignmentId];
+    }
+
+    /**
+     * Ключ сортировки для перемешанного порядка.
+     *
+     * md5 — не криптография, а ровно то, что нужно: одинаковые попытка и
+     * позиция всегда дают один ключ, а разные ученики и разные позиции
+     * раздаются по-разному. Порядок не должен зависеть от того, как задания
+     * лежали в редакторе, поэтому номер позиции входит в ключ своим значением.
+     */
+    private static function shuffleKey(int $attemptId, int $position): string
+    {
+        return md5(sprintf('%d:%d', $attemptId, $position));
+    }
+
+    /**
      * Позиции работы, которые видит конкретный ученик.
      *
      * По одной на строку: та самая карточка, что выпала этой попытке.
@@ -641,13 +770,29 @@ final class AssignmentRepository
     public function itemsForAttempt(int $assignmentId, int $attemptId): array
     {
         $rows = [];
+        $number = 0;
 
-        foreach ($this->rows($assignmentId) as $row) {
-            $chosen = $this->pickVariantFor($row['variants'], $attemptId, $row['position']);
+        foreach ($this->positionOrder($assignmentId, $attemptId) as $editorPosition) {
+            $variants = $this->variantsAt($assignmentId, $editorPosition);
 
-            if ($chosen !== null) {
-                $rows[] = $chosen;
+            if ($variants === []) {
+                continue;
             }
+
+            $chosen = $this->pickVariantFor($variants, $attemptId, $editorPosition);
+
+            if ($chosen === null) {
+                continue;
+            }
+
+            /*
+             * Номер позиции заменяется на номер у ученика: по нему ученик
+             * считает свои задания, и при перемешивании он идёт сплошняком.
+             */
+            $number++;
+            $chosen['position'] = $number;
+
+            $rows[] = $chosen;
         }
 
         return $rows;
@@ -1167,7 +1312,7 @@ final class AssignmentRepository
     {
         return $this->db->one(
             'SELECT t.*, a.title AS assignment_title, a.subject_id, a.status AS assignment_status,
-                    a.grade_mode, a.criteria_mode, a.show_results, a.criteria, a.time_limit,
+                    a.grade_mode, a.criteria_mode, a.show_results, a.criteria, a.time_limit, a.no_copy,
                     s.name AS subject_name
                FROM assignment_attempts t
                JOIN assignments a ON a.id = t.assignment_id

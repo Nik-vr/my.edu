@@ -21,14 +21,14 @@ declare(strict_types=1);
  * $view, $workTab
  *
  * @var \MyEdu\Core\View $view
- * @var string $workTab активная вкладка: 'start', 'items', 'result' или 'publish'
+ * @var string $workTab активная вкладка: 'start', 'items', 'result', 'about' или 'publish'
  */
 
 $workTabs = [
-    'start'   => 'Начальная страница',
+    'start'   => 'Настройки работы',
     'items'   => 'Задания',
     'result'  => 'Результат',
-    'publish' => 'Опубликовать',
+    'about'   => 'О работе',
 ];
 $workTab = array_key_exists($workTab ?? '', $workTabs) ? (string) $workTab : 'start';
 ?>

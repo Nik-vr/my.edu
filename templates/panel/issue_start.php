@@ -66,7 +66,8 @@ $view->crumbs([
  </span>
  </summary>
 
- <div class="work-list__head" aria-hidden="true">
+ <div class="work-list__head work-list__head--selectable" aria-hidden="true">
+ <span></span>
  <span>Работа</span>
  <span>Состояние</span>
  <span>Заданий</span>

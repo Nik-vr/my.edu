@@ -34,20 +34,31 @@ declare(strict_types=1);
  */
 $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($value, 1, ',', ''), '0'), ',');
 ?>
-<div class="page-header">
+ <div class="page-header">
  <h1 class="page-title"><?= $view->e($title) ?></h1>
  <p class="muted">
  Задание <?= $view->e($position) ?> из <?= $view->e($positions) ?> ·
  максимум <?= $view->e($formatScore($maxScore)) ?> б. ·
  вес в итоге работы <?= $view->e($formatScore($weight)) ?>
  </p>
-</div>
+ </div>
+
+ <?php /*
+ Таймер рисует ядро: остаток времени считает оно, а плагин его только
+ показывает. Без лимита таймера нет вовсе — пустой таймер читался бы как
+ «время кончилось».
+ */ ?>
+ <?= $view->raw($view->render('work/_timer', ['remaining' => $remaining ?? null], '')) ?>
+
+<?php /* Запрет копирования подключается ядром: решение принимает учитель. */ ?>
+<?= $view->raw($view->render('work/_no_copy', ['noCopy' => !empty($noCopy)], '')) ?>
 
 <form
  id="attempt-form"
  method="post"
  action="<?= $view->e($view->url(sprintf('work/%d/item/%d', $attemptId, $itemId))) ?>"
-class="attempt"
+ class="attempt<?= !empty($noCopy) ? ' attempt--no-copy' : '' ?>"
+ data-remaining="<?= $view->e((string) ($remaining ?? 0)) ?>"
  novalidate><?php /*
  id обязателен: attempt.js начинает работу с поиска #attempt-form и без
  него выходит сразу. Идентификатор достался в наследство от снятого

@@ -126,6 +126,35 @@ foreach ($currentDocs($texts) as $doc => $text) {
             $missingPaths[] = $doc . ' → ' . $normalized;
         }
     }
+
+    /*
+     * Адреса markdown-ссылок — отдельно от путей в обратных кавычках.
+     *
+     * Ссылка `[текст](файл)` читается человеком как адрес: он нажимает и
+     * получает 404. Проверка путей в кавычках такие ссылки не видит вовсе — она
+     * ищет только то, что обёрнуто в кавычки. Так вышло, что ссылка на удалённый
+     * документ осталась в README и ничем не помешала: набор был зелёный, а
+     * ссылка вела в никуда.
+     */
+    preg_match_all('/\]\(([^)#\s]+)\)/u', $text, $links);
+
+    foreach (array_unique($links[1]) as $link) {
+        if ($link === '' || preg_match('#^(https?:|mailto:|//)#i', $link) === 1) {
+            continue;
+        }
+
+        $target = explode('#', $link)[0];
+
+        if ($target === '') {
+            continue;
+        }
+
+        $full = $root . '/' . ltrim(str_replace('\\', '/', $target), '/');
+
+        if (!is_file($full) && !is_dir($full)) {
+            $missingPaths[] = $doc . ' → ' . $target . ' (ссылка)';
+        }
+    }
 }
 
 // Известные места: документы-архивы цитируют имена файлов, которых в проекте

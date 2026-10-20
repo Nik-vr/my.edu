@@ -26,10 +26,17 @@ use MyEdu\Transfer\WorkImporter;
 /**
  * Мастер переноса теста из OnlineTestPad.
  *
- * Два шага: сначала человек показывает файл и смотрит, что из него получится,
- * и только потом называет параллель и создаёт работу. Разбор файла ничего не
- * записывает — ровно как при переносе работ между инсталляциями: узнать, что
- * тест разобрался не так, можно только посмотрев на разбор, а не post factum.
+ * Одна страница: сначала человек показывает файл и смотрит, что из него
+ * получится, и только потом называет параллель и создаёт работу. Разбор файла
+ * ничего не записывает — ровно как при переносе работ между инсталляциями:
+ * узнать, что тест разобрался не так, можно только посмотрев на разбор, а не
+ * post factum.
+ *
+ * Разбор и создание работы живут на одной странице, а не на двух. Решение
+ * владельца: финальный шаг должен быть на той же самой странице, что и
+ * разбор. Отдельный адрес уводил человека с разбора на другую страницу, где
+ * он и так не знал, что введённое до этого сохранилось, — и возвращаться
+ * пришлось бы адресом, который помнить трудно.
  *
  * Внос идёт через общий код переноса: разобранный тест собирается в тот же
  * пакет, который читает свой внос, и создаётся тем же кодом.
@@ -61,15 +68,45 @@ final class OtpImportController
     }
 
     /**
-     * Шаг 1: приложить файл.
+     * Страница переноса: файл, разбор и создание работы.
+     *
+     * Пока файла нет, страница спрашивает файл. После разбора она показывает
+     * разбор и форму создания работы — на той же странице, а не на другой.
      *
      * @param array<string,mixed> $params
      */
     public function start(Request $request, array $params): Response
     {
+        $parsed = $this->session->get(self::PARSED_KEY);
+
+        if (!is_array($parsed)) {
+            return $this->render('panel/import_otp_start', $this->page([
+                'maxUpload' => self::MAX_UPLOAD_BYTES,
+            ]));
+        }
+
         return $this->render('panel/import_otp_start', $this->page([
-            'maxUpload' => self::MAX_UPLOAD_BYTES,
+            'maxUpload'  => self::MAX_UPLOAD_BYTES,
+            'parsed'     => $parsed,
+            'subjects'   => $this->subjects->all(),
+            'kindTitles' => $this->kindTitles(),
+            'old'        => $this->session->pull('otp_setup_old', []),
         ]));
+    }
+
+    /**
+     * Начать заново: разобранный тест забывается, страница снова просит файл.
+     *
+     * @param array<string,mixed> $params
+     */
+    public function reset(Request $request, array $params): Response
+    {
+        $this->csrf->validate($request->postParam('_token'));
+
+        $this->session->remove(self::PARSED_KEY);
+        $this->session->remove('otp_setup_old');
+
+        return $this->redirect('panel/assignments/import/otp');
     }
 
     /**
@@ -150,11 +187,14 @@ final class OtpImportController
         // прикладывается и на диске не валяется без нужды.
         $this->session->set(self::PARSED_KEY, $parsed);
 
-        return $this->redirect('panel/assignments/import/otp/setup');
+        return $this->redirect('panel/assignments/import/otp');
     }
 
     /**
-     * Шаг 2: параллель и создание работы.
+     * Создание работы из разобранного теста.
+     *
+     * Страница прежняя — та же, что и разбор, — но адрес у формы отдельный:
+     * отправка должна попадать сюда, а не на адрес, который открывает страницу.
      *
      * @param array<string,mixed> $params
      */
@@ -172,12 +212,13 @@ final class OtpImportController
             return $this->create($request, $parsed);
         }
 
-        return $this->render('panel/import_otp_setup', $this->page([
-            'parsed'   => $parsed,
-            'subjects' => $this->subjects->all(),
-            'kindTitles' => $this->kindTitles(),
-            'old'      => $this->session->pull('otp_setup_old', []),
-        ]));
+        /*
+         * Старый адрес второго шага остаётся рабочим: на него могли остаться
+         * ссылки из закладок и из писем. Открывать на нём отдельную страницу
+         * больше нельзя — финальный шаг живёт на странице разбора, — поэтому
+         * адрес просто отправляет туда.
+         */
+        return $this->redirect('panel/assignments/import/otp');
     }
 
     /**
@@ -198,7 +239,7 @@ final class OtpImportController
             $this->keepInput('otp_setup_old', $request);
             $this->session->set('flash_error', 'Укажите предмет — без него работа не попадёт в список.');
 
-            return $this->redirect('panel/assignments/import/otp/setup');
+            return $this->redirect('panel/assignments/import/otp');
         }
 
         try {
@@ -211,7 +252,7 @@ final class OtpImportController
         } catch (TransferException $e) {
             $this->session->set('flash_error', $e->getMessage());
 
-            return $this->redirect('panel/assignments/import/otp/setup');
+            return $this->redirect('panel/assignments/import/otp');
         }
 
         $this->session->remove(self::PARSED_KEY);
@@ -246,12 +287,11 @@ final class OtpImportController
      * переходом — человек видел бы пустую страницу и не понимал, что его
      * отвергли.
      *
-     * Полосы шагов здесь нет намеренно. Перенос из OnlineTestPad — две
-     * страницы: приложить файл и, увидев разбор, создать работу. Два кружка
+     * Полосы шагов здесь нет намеренно. Перенос из OnlineTestPad — одна
+     * страница: приложить файл и, увидев разбор, создать работу. Два кружка
      * с пройденным этагом рядом с двумя вкладками «Откуда переносим» читались
      * как ещё один способ выбрать, куда идти, — а здесь выбора нет: файл
-     * приложить можно только сюда, и второй адрес открывается только после
-     * разбора файла.
+     * приложить можно только сюда, и разбор файла тоже появляется только здесь.
      *
      * @param array<string,mixed> $data
      *

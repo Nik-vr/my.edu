@@ -32,7 +32,7 @@ $isPublished = (string) $row['status'] === 'published';
 $isArchived = (string) $row['status'] === 'archived';
 ?>
 
-<li class="work-row<?= $selectable ? ' work-row--selectable' : '' ?>">
+<li class="work-row<?= $selectable ? ' work-row--selectable' : '' ?>" data-work-row>
     <?php if ($selectable): ?>
         <?php /*
             Кружок вместо ссылки: на первом шаге мастера работа выбирается, а не
@@ -67,7 +67,18 @@ $isArchived = (string) $row['status'] === 'archived';
                 <strong><?= $view->e($name) ?></strong>
             <?php else: ?>
                 <strong>
-                    <a href="<?= $view->e($view->url('panel/assignments/' . $assignmentId)) ?>">
+                    <?php /*
+                    Своя работа открывается последней вкладкой редактора — «О
+                    работе». Отдельная страница работы для автора больше не
+                    нужна: те же сведения лежат в редакторе, а кнопки у неё были
+                    копией кнопок редактора. Чужая работа открывается на
+                    чтение, и адрес у неё прежний.
+                    */ ?>
+                    <a href="<?= $view->e($view->url(
+                        $isMine
+                            ? 'panel/assignments/' . $assignmentId . '/edit?tab=about'
+                            : 'panel/assignments/' . $assignmentId
+                    )) ?>">
                         <?= $view->e($name) ?>
                     </a>
                 </strong>
@@ -131,8 +142,20 @@ $isArchived = (string) $row['status'] === 'archived';
                    href="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/edit/start')) ?>">
                     Редактировать
                 </a>
+                <?php /*
+                Удаление — ссылка, а не форма: без скриптов она ведёт на страницу
+                подтверждения, и работа удаляется только после явного нажатия.
+                Форма отправляла бы сразу, и один Enter в браузере снёс бы работу
+                с чужими результатами.
+
+                Со скриптами ссылка перехватывается и работа удаляется на месте:
+                список бывает длинным, и после перезагрузки человек терял
+                место. Подтверждение то же — окно спрашивает, куда делись бы
+                задания и результаты.
+                */ ?>
                 <a class="btn btn-sm btn-danger"
                    href="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/delete')) ?>"
+                   data-work-delete
                    data-confirm="Удалить работу «<?= $view->e($name) ?>»?"
                    data-confirm-body="Будут удалены все задания работы и результаты всех, кто её выполнял. Восстановить это нельзя."
                    data-confirm-yes="Удалить работу">

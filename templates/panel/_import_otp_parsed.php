@@ -3,13 +3,21 @@
 declare(strict_types=1);
 
 /**
- * Мастер переноса из OnlineTestPad, шаг 2: что перенесётся, предмет, параллель.
+ * Разбор приложенного файла и форма создания работы.
  *
- * Сначала показывается разбор, потом кнопка создания. Человек видит, что
- приехало, ещё до того, как в базе появилась работа: узнать об этом потом
- можно только тем, что работа уже создана.
+ * Часть той же страницы, что и загрузка файла: разбор и создание работы
+ * показаны рядом, на одном адресе. Решение владельца — финальный шаг должен
+ * быть на той же самой странице, что и разбор.
+ *
+ * Сначала показывается разбор, потом форма создания. Человек видит, что
+ * приехало, ещё до того, как в базе появилась работа: узнать об этом потом
+ * можно только тем, что работа уже создана.
+ *
+ * Ожидает:
+ * $view, $ui, $parsed, $subjects, $old, $kindTitles
  *
  * @var \MyEdu\Core\View $view
+ * @var \MyEdu\Ui\Ui $ui
  * @var array<string,mixed> $parsed
  * @var list<array<string,mixed>> $subjects
  * @var array<string,mixed> $old
@@ -19,14 +27,6 @@ declare(strict_types=1);
 $questions = is_array($parsed['questions'] ?? null) ? $parsed['questions'] : [];
 $skipped = is_array($parsed['skipped'] ?? null) ? $parsed['skipped'] : [];
 
-$view->crumbs([
-    ['label' => 'Работы', 'url' => 'panel/assignments'],
-    ['label' => 'Перенос', 'url' => 'panel/assignments/import'],
-    ['label' => 'OnlineTestPad', 'url' => ''],
-]);
-
-$ui = $view->ui();
-$transferTab = 'otp';
 $field = static fn (string $name, mixed $fallback): string => array_key_exists($name, $old)
     ? (string) $old[$name]
     : (string) $fallback;
@@ -66,10 +66,6 @@ if ($subjectChosen !== '' && !isset($subjectChoices[$subjectChosen])) {
     $subjectChoices[$subjectChosen] = $subjectChosen . ' (нет в списке)';
 }
 ?>
-
-<h1 class="page-title"><?= $view->e($title) ?></h1>
-
-<?php require __DIR__ . '/_transfer_tabs.php'; ?>
 
 <div class="card">
  <h2 class="card-title">В файле</h2>
@@ -132,7 +128,7 @@ if ($subjectChosen !== '' && !isset($subjectChoices[$subjectChosen])) {
 
  <?= $view->raw($ui->message(
      'Эти задания в работе не появятся: в системе нет таких типов заданий. '
-     . 'Их придёся завести вручную или убрать из исходного теста.',
+     . 'Их придётся завести вручную или убрать из исходного теста.',
      'warning'
  )) ?>
 
@@ -180,9 +176,20 @@ if ($subjectChosen !== '' && !isset($subjectChoices[$subjectChosen])) {
  <button type="submit" class="btn btn-primary">
  Создать работу из <?= count($questions) ?> заданий
  </button>
- <a class="btn btn-ghost"
- href="<?= $view->e($view->url('panel/assignments/import/otp')) ?>">
+</div>
+</form>
+
+<?php /*
+ «Начать заново» — отдельной формой, а не ссылкой: разобранный тест лежит в
+ сессии, и сбросить его должен сервер, а не браузер. Ссылка без скриптов
+ оставила бы разбор на месте, и человек второй раз увидел бы то же самое.
+ */ ?>
+<form method="post" action="<?= $view->e($view->url('panel/assignments/import/otp/reset')) ?>">
+<?= $view->raw($view->csrfField()) ?>
+
+<div class="page-actions">
+ <button type="submit" class="btn btn-ghost">
  Начать заново
- </a>
+ </button>
 </div>
 </form>

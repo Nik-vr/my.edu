@@ -104,6 +104,8 @@ final class WorkItemHandler
             'attemptUrl' => $context->attemptUrl(),
             'nextUrl'    => $context->itemUrl(),
             'isLast'     => $context->position >= $context->totalItems,
+            'remaining'  => $context->remainingSeconds,
+            'noCopy'     => $context->noCopy,
         ]));
     }
 

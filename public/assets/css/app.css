@@ -1452,8 +1452,22 @@ input[type="file"]::file-selector-button:hover {
     font-size: 14px;
 }
 
-.timer--warn { background: var(--mid-soft); color: var(--mid-text); }
+/*
+ * Запрет копирования текста задания.
+ *
+ * Скрипт запрещает выделение, но текст, выделенный до его загрузки или
+ * перетащенный мышью, браузер всё равно отдаёт. Поэтому запрет держится и
+ * стилями: без них окно с вопросом оставалось бы выделяемым.
+ *
+ * Поля ответа исключены: ученик должен свободно править и копировать свой
+ * ответ, иначе работа превращается в мучение.
+ */
+.attempt--no-copy { user-select: none; }
 
+.attempt--no-copy input,
+.attempt--no-copy textarea { user-select: text; }
+
+.timer--warn { background: var(--mid-soft); color: var(--mid-text); }
 .timer--danger { background: var(--bad-soft); color: var(--bad-text); animation: pulse 1s ease-in-out infinite; }
 
 @keyframes pulse { 50% { opacity: .6; } }
@@ -2921,13 +2935,18 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
  * Шапка — сетка с теми же колонками, что и строка: иначе подписи плыли бы
  * мимо своих чисел, а в дереве это читается особенно плохо — строки идут подряд
  * и глаз цепляется за вертикальные линии.
+ *
+ * Последняя колонка — с кнопками — задана шириной, а не «по содержимому».
+ * В шапке там пустая ячейка, и при ширине «по содержимому» она схлопывалась в
+ * ноль: первая колонка забирала разницу, и все подписи шапки уезжали вправо
+ * на ширину кнопок. Ровно то, что было на скриншоте.
  */
 .work-list { margin: 0; padding: 0; list-style: none; }
 
 .work-list__head,
 .work-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 110px 70px 96px 96px 110px auto;
+    grid-template-columns: minmax(0, 1fr) 110px 70px 96px 96px 110px 190px;
     align-items: center;
     gap: 12px;
     padding: 10px 16px;
@@ -2959,7 +2978,41 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     background: var(--accent-soft, #eef4ff);
 }
 
+/*
+ * Строка, выбираемая на первом шаге мастера выдачи.
+ *
+ * Кружок выбора занимает отдельную узкую колонку, а название — широкую.
+ * Раньше он вставал в широкую колонку, а название уезжало в узкую: между
+ * кружком и названием зияла пустота, и работа выглядела разъезженной. Колонки
+ * здесь те же по смыслу, что и в обычной строке, только со сдвигом на одну.
+ *
+ * Шапка списка на этой странице закрывает кружок пустой ячейкой, иначе слова
+ * «Работа» и прочие заголовки встали бы на полклетки левее своих строк.
+ */
+.work-row--selectable {
+    grid-template-columns: 26px minmax(0, 1fr) 110px 70px 96px 96px 110px auto;
+}
+
+.work-list__head--selectable {
+    grid-template-columns: 26px minmax(0, 1fr) 110px 70px 96px 96px 110px auto;
+}
+
 .work-row__pick { margin: 0; width: 18px; height: 18px; accent-color: var(--accent-link); }
+
+/*
+ * Удаление работы на месте.
+ *
+ * Пока удаление идёт, кнопка гаснет: повторное нажатие означало бы два
+ * удаления, а второе ушло бы уже по несуществующей работе и выглядело бы
+ * ошибкой. Отказ сервера показывается рядом со строкой — сообщение в углу
+ * страницы человек не увидит, он смотрит на строку, которую удалял.
+ */
+.work-row__delete-error {
+    color: var(--bad, #d64545);
+    font-size: 13px;
+}
+
+.work-row__actions .is-busy { opacity: 0.5; pointer-events: none; }
 
 /* Значок «требует проверки»: лист с карандашом, подпись обязательна. */
 .needs-review { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -2968,6 +3021,8 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     .work-list__head { display: none; }
 
     .work-row { grid-template-columns: auto minmax(0, 1fr); row-gap: 6px; }
+
+    .work-row--selectable { grid-template-columns: auto minmax(0, 1fr); }
 
     .work-row__state,
     .work-row__stat,
@@ -2981,6 +3036,56 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
  * окно прижимало бы их к самому краю.
  */
 .task-editor { padding-bottom: 14px; }
+
+/*
+ * Окно редактора — шире на треть.
+ *
+ * Базовое окно 480 пикселей: столько нужно под вопрос с коротким текстом и
+ * парой вариантов. В редакторе задания вариантов и полей больше, и в узком
+ * окне они вставали в несколько колонок, между которыми нельзя было прочитать
+ * ни одну подпись.
+ */
+.modal-dialog--task { max-width: 624px; }
+
+/*
+ * Вкладки внутри редактора задания.
+ *
+ * Поля задания и настройки разведены по вкладкам: текст вопроса с вариантами
+ * занимает больше всего места, а настройки нужны раз в десять — и раньше они
+ * лежали в общей форме, между вопросом и баллом, и терялись.
+ */
+.task-editor-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+}
+
+.task-editor-tabs__tab {
+    appearance: none;
+    border: 0;
+    background: none;
+    padding: 8px 14px;
+    font: inherit;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
+
+.task-editor-tabs__tab:hover { color: var(--text); }
+
+.task-editor-tabs__tab.is-active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.task-editor-tabs__tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.task-editor-pane[hidden] { display: none; }
 
 /*
  * Этап мастера: основная часть и каталог рядом.

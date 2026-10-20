@@ -58,22 +58,18 @@ $field = static fn (string $name, mixed $fallback): string => array_key_exists($
 <?php endif; ?>
 
 <div class="card">
- <h2 class="card-title">О работе</h2>
+ <?php /*
+  Заголовка «О работе» здесь нет намеренно: описание работы уехало на
+  отдельную вкладку, и повторять его название на вкладке настроек значило бы
+  называть одно и то же дважды на двух вкладках подряд — человек решил бы,
+  что это две разные работы, или что одна из вкладок лишняя.
+ */ ?>
 
 <label class="form-group">
-<span class="form-label">Название</span>
-<input type="text" name="title" required maxlength="191" autofocus
- value="<?= $view->e($field('title', $assignment['title'])) ?>">
-<?php if ($isNew): ?>
-<span class="form-help">Без названия работа не сохранится: имя ей даёт этот шаг.</span>
-<?php endif; ?>
+<span class="form-label">Описание</span>
+<textarea name="description" rows="4"><?= $view->e($field('description', $assignment['description'] ?? '')) ?></textarea>
+<span class="form-help">Видно ученику перед началом работы.</span>
 </label>
-
- <label class="form-group">
- <span class="form-label">Описание</span>
- <textarea name="description" rows="4"><?= $view->e($field('description', $assignment['description'] ?? '')) ?></textarea>
- <span class="form-help">Видно ученику перед началом работы.</span>
- </label>
 
  <label class="form-group">
  <span class="form-label">Предмет</span>
@@ -93,6 +89,41 @@ $field = static fn (string $name, mixed $fallback): string => array_key_exists($
  <input type="number" name="time_limit" min="0" max="600"
  value="<?= $view->e($field('time_limit', $assignment['time_limit'] ?? '')) ?>">
  <span class="form-help">Пусто — без ограничения.</span>
+ </label>
+
+ <label class="form-group">
+ <span class="form-label">Порядок заданий</span>
+ <select name="shuffle_items">
+ <option value="0" <?= (int) $field('shuffle_items', $assignment['shuffle_items'] ?? 0) === 0 ? 'selected' : '' ?>>
+ Как расставлены в редакторе
+ </option>
+ <option value="1" <?= (int) $field('shuffle_items', $assignment['shuffle_items'] ?? 0) === 1 ? 'selected' : '' ?>>
+ Случайный
+ </option>
+ </select>
+ <span class="form-help">
+ Случайный порядок закрепляется за попыткой: у разных учеников он разный, но
+ внутри одной попытки задания не переставляются. На проверку это не влияет — за
+ задание ставят те же баллы, что и обычно.
+ </span>
+ </label>
+
+ <label class="form-group">
+ <span class="form-label">Копирование текста</span>
+ <select name="no_copy">
+ <option value="0" <?= (int) $field('no_copy', $assignment['no_copy'] ?? 0) === 0 ? 'selected' : '' ?>>
+ Разрешено
+ </option>
+ <option value="1" <?= (int) $field('no_copy', $assignment['no_copy'] ?? 0) === 1 ? 'selected' : '' ?>>
+ Запрещено
+ </option>
+ </select>
+ <span class="form-help">
+ Запрет действует на странице прохождения: текст вопроса нельзя выделить и
+ скопировать. Поля ответа остаются обычными — ученик пишет и правит свой ответ
+ как обычно. Копирование в браузере технически можно обойти, поэтому запрет
+ полезен там, где этого достаточно, и не заменяет договорённость.
+ </span>
  </label>
 
  <label class="form-group">

@@ -46,6 +46,15 @@ use MyEduPlugin\Test\Repository\WorkItemRepository;
  */
 final class TestEditorController
 {
+    /**
+     * Виды вопросов, у которых есть варианты ответа.
+     *
+     * Перемешивать нечего там, где вариантов нет: у текстового ответа и у
+     * числа. Переставлять элементы упорядочивания — другое дело, это не
+     * варианты, и галочка про них была бы обещанием не про то.
+     */
+    private const TYPES_WITH_OPTIONS = ['single_choice', 'multiple_choice', 'matching'];
+
  /** Сколько пустых строк показывать в формах элементов. */
 
 
@@ -162,8 +171,8 @@ $fragment = $this->view->render('test/work_submitted', [
  $questions = $this->tests->questions($testId);
  $first = $questions[0] ?? null;
  $form = $first === null
- ? $this->formFor(null)
- : $this->byId($questions, (int) $first->id);
+                ? $this->formFor(null, $test)
+                : $this->byId($questions, (int) $first->id, $test);
 
  return $this->view->render('test/_task_form', [
  'task' => $test,
@@ -270,8 +279,28 @@ try {
  $config,
  $options
  );
-} catch (\Throwable $e) {
- return $this->respond($request, false, 'Не удалось сохранить: ' . $e->getMessage(), false);
+  } catch (\Throwable $e) {
+  return $this->respond($request, false, 'Не удалось сохранить: ' . $e->getMessage(), false);
+ }
+
+  /*
+  * Перемешивание вариантов — настройка всего задания, а не вопроса.
+  *
+  * Сохраняется вместе с вопросом, потому что форма одна: отдельная кнопка
+  * «сохранить настройки» заставила бы человека нажимать её после каждой
+  * правки вопроса, и она бы забывалась.
+  *
+  * Галочка снята — значит выключено: снятая галочка браузером не присылается
+  * вовсе, и отсутствие поля читалось бы как «включено».
+  */
+  if (in_array($type, self::TYPES_WITH_OPTIONS, true)) {
+  try {
+  $this->editor->updateTest($testId, [
+  'shuffle_options' => $this->checkedFlag($request, 'shuffle_options') ? 1 : 0,
+  ]);
+  } catch (\Throwable $e) {
+  return $this->respond($request, false, 'Не удалось сохранить настройки: ' . $e->getMessage(), false);
+  }
  }
 
  /*
@@ -815,7 +844,7 @@ return [$config, []];
  * @param array<string,mixed> $question
  * @return array<string,mixed>
  */
- private function formFor(?array $question): array
+    private function formFor(?array $question, ?array $test = null): array
  {
  if ($question === null) {
  return [
@@ -828,10 +857,12 @@ return [$config, []];
  'config' => [],
  'options' => [],
  'correct' => [],
- 'order' => [],
- 'pairs' => [],
- ];
- }
+  'order' => [],
+  'pairs' => [],
+  'hasOptions' => true,
+  'shuffleOptions' => (bool) ($test['shuffle_options'] ?? false),
+  ];
+  }
 
  $type = (string) $question['type'];
  $config = $question['config'];
@@ -876,21 +907,28 @@ return [$config, []];
  'type' => $type,
  'prompt' => (string) $question['prompt'],
  'weight' => (float) $question['weight'],
- 'required' => (bool) $question['is_required'],
- 'explanation' => (string) ($question['explanation'] ?? ''),
- 'config' => $config,
- 'options' => $options,
- 'correct' => $correct,
- 'order' => $options[Question::KIND_ITEM] ?? ($options[Question::KIND_OPTION] ?? []),
- 'pairs' => $options,
- ];
- }
+  'required' => (bool) $question['is_required'],
+  'explanation' => (string) ($question['explanation'] ?? ''),
+  'config' => $config,
+  'options' => $options,
+  'correct' => $correct,
+  'order' => $options[Question::KIND_ITEM] ?? ($options[Question::KIND_OPTION] ?? []),
+  'pairs' => $options,
+  /*
+   * Настройки задания целиком, а не вопроса: варианты перемешиваются в
+   * одном задании, и галочка «перемешать варианты» относится ко всем его
+   * вопросам сразу.
+   */
+  'hasOptions' => in_array((string) $question['type'], self::TYPES_WITH_OPTIONS, true),
+  'shuffleOptions' => (bool) ($test['shuffle_options'] ?? false),
+  ];
+  }
 
  /**
  * @param list<Question> $questions
  * @return array<string,mixed>|null
  */
- private function byId(array $questions, int $id): ?array
+    private function byId(array $questions, int $id, ?array $test = null): ?array
  {
  foreach ($questions as $question) {
  if ($question->id === $id) {
@@ -902,10 +940,10 @@ return [$config, []];
  'is_required' => $question->isRequired,
  'explanation' => $question->explanation ?? '',
  'config' => $question->config,
- 'options' => $question->options,
- ]);
- }
- }
+  'options' => $question->options,
+  ], $test);
+  }
+  }
 
  return null;
  }

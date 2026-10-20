@@ -243,7 +243,7 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
          * не будет: проверка считает выпавший вариант, и ответы ученика
          * попадали бы не туда, куда он их вводил.
          */
-        $first = $this->assignments->itemForAttempt($id, (int) $attempt['id'], 1);
+        $first = $this->assignments->itemByStudentNumber($id, (int) $attempt['id'], 1);
 
         return $this->redirect(sprintf(
             'work/%d/item/%d?t=%s',
@@ -677,14 +677,54 @@ if ($this->expired($attempt)) {
             // токена её нельзя отправить. Само значение знает только ядро.
             $item + ['assignment_token' => (string) ($attempt['token'] ?? '')],
             $taskData,
-            (int) $item['position'],
+            /*
+             * Номер задания — тот, под которым его видит ученик.
+             *
+             * При перемешивании он не совпадает с номером позиции в редакторе, и
+             * ученик должен видеть сплошную нумерацию своего порядка: «Задание 3
+             * из 5» в его работе и «Задание 1 из 5» у учителя — разные вещи, и
+             * путать их нельзя.
+             */
+            $this->assignments->studentNumber(
+                (int) $attempt['assignment_id'],
+                (int) $attempt['id'],
+                (int) $item['position']
+            ),
             $this->itemCount((int) $item['assignment_id']),
             $this->auth->user(),
             $this->view,
             $this->csrf,
             $this->auth,
-            $includeSubmittedInput ? $this->failedAnswer($attempt, $item) : []
+            $includeSubmittedInput ? $this->failedAnswer($attempt, $item) : [],
+            $this->remainingSeconds($attempt),
+            (int) ($attempt['no_copy'] ?? 0) === 1
         );
+    }
+
+    /**
+     * Сколько секунд осталось на попытку.
+     *
+     * null — ограничения нет. Число считается здесь, потому что знание о
+     * лимите и о начале попытки есть у ядра, а рисует форму плагин: отдать
+     * плагину готовый остаток проще, чем отдать ещё и правило, как его считать.
+     *
+     * Остаток не может быть отрицательным: истёкшее время — это ноль, а не
+     * минус. Иначе таймер показывал бы «-00:03», а сдача работы уходила бы в
+     * ту же ветку, что и при нуле, но выглядела бы поломанной.
+     *
+     * @param array<string,mixed> $attempt
+     */
+    private function remainingSeconds(array $attempt): ?int
+    {
+        $limit = (int) ($attempt['time_limit'] ?? 0);
+
+        if ($limit <= 0) {
+            return null;
+        }
+
+        $started = strtotime((string) ($attempt['started_at'] ?? '')) ?: time();
+
+        return max(0, $started + $limit * 60 - time());
     }
 
     /**
@@ -1006,12 +1046,19 @@ if ($this->expired($attempt)) {
      */
     private function nextItem(array $attempt, array $item, int $step): ?array
     {
-        $position = (int) $item['position'] + $step;
+        /*
+         * Номер — тот, под которым задание видит ученик.
+         *
+         * При перемешивании он не совпадает с номером в редакторе, и «дальше»
+         * обязано идти по ученическому порядку: иначе после третьего задания
+         * ученик возвращался бы к тому, что уже проходил.
+         */
+        $number = (int) $item['position'] + $step;
 
-        return $this->assignments->itemForAttempt(
+        return $this->assignments->itemByStudentNumber(
             (int) $attempt['assignment_id'],
             (int) $attempt['id'],
-            max(1, $position)
+            max(1, $number)
         );
     }
 

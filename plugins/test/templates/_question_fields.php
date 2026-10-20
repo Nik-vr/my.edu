@@ -121,8 +121,8 @@ $optionRows = max(3, count($texts));
     'rows'        => 4,
 ])) ?>
 
-<div class="split">
- <?= $view->raw($ui->field('weight', [
+ <div class="split">
+  <?= $view->raw($ui->field('weight', [
      'label' => 'Балл за вопрос',
      'type'  => 'number',
      'value' => $form['weight'],
@@ -131,19 +131,13 @@ $optionRows = max(3, count($texts));
      'step'  => '0.01',
      'size'  => 6,
  ])) ?>
+ </div>
 
- <?= $view->raw($ui->checkbox('is_required', [
-     'label'   => 'Ответ обязателен',
-     'checked' => (bool) $form['required'],
- ])) ?>
-</div>
-
-<?= $view->raw($ui->textarea('explanation', [
-    'label'       => 'Пояснение после проверки',
-    'value'       => $form['explanation'],
-    'rows'        => 2,
-    'placeholder' => 'Показывается в разборе: почему такой ответ верный',
-])) ?>
+<?php /*
+ «Ответ обязателен» и «Пояснение после проверки» уехали на вкладку
+ «Настройки»: к тексту вопроса они отношения не имеют, а между вопросом и
+ баллом стояли, и терялись среди полей.
+*/ ?>
 
 <?php if ($formType === 'single_choice'): ?>
 <?= $view->raw($ui->group(

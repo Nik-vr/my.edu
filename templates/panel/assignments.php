@@ -159,7 +159,7 @@ $view->crumbs([
  <span></span>
  </div>
 
- <ul class="work-list">
+ <ul class="work-list" data-work-list>
  <?php foreach ($folder['items'] as $row): ?>
  <?php require __DIR__ . '/_work_row.php'; ?>
  <?php endforeach; ?>
@@ -167,3 +167,11 @@ $view->crumbs([
  </details>
  </section>
 <?php endforeach; ?>
+
+<?php /*
+ Удаление работы — без перезагрузки страницы.
+
+ Скрипт нужен рядом со списком, а не в общем файле: он касается только
+ удаления работы, и подключать его везде незачем.
+ */ ?>
+<script src="<?= $view->e($view->asset('assets/js/work-list.js')) ?>" defer></script>

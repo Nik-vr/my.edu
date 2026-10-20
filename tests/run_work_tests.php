@@ -360,11 +360,50 @@ $composedId = (int) (preg_match('#/panel/assignments/(\d+)/edit/start#', (string
 $composedEditor = $teacher->get('/panel/assignments/' . $composedId . '/edit/start');
 
 $t->is($composedEditor['status'] === 200, 'редактор новой работы открывается');
-$t->contains($composedEditor['body'], 'name="title"', 'название спрашивается в редакторе');
+$t->contains($composedEditor['body'], 'Изменить название',
+    'у названия есть карандаш, как у имени ученика в списке класса');
+$t->notContains($composedEditor['body'], 'name="title"',
+    'в обычном виде названия в шапке нет: оно текстом, а правится по карандашу');
+
+$titleEdit = $teacher->get('/panel/assignments/' . $composedId . '/edit?edit=title');
+
+$t->contains($titleEdit['body'], 'name="title"',
+    'по карандашу название превращается в поле');
 $t->is(
-    preg_match('#name="title"[^>]*value=""#', (string) ($composedEditor['body'] ?? '')) === 1,
-    'поле названия пустое, а не подставлено заглушкой'
+    preg_match('#name="title"[^>]*value="(?!Без названия)#', (string) ($titleEdit['body'] ?? '')) === 1,
+    'поле названия без заглушки «Без названия»'
 );
+
+/*
+ * О сохранении названия сообщают всплывающим сообщением, а не баннером.
+ *
+ * Страница при этом не уходит: человек видит на ней же новое название, и
+ * баннер «Название сохранено» был бы второй вещью об одном. Сообщение
+ * всплывающее — как «Порядок сохранён» в доске заданий.
+ */
+$titleSaved = $teacher->post('/panel/assignments/' . $composedId . '/edit/save', [
+    '_token'     => $teacher->tokenFrom($titleEdit) ?? '',
+    'title_only' => '1',
+    'title'      => 'Работа, названная в шапке',
+]);
+
+$t->is($titleSaved['status'] === 302, 'название сохранено');
+$t->equals(
+    'Работа, названная в шапке',
+    (string) $db->value('SELECT title FROM assignments WHERE id = :id', ['id' => $composedId]),
+    'новое название записано в работу'
+);
+
+$afterTitleSave = $teacher->get('/panel/assignments/' . $composedId . '/edit');
+
+$t->contains($afterTitleSave['body'], 'data-toast="Название сохранено"',
+    'о сохранении названия сказано всплывающим сообщением');
+$t->is(
+    preg_match('~class="banner[^"]*"[^>]*>\s*Название сохранено~u', (string) ($afterTitleSave['body'] ?? '')) !== 1,
+    'баннера о сохранении названия на странице нет'
+);
+$t->contains($afterTitleSave['body'], 'assets/js/toast.js',
+    'скрипт всплывающих сообщений на странице подключён');
 
 /*
  * Поле названия пустое, а не подставленное.
@@ -1138,20 +1177,23 @@ $t->equals(1.0, (float) $items[1]['weight'], 'вес второго задани
 $t->equals($secondTestId, (int) $items[2]['task_id'], 'третьим осталось задание без учителя');
 
 /*
- * Публикация — последний шаг мастера, и она требует готовой работы.
+ * Публикация живёт в шапке редактора, отдельной вкладки у неё больше нет.
  *
  * Здесь у работы три позиции, но шкалы оценок ещё нет, поэтому публикация
  * обязана быть отклонена: без границ ученик получил бы процент без отметки, а
  * учитель — результат, который не во что превратить.
  */
-$publishStepUrl = '/panel/assignments/' . $assignmentId . '/edit/publish';
+$publishStepUrl = '/panel/assignments/' . $assignmentId . '/edit';
+$publishActionUrl = '/panel/assignments/' . $assignmentId . '/edit/publish';
 $publishStep = $teacher->get($publishStepUrl);
 
-$t->is($publishStep['status'] === 200, 'шаг публикации открыт');
+$t->is($publishStep['status'] === 200, 'редактор с публикацией открыт');
+$t->contains($publishStep['body'], 'data-publish-toggle',
+    'в шапке есть переключатель публикации');
 $t->contains($publishStep['body'], 'параметры оценки',
-    'шаг объясняет, чего не хватает для публикации');
+    'редактор объясняет, чего не хватает для публикации');
 
-$publishWithoutCriteria = $teacher->post($publishStepUrl, [
+$publishWithoutCriteria = $teacher->post($publishActionUrl, [
     '_token' => $teacher->tokenFrom($publishStep) ?? '',
 ]);
 
@@ -1218,10 +1260,11 @@ $emptyQuestionId = (int) $db->insert('questions', [
     'is_required'  => 1,
 ]);
 
+$emptyTaskEditorUrl = '/panel/assignments/' . $emptyTaskWork . '/edit';
 $emptyTaskPublishUrl = '/panel/assignments/' . $emptyTaskWork . '/edit/publish';
-$emptyTaskStep = $teacher->get($emptyTaskPublishUrl);
+$emptyTaskStep = $teacher->get($emptyTaskEditorUrl);
 
-$t->is($emptyTaskStep['status'] === 200, 'шаг публикации работы с заданием открыт');
+$t->is($emptyTaskStep['status'] === 200, 'редактор работы с заданием открыт');
 $t->contains($emptyTaskStep['body'], 'В задании не заполнен вопрос',
     'автор видит причину, которую сообщил плагин');
 
@@ -1296,9 +1339,8 @@ $teacher->post('/panel/assignments/' . $assignmentId . '/edit/result', [
 ]);
 
 // Теперь публикуем.
-$publishStep = $teacher->get($publishStepUrl);
-$publish = $teacher->post($publishStepUrl, [
-    '_token' => $teacher->tokenFrom($publishStep) ?? '',
+$publish = $teacher->post($publishActionUrl, [
+    '_token' => $teacher->tokenFrom($teacher->get($publishStepUrl)) ?? '',
 ]);
 
 $t->equals('published', (string) $db->value('SELECT status FROM assignments WHERE id = :id', ['id' => $assignmentId]),
@@ -1387,21 +1429,22 @@ $t->equals(
     'задание без вопроса действительно поставлено в работу'
 );
 
-    $emptyPublishStep = '/panel/assignments/' . $emptyWorkId . '/edit/publish';
+    $emptyPublishStep = '/panel/assignments/' . $emptyWorkId . '/edit';
+    $emptyPublishAction = '/panel/assignments/' . $emptyWorkId . '/edit/publish';
 
     $emptyStepPage = $teacher->get($emptyPublishStep);
 
-    $t->is($emptyStepPage['status'] === 200, 'шаг публикации открыт и для недоделанной работы');
+    $t->is($emptyStepPage['status'] === 200, 'редактор недоделанной работы открыт');
 
     /*
-     * Заголовка у задания больше нет, и задание без условия назвать нечем: шаг
-     * называет его номером строки. Проверяется именно это — раньше здесь
-     * искалось имя задания, которого в системе уже не существует.
+     * Заголовка у задания больше нет, и задание без условия назвать нечем:
+     * редактор называет его номером строки. Проверяется именно это — раньше
+     * здесь искалось имя задания, которого в системе уже не существует.
      */
     $t->contains($emptyStepPage['body'], 'Задание «№',
-        'шаг называет номером строки то, что назвать нечем');
+        'редактор называет номером строки то, что назвать нечем');
 
-    $teacher->post($emptyPublishStep, [
+    $teacher->post($emptyPublishAction, [
         '_token' => $teacher->tokenFrom($emptyStepPage) ?? '',
     ]);
 
@@ -3079,6 +3122,19 @@ $t->contains($wizardEntry['body'], 'class="work-editor-form"',
     'форма с полями вкладок не вложена в доску заданий');
 
 /*
+ * Публикации больше нет отдельной вкладкой: она переехала в шапку.
+ *
+ * Проверяется и то, что вкладка исчезла, и то, что вместо неё есть
+ * переключатель: иначе публикация была бы недостижима вовсе.
+ */
+$t->notContains($wizardEntry['body'], 'work-pane-publish',
+    'отдельной вкладки публикации больше нет');
+$t->contains($wizardEntry['body'], 'data-publish-toggle',
+    'в шапке есть переключатель публикации');
+$t->contains($wizardEntry['body'], 'id="publish-blockers"',
+    'препятствия публикации показываются в окне рядом с переключателем');
+
+/*
  * Доска заданий — вне общей формы, а её вкладки — соседи панелей.
  *
  * Вложенная форма в HTML недопустима: браузер закрывает внешнюю и перестаёт
@@ -3117,7 +3173,14 @@ $t->is(
     'у вкладок есть ключ переключения'
 );
 
-foreach (['items', 'result', 'publish'] as $workTabKey) {
+/*
+ * Вкладок у работы три: настройки, задания и результат.
+ *
+ * Отдельной вкладки «Публикация» больше нет: публикация — переключатель в
+ * шапке. Поэтому в списке вкладок для проверки её нет, и отдельно проверяется,
+ * что старой вкладки не осталось, а переключатель на месте.
+ */
+foreach (['items', 'result'] as $workTabKey) {
     $workTabPage = $teacher->get('/panel/assignments/' . $wizardId . '/edit?tab=' . $workTabKey);
     $workTabOn = 'work-pane-' . $workTabKey;
 
@@ -3178,12 +3241,15 @@ $t->is(
 $stepStart = $teacher->get('/panel/assignments/' . $wizardId . '/edit/start');
 $t->is($stepStart['status'] === 200, 'прежний адрес первого этапа открыт');
 /*
- * Этапов больше нет: четыре набора полей стоят рядом и переключаются вкладками.
+ * Этапов больше нет: три набора полей стоят рядом и переключаются вкладками.
  *
  * Полоса шагов из двух кружков рядом с вкладками читалась третьим способом
  * выбрать, куда идти, и не отвечала на вопрос «что я сейчас правлю». Проверяется
- * поэтому не класс полосы, а то, что вкладок четыре, помечена ровно одна и
- * открыта именно «Начальная страница».
+ * поэтому не класс полосы, а то, что вкладок три, помечена ровно одна и
+ * открыта именно «Настройки работы».
+ *
+ * Вкладки «Опубликовать» больше нет: публикация стала переключателем в шапке
+ * редактора, а её препятствия показываются окном.
  */
 $t->notContains($stepStart['body'], 'class="stepper"', 'на странице редактора нет полосы шагов');
 $t->equals(4, preg_match_all('/data-work-tab="[a-z]+"/', $stepStart['body']),
@@ -3192,10 +3258,36 @@ $t->equals(1, substr_count($stepStart['body'], 'aria-selected="true"'),
     'помечена ровно одна вкладка');
 $t->is(
     preg_match('~aria-selected="true"[^>]*data-work-tab="start"|data-work-tab="start"[^>]*aria-selected="true"~su', $stepStart['body']) === 1,
-    'на прежнем адресе первого этапа открыта вкладка «Начальная страница»'
+    'на прежнем адресе первого этапа открыта вкладка «Настройки работы»'
 );
+$t->contains($stepStart['body'], 'Настройки работы', 'есть вкладка «Настройки работы»');
 $t->contains($stepStart['body'], 'Задания', 'есть вкладка «Задания»');
 $t->contains($stepStart['body'], 'Результат', 'есть вкладка «Результат»');
+$t->contains($stepStart['body'], 'data-work-tab="about"', 'есть вкладка «О работе»');
+$t->notContains($stepStart['body'], 'data-work-tab="publish"',
+    'вкладки «Опубликовать» в редакторе больше нет');
+
+/*
+ * Сведения о работе — последняя вкладка редактора.
+ *
+ * Раньше они жили на отдельной странице работы с копией кнопок редактора:
+ * «Собрать по шагам», «Опубликовать», «Удалить». Два одинаковых набора кнопок
+ * на двух страницах требовали держать в голове, какой из них сейчас открыт.
+ * Теперь сведения — вкладка, а страница работы осталась для чтения.
+ */
+$t->contains($stepStart['body'], 'Как собрана работа',
+    'на вкладке «О работе» есть сведения о работе');
+
+/*
+ * Публикация — переключатель в шапке, и он виден там же, где название.
+ *
+ * Кнопки стоят в правом верхнем углу, в одной строке с заголовком: так выглядит
+ * форма в шаблоне, на котором взят вид редактора.
+ */
+$t->contains($stepStart['body'], 'data-publish-toggle', 'в шапке редактора есть переключатель «Опубликовать»');
+$t->contains($stepStart['body'], 'work-editor-head', 'шапка редактора собрана в одну строку');
+$t->notContains($stepStart['body'], 'Изменить состав',
+    'кнопки «Изменить состав» в редакторе больше нет');
 
 /*
  * Одна кнопка сохраняет и работу, и шкалу.
@@ -3260,14 +3352,21 @@ $teacher->post('/panel/assignments/' . $wizardId . '/edit/save', [
 
 $editorAfterRefusal = $teacher->get('/panel/assignments/' . $wizardId . '/edit?tab=start');
 
-$t->contains($editorAfterRefusal['body'], 'Название работы не может быть пустым',
-    'общая кнопка отказала в пустом названии');
+/*
+ * Общая кнопка больше не ругается на пустое название.
+ *
+ * Название в редакторе правят в шапке, рядом с заголовком, и в общей форме его
+ * нет вовсе. Поэтому пустое название в общей форме — не ошибка, а пустое поле,
+ * которого там и не должно быть: общая кнопка просто не трогает название.
+ */
+$t->notContains($editorAfterRefusal['body'], 'Название работы не может быть пустым',
+    'общая кнопка не ругается на пустое название: названия в общей форме нет');
 $t->contains($editorAfterRefusal['body'], 'Описание, введённое до отказа общей кнопкой',
-    'общая кнопка вернула введённое описание');
+    'общая кнопка сохранила описание');
 $t->is(
     (string) $db->value('SELECT title FROM assignments WHERE id = :id', ['id' => $wizardId])
         === 'Работа, собранная одной кнопкой',
-    'отказ общей кнопки ничего не записал поверх сохранённого'
+    'общая кнопка не тронула название работы'
 );
 
 /*
@@ -3854,19 +3953,22 @@ $t->is(
 );
 
 /*
- * Черновик подключён к странице редактора и грузится после доски.
+ * Черновик подключён к странице редактора и грузится ДО доски.
  *
- * Доска настраивает форму в момент открытия окна, и модуль должен быть на месте
- * к этому моменту: подключённый раньше он оказался бы пустым объектом, и
- * восстановления не было бы — без единой ошибки в консоли.
+ * Раньше порядок был обратным, и это стоило «иногда появляющегося» вопроса
+ * «Закрыть сайт?». Оба скрипта отложенные и выполняются по порядку в
+ * разметке: при обратном порядке доска настраивала формы раньше, чем модуль
+ * черновиков появлялся на странице, и модуль вставал на место только после
+ * первого открытия задания — вместе с предупреждением об уходе. Сохранить
+ * работу без вопроса тогда было нельзя.
  */
 $draftPanel = (string) @file_get_contents($rootDir . '/templates/panel/_assignment_items_pane.php');
 
 $t->contains($draftPanel, 'assets/js/task-draft.js', 'страница редактора подключает модуль черновика');
 $t->contains($draftPanel, 'data-draft-url', 'окно редактора знает адрес своего черновика');
 $t->is(
-    strpos($draftPanel, 'assets/js/assignment-items.js') < strpos($draftPanel, 'assets/js/task-draft.js'),
-    'модуль черновика подключается после скрипта доски'
+    strpos($draftPanel, 'assets/js/task-draft.js') < strpos($draftPanel, 'assets/js/assignment-items.js'),
+    'модуль черновика подключается раньше скрипта доски'
 );
 
 /*
@@ -5087,8 +5189,29 @@ $t->contains($draftsList['body'], 'Черновики', 'раздел черно
 $t->contains($draftsList['body'], 'Опубликованные', 'раздел опубликованных на месте');
 
 $t->is(
-    $draftsList['body'] !== $teacher->get('/panel/assignments')['body'],
+    $draftsList['body'] !== $teacher->get('/panel/assignments?state=published')['body'],
     'разделы показывают разные работы'
+);
+
+/*
+ * Раздел помнится.
+ *
+ * Без адреса открывается тот, который был открыт: после удаления работы
+ * человек возвращается на «Черновики», а не на «Опубликованные», где его
+ * работы нет, — иначе он решил бы, что удалилось больше, чем он нажал.
+ */
+/*
+ * Раздел помнится.
+ *
+ * Без адреса открывается тот, который был открыт: после удаления работы
+ * человек возвращается на «Черновики», а не на «Опубликованные», где его
+ * работы нет, — иначе он решил бы, что удалилось больше, чем он нажал.
+ */
+$teacher->get('/panel/assignments?state=drafts');
+
+$t->is(
+    $teacher->get('/panel/assignments')['body'] === $teacher->get('/panel/assignments?state=drafts')['body'],
+    'список без адреса открывает запомненный раздел'
 );
 
 // Черновик работы виден в черновиках и не виден среди опубликованных.
@@ -6354,16 +6477,16 @@ $t->is($createPage['status'] === 200, 'из списка открывается 
 $t->contains($createPage['body'], '/panel/assignments/new/start',
     'форма мастера отправляется на свой адрес, а не на адрес списка');
 
-$t->contains($listPage['body'], '/panel/assignments/new/start',
-    'из списка на создание ведёт ссылка прямо в мастер');
+$t->contains($listPage['body'], '/panel/assignments/new',
+    'из списка на создание ведёт ссылка прямо в редактор');
 
 /*
  * Старый адрес остаётся рабочим: на него могли остаться ссылки из закладок
- * и из писем, и человек не должен попадать в 404 из-за того, что мастер
- * переехал на шаг глубже.
+ * и из писем, и человек не должен попадать в 404 из-за того, что создание
+ * переехало на другой адрес.
  */
 $t->is($teacher->get('/panel/assignments/new')['status'] === 302,
-    'старый адрес создания ведёт в мастер, а не отвечает отказом');
+    'старый адрес создания ведёт в редактор, а не отвечает отказом');
 
 $t->group('Кому видны чужие работы');
 
@@ -6437,7 +6560,7 @@ $headDrafts = $deputy->get('/panel/assignments?state=drafts');
 $t->contains($headDrafts['body'], 'Работа соседнего класса второго учителя',
     'заведующий видит чужие черновики в разделе черновиков');
 
-$headPublished = $deputy->get('/panel/assignments');
+$headPublished = $deputy->get('/panel/assignments?state=published');
 
 $t->notContains($headPublished['body'], 'Работа соседнего класса второго учителя',
     'черновик не попадает в раздел опубликованных');
@@ -6480,16 +6603,26 @@ $t->notContains($foreignOverview['body'], '/' . $assignmentId . '/delete',
     'у чужой работы нет кнопки удаления');
 
 /*
- * Удаление с обзора идёт через подтверждение, а не сразу. Прямая форма
- * обходила бы подтверждение, ради которого оно и затевалось.
+ * На странице работы кнопок нет: они были копией кнопок редактора.
+ *
+ * Удаление осталось в списке работ — там, где работа и живёт в списке, — и
+ * по-прежнему идёт через подтверждение, а не сразу. Прямая форма обходила бы
+ * подтверждение, ради которого оно и затевалось.
  */
 $ownOverview = $teacher->get('/panel/assignments/' . $assignmentId);
 
-$t->contains($ownOverview['body'], '/panel/assignments/' . $assignmentId . '/delete',
-    'у своей работы есть ссылка на удаление');
+$t->notContains($ownOverview['body'], '/panel/assignments/' . $assignmentId . '/delete',
+    'на странице работы кнопки удаления нет');
+
+$t->notContains($ownOverview['body'], 'Собрать по шагам',
+    'на странице работы нет кнопки «Собрать по шагам» — она есть в редакторе');
 
 $t->notContains($ownOverview['body'], 'action="/panel/assignments/' . $assignmentId . '/delete"',
     'удаление не происходит прямой формой — только через подтверждение');
+
+$t->contains($teacher->get('/panel/assignments')['body'],
+    'Удалить',
+    'удаление осталось в списке работ');
 
 /*
  * Проверка ответов остаётся автору: она ставит оценки и меняет результат.
@@ -6634,6 +6767,68 @@ $t->is(
 $t->is(
     $otherTeacher->get('/panel/assignments/' . $assignmentId . '/delete')['status'] === 403,
     'чужой учитель не доходит до подтверждения удаления'
+);
+
+/*
+ * Удаление без перезагрузки страницы и возврат на открытую вкладку.
+ *
+ * Две вещи, которые легко сломать незаметно: сервер должен отвечать данными
+ * тому, кто спросил данными, а после удаления человек должен оказаться на
+ * том разделе списка, который открыт. Иначе он попадает в «Опубликованные»,
+ * где его черновика нет, и решает, что удалилось больше, чем он нажал.
+ */
+$t->group('Удаление работы без перезагрузки');
+
+$tabWork = $teacher->post('/panel/assignments/new/start', [
+    '_token' => $teacher->tokenFrom($teacher->get('/panel/assignments/new/start')) ?? '',
+    'title'  => 'Черновик для проверки вкладки',
+]);
+
+$tabId = (int) (preg_match('#/panel/assignments/(\d+)/#', (string) ($tabWork['location'] ?? ''), $tabMatch) === 1
+    ? $tabMatch[1]
+    : 0);
+
+$t->is($tabId > 0, 'работа для проверки вкладки создана');
+
+$teacher->get('/panel/assignments?state=drafts');
+
+$tabToken = $teacher->tokenFrom($teacher->get('/panel/assignments?state=drafts')) ?? '';
+
+$tabDelete = $teacher->postAjax('/panel/assignments/' . $tabId . '/delete', [
+    '_token' => $tabToken,
+]);
+
+$t->is($tabDelete['status'] === 200, 'удаление данными отвечает кодом 200');
+
+$t->contains($tabDelete['body'], '"ok":true', 'удаление данными отвечает, что работа снесена');
+
+$t->is(
+    (int) $db->value('SELECT COUNT(*) FROM assignments WHERE id = :id', ['id' => $tabId]) === 0,
+    'работа удалена по запросу данными'
+);
+
+$tabPlain = $teacher->post('/panel/assignments/new/start', [
+    '_token' => $teacher->tokenFrom($teacher->get('/panel/assignments/new/start')) ?? '',
+    'title'  => 'Черновик для возврата на вкладку',
+]);
+
+$plainId = (int) (preg_match('#/panel/assignments/(\d+)/#', (string) ($tabPlain['location'] ?? ''), $plainMatch) === 1
+    ? $plainMatch[1]
+    : 0);
+
+$teacher->get('/panel/assignments?state=drafts');
+
+$plainDelete = $teacher->post('/panel/assignments/' . $plainId . '/delete', [
+    '_token' => $teacher->tokenFrom($teacher->get('/panel/assignments?state=drafts')) ?? '',
+]);
+
+$t->contains((string) ($plainDelete['location'] ?? ''), 'state=drafts',
+    'после удаления возвращаем на ту вкладку, которая была открыта');
+
+$t->contains(
+    $teacher->get('/panel/assignments')['body'],
+    'nav-link active',
+    'список без адреса открывает запомненный раздел'
 );
 
 $t->group('Удаление работы уносит её содержимое');
@@ -7405,14 +7600,14 @@ $teacher->post('/panel/assignments/' . $assignmentId . '/edit/start', [
 $t->is($student->get('/work/' . $assignmentId)['status'] === 200,
     'параллель не изменила того, кому работа выдана');
 
-$t->contains($teacher->get('/panel/assignments')['body'], '8 классы',
+$t->contains($teacher->get('/panel/assignments?state=published')['body'], '8 классы',
     'работа лежит в папке своей параллели');
 
 // --------------------------------------------------------------- дерево работ
 
 $t->group('Дерево работ по папкам');
 
-$treeList = $teacher->get('/panel/assignments');
+$treeList = $teacher->get('/panel/assignments?state=published');
 
 $t->contains($treeList['body'], 'Без параллели', 'есть папка для работ без параллели');
 /*
@@ -8448,27 +8643,57 @@ $otpUploaded = $teacher->upload('/panel/assignments/import/otp/upload', [
 ]);
 
 $t->is($otpUploaded['status'] === 302, 'файл теста принят на разбор');
+$t->is(
+    str_contains((string) ($otpUploaded['location'] ?? ''), '/panel/assignments/import/otp'),
+    'после разбора возвращаемся на ту же страницу, где приложен файл'
+);
 
 $t->equals(0, (int) $db->value(
     'SELECT COUNT(*) FROM assignments WHERE title = :t',
     ['t' => 'Тест для переноса']
 ), 'разбор ничего не записал в базу');
 
-// Шаг 2: разбор виден до создания работы.
-$otpSetup = $teacher->get('/panel/assignments/import/otp/setup');
+/*
+ * Финальный шаг — на той же странице, что и разбор.
+ *
+ * Решение владельца: разбор и создание работы живут на одном адресе. Раньше
+ * это были две страницы, и вторая ничего не знала о первой: человек уходил с
+ * разбора на другую страницу, где введённое до этого не сохранилось, — и
+ * возвращаться пришлось бы адресом, который помнить трудно.
+ */
+$otpSetup = $teacher->get('/panel/assignments/import/otp');
 
-$t->is($otpSetup['status'] === 200, 'шаг с настройками открывается');
+$t->is($otpSetup['status'] === 200, 'страница с разбором открывается');
 $t->is(
     preg_match('~class="nav-link active".*?>\s*Импорт из OnlineTestPad~su', $otpTabs($otpSetup['body'])) === 1,
-    'на втором шаге вкладка осталась отмеченной'
+    'вкладка осталась отмеченной'
 );
 $t->contains($otpSetup['body'], 'Тест для переноса', 'название теста показано');
 $t->contains($otpSetup['body'], 'Один вариант ответа', 'название нашего типа задания взято у плагина');
 $t->contains($otpSetup['body'], 'Не перенесено', 'пропущенные задания перечислены');
 $t->contains($otpSetup['body'], 'ползунок', 'причина пропуска названа по-русски');
 $t->contains($otpSetup['body'], '25 мин.', 'лимит времени из выгрузки перенесён в разбор');
-$t->contains($otpSetup['body'], 'name="subject"', 'шаг спрашивает предмет');
-$t->contains($otpSetup['body'], 'name="parallel"', 'шаг спрашивает параллель');
+$t->contains($otpSetup['body'], 'name="subject"', 'страница спрашивает предмет');
+$t->contains($otpSetup['body'], 'name="parallel"', 'страница спрашивает параллель');
+
+/*
+ * Страница одна, а не две: файла на ней уже не спрашивают — разбор только что
+ * сделан, и повторный вопрос о файле сбивал бы с толку.
+ */
+$t->notContains($otpSetup['body'], 'name="package"',
+    'после разбора файл на странице не спрашивают заново');
+
+/*
+ * Старый адрес второго шага остаётся рабочим: он отправляет на страницу
+ * разбора, чтобы ссылка из закладки не приводила в отказ.
+ */
+$otpOldStep = $teacher->get('/panel/assignments/import/otp/setup');
+
+$t->is($otpOldStep['status'] === 302, 'старый адрес второго шага не отказывает');
+$t->is(
+    str_contains((string) ($otpOldStep['location'] ?? ''), '/panel/assignments/import/otp'),
+    'старый адрес отправляет на страницу разбора'
+);
 
 /*
  * Предмет и параллель — два одинаковых по поведению списка.
@@ -8498,13 +8723,17 @@ $otpNoSubject = $teacher->post('/panel/assignments/import/otp/setup', [
 ]);
 
 $t->is($otpNoSubject['status'] === 302, 'пустой предмет отвергнут');
+$t->is(
+    str_contains((string) ($otpNoSubject['location'] ?? ''), '/panel/assignments/import/otp'),
+    'отказ возвращает на ту же страницу'
+);
 $t->contains(
-    $teacher->get('/panel/assignments/import/otp/setup')['body'],
+    $teacher->get('/panel/assignments/import/otp')['body'],
     'Отвечайте внимательно',
     'после отказа разбор на месте — файл не нужно прикладывать заново'
 );
 
-$otpSetupAgain = $teacher->get('/panel/assignments/import/otp/setup');
+$otpSetupAgain = $teacher->get('/panel/assignments/import/otp');
 $otpCreated = $teacher->post('/panel/assignments/import/otp/setup', [
     '_token'   => $teacher->tokenFrom($otpSetupAgain) ?? '',
     'subject'  => 'Информатика переноса',
@@ -8592,11 +8821,47 @@ $t->equals(
     'пояснение из выгрузки сохранено'
 );
 
+/*
+ * «Начать заново» возвращает страницу к файлу.
+ *
+ * Сброс серверный, а не ссылка: разобранный тест лежит в сессии, и забыть его
+ * должен сервер. Ссылка без скриптов оставила бы разбор на месте, и человек
+ * второй раз увидел бы то же самое, что и в первый.
+ */
+$otpUploadedAgain = $teacher->upload('/panel/assignments/import/otp/upload', [
+    '_token' => $teacher->tokenFrom($teacher->get('/panel/assignments/import/otp')) ?? '',
+], [
+    'package' => $otpZipPath,
+]);
+
+$t->is($otpUploadedAgain['status'] === 302, 'файл приложен заново');
+$t->contains(
+    $teacher->get('/panel/assignments/import/otp')['body'],
+    'name="subject"',
+    'после разбора страница спрашивает предмет'
+);
+
+$otpReset = $teacher->post('/panel/assignments/import/otp/reset', [
+    '_token' => $teacher->tokenFrom($teacher->get('/panel/assignments/import/otp')) ?? '',
+]);
+
+$t->is($otpReset['status'] === 302, 'разбор сброшен');
+$t->contains(
+    $teacher->get('/panel/assignments/import/otp')['body'],
+    'name="package"',
+    'после сброса страница снова спрашивает файл'
+);
+$t->notContains(
+    $teacher->get('/panel/assignments/import/otp')['body'],
+    'name="subject"',
+    'после сброса предмет на странице не спрашивают'
+);
+
 // Задания открываются в редакторе работы и сразу проходят проверку готовности:
 // человек не должен дописывать то, что уже было в выгрузке. Единственное
 // незаполненное — шкала оценок, её в любом случае задаёт учитель.
 $otpItemsPage = $teacher->get('/panel/assignments/' . $otpWorkId . '/edit/items');
-$otpPublishPage = $teacher->get('/panel/assignments/' . $otpWorkId . '/edit/publish');
+$otpPublishPage = $teacher->get('/panel/assignments/' . $otpWorkId . '/edit');
 
 /*
  * Перенесённое задание опознаётся так же, как любое: началом своего условия.
@@ -9046,5 +9311,719 @@ $t->equals($issuesBefore, (int) ($db->value(
     'SELECT COUNT(*) FROM assignment_issues WHERE assignment_id = :a',
     ['a' => $assignmentId]
 ) ?? 0), 'без пропуска выдача тоже не создаётся');
+
+$t->group('Таймер на странице прохождения');
+
+/*
+ * Ученик должен видеть, сколько у него осталось.
+ *
+ * Скрипт таймера в проекте был, а разметки не было: страница выглядела
+ * исправной, ограничение времени работало на сервере, но человек не знал,
+ * сколько у него осталось, — и удивлялся, что работу отобрали.
+ */
+$timerWorkId = (int) $db->insert('assignments', [
+    'title' => 'Работа с таймером',
+    'author_id' => $teacherId,
+    'status' => 'published',
+    'time_limit' => 15,
+    'created_at' => date('Y-m-d H:i:s'),
+    'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$timerTaskId = $transferTestId;
+
+$timerItemId = (int) $db->insert('assignment_items', [
+    'assignment_id' => $timerWorkId,
+    'position' => 1,
+    'variant' => 1,
+    'plugin_id' => 'test',
+    'task_kind' => 'single_choice',
+    'task_id' => $timerTaskId,
+    'weight' => 1.0,
+    'max_score' => 1.0,
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$timerIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id' => $timerWorkId,
+    'author_id' => $teacherId,
+    'available_from' => date('Y-m-d H:i:s'),
+    'available_until' => date('Y-m-d H:i:s', strtotime('+1 day')),
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('assignment_issue_students', [
+    'issue_id' => $timerIssueId,
+    'student_id' => $studentId,
+    'class_id' => $classId,
+    'assigned_at' => date('Y-m-d H:i:s'),
+]);
+
+$timerStartPage = $student->get('/work/' . $timerWorkId);
+$timerStart = $student->post('/work/' . $timerWorkId . '/start', [
+    '_token' => $student->tokenFrom($timerStartPage) ?? '',
+]);
+
+$t->is($timerStart['status'] === 302, 'ученик начал работу с таймером');
+
+$timerMatch = preg_match(
+    '#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#',
+    (string) ($timerStart['location'] ?? ''),
+    $timerParts
+);
+
+$t->is($timerMatch === 1, 'попытка открылась на первом задании');
+
+if ($timerMatch === 1) {
+    $timerPage = $student->get('/work/' . $timerParts[1] . '/item/' . $timerParts[2] . '?t=' . $timerParts[3]);
+
+    $t->contains($timerPage['body'], 'id="timer-value"', 'таймер показан ученику');
+
+    $t->contains($timerPage['body'], 'data-remaining="', 'в форме задания есть остаток времени');
+
+    $t->is(
+        preg_match('/data-remaining="(\d+)"/', (string) ($timerPage['body'] ?? ''), $timerLeft) === 1
+        && (int) $timerLeft[1] > 0
+        && (int) $timerLeft[1] <= 15 * 60,
+        'остаток времени посчитан и не превышает лимит'
+    );
+
+    $t->contains($timerPage['body'], 'id="timer"', 'есть коробка таймера');
+}
+
+/*
+ * Без лимита таймера нет: пустой таймер читался бы как «время кончилось».
+ */
+$plainWorkId = (int) $db->insert('assignments', [
+    'title' => 'Работа без таймера',
+    'author_id' => $teacherId,
+    'status' => 'published',
+    'time_limit' => null,
+    'created_at' => date('Y-m-d H:i:s'),
+    'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$plainItemId = (int) $db->insert('assignment_items', [
+    'assignment_id' => $plainWorkId,
+    'position' => 1,
+    'variant' => 1,
+    'plugin_id' => 'test',
+    'task_kind' => 'single_choice',
+    'task_id' => $timerTaskId,
+    'weight' => 1.0,
+    'max_score' => 1.0,
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$plainIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id' => $plainWorkId,
+    'author_id' => $teacherId,
+    'available_from' => date('Y-m-d H:i:s'),
+    'available_until' => date('Y-m-d H:i:s', strtotime('+1 day')),
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('assignment_issue_students', [
+    'issue_id' => $plainIssueId,
+    'student_id' => $studentId,
+    'class_id' => $classId,
+    'assigned_at' => date('Y-m-d H:i:s'),
+]);
+
+$plainStartPage = $student->get('/work/' . $plainWorkId);
+$plainStart = $student->post('/work/' . $plainWorkId . '/start', [
+    '_token' => $student->tokenFrom($plainStartPage) ?? '',
+]);
+$plainMatch = preg_match(
+    '#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#',
+    (string) ($plainStart['location'] ?? ''),
+    $plainParts
+);
+
+if ($plainMatch === 1) {
+    $plainPage = $student->get('/work/' . $plainParts[1] . '/item/' . $plainParts[2] . '?t=' . $plainParts[3]);
+
+    $t->notContains($plainPage['body'], 'id="timer-value"', 'без лимита времени таймера нет');
+}
+
+$t->group('Перемешивание заданий для ученика');
+
+/*
+ * Порядок заданий у ученика — либо тот, что в редакторе, либо случайный.
+ *
+ * Случайный порядок закреплён за попыткой: задания не переставляются при
+ * переходе туда-обратно, но у разных учеников он разный. Проверяется ровно
+ * это, а не «порядок изменился»: случайный порядок в редких случаях совпадает
+ * с исходным, и проверка на разницу была бы проверкой на удачу.
+ */
+$shuffleWorkId = (int) $db->insert('assignments', [
+    'title' => 'Работа с перемешиванием',
+    'author_id' => $teacherId,
+    'status' => 'published',
+    'shuffle_items' => 1,
+    'created_at' => date('Y-m-d H:i:s'),
+    'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$shufflePositions = [];
+
+for ($n = 1; $n <= 6; $n++) {
+    /*
+     * Задание берётся готовое, с вопросами: у задания без вопросов плагин
+     * рисует другую страницу, и нумерация на ней не проверяется.
+     */
+    $shuffleTaskId = $transferTestId;
+
+    $shufflePositions[] = (int) $db->insert('assignment_items', [
+        'assignment_id' => $shuffleWorkId,
+        'position' => $n,
+        'variant' => 1,
+        'plugin_id' => 'test',
+        'task_kind' => 'single_choice',
+        'task_id' => $shuffleTaskId,
+        'weight' => 1.0,
+        'max_score' => 1.0,
+        'created_at' => date('Y-m-d H:i:s'),
+    ]);
+}
+
+$shuffleIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id' => $shuffleWorkId,
+    'author_id' => $teacherId,
+    'available_from' => date('Y-m-d H:i:s'),
+    'available_until' => date('Y-m-d H:i:s', strtotime('+1 day')),
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('assignment_issue_students', [
+    'issue_id' => $shuffleIssueId,
+    'student_id' => $studentId,
+    'class_id' => $classId,
+    'assigned_at' => date('Y-m-d H:i:s'),
+]);
+
+$shuffleStartPage = $student->get('/work/' . $shuffleWorkId);
+$shuffleStart = $student->post('/work/' . $shuffleWorkId . '/start', [
+    '_token' => $student->tokenFrom($shuffleStartPage) ?? '',
+]);
+
+$t->is($shuffleStart['status'] === 302, 'попытка работы с перемешиванием начата');
+
+$shuffleMatch = preg_match(
+    '#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#',
+    (string) ($shuffleStart['location'] ?? ''),
+    $shuffleParts
+);
+
+$t->is($shuffleMatch === 1, 'адрес первого задания получен');
+
+if ($shuffleMatch === 1) {
+    $shuffleAttemptId = (int) $shuffleParts[1];
+    $shuffleToken = (string) $shuffleParts[3];
+
+    $shufflePage = $student->get('/work/' . $shuffleAttemptId . '/item/' . $shuffleParts[2] . '?t=' . $shuffleToken);
+
+    $t->contains($shufflePage['body'], 'Задание 1 из 6',
+        'нумерация у ученика сплошная, а не с номера позиции в редакторе');
+
+    /*
+     * Порядок ученика — перестановка позиций редактора, и она устойчива:
+     * второй раз то же самое.
+     */
+    $first = $rowsRepo->positionOrder($shuffleWorkId, $shuffleAttemptId);
+    $second = $rowsRepo->positionOrder($shuffleWorkId, $shuffleAttemptId);
+
+    $t->equals($first, $second, 'порядок не меняется от запроса к запросу');
+
+    $sorted = $first;
+    sort($sorted);
+
+    $t->equals([1, 2, 3, 4, 5, 6], $sorted, 'порядок ученика — перестановка всех позиций');
+
+    /*
+     * Хотя бы одна из двадцати попыток обязана отличаться от порядка
+     * редактора: шесть позиций, совпадение — одна из 720 перестановок.
+     */
+    $different = false;
+
+    for ($n = 1; $n <= 20 && !$different; $n++) {
+        $order = $rowsRepo->positionOrder($shuffleWorkId, 100000 + $n);
+
+        if ($order !== [1, 2, 3, 4, 5, 6]) {
+            $different = true;
+        }
+    }
+
+    $t->is($different, 'у разных попыток порядок разный');
+}
+
+/*
+ * Без перемешивания порядок тот же, что в редакторе.
+ */
+$plainOrderWorkId = (int) $db->insert('assignments', [
+    'title' => 'Работа без перемешивания',
+    'author_id' => $teacherId,
+    'status' => 'published',
+    'shuffle_items' => 0,
+    'created_at' => date('Y-m-d H:i:s'),
+    'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+foreach ([1, 2, 3] as $n) {
+    $db->insert('assignment_items', [
+        'assignment_id' => $plainOrderWorkId,
+        'position' => $n,
+        'variant' => 1,
+        'plugin_id' => 'test',
+        'task_kind' => 'single_choice',
+        'task_id' => $transferTestId,
+        'weight' => 1.0,
+        'max_score' => 1.0,
+        'created_at' => date('Y-m-d H:i:s'),
+    ]);
+}
+
+$t->equals(
+    [1, 2, 3],
+    $rowsRepo->positionOrder($plainOrderWorkId, 555),
+    'без перемешивания порядок как в редакторе'
+);
+
+$t->group('Запрет копирования текста задания');
+
+/*
+ * Настройка включается учителем и работает на странице прохождения.
+ *
+ * Проверяется и сам скрипт, и то, что решение принимает учитель: без
+ * запрета страница не тянет скрипт вовсе, а с запретом — тянет.
+ */
+/*
+ * Запрет копирования включается учителем и работает на странице прохождения.
+ *
+ * Проверяется и сам скрипт, и то, что решение принимает учитель: без
+ * запрета страница не тянет скрипт вовсе, а с запретом — тянет.
+ */
+$noCopyWorkId = (int) $db->insert('assignments', [
+    'title' => 'Работа с запретом копирования',
+    'author_id' => $teacherId,
+    'status' => 'published',
+    'no_copy' => 1,
+    'created_at' => date('Y-m-d H:i:s'),
+    'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$noCopyItemId = (int) $db->insert('assignment_items', [
+    'assignment_id' => $noCopyWorkId,
+    'position' => 1,
+    'variant' => 1,
+    'plugin_id' => 'test',
+    'task_kind' => 'single_choice',
+    'task_id' => $transferTestId,
+    'weight' => 1.0,
+    'max_score' => 1.0,
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$noCopyIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id' => $noCopyWorkId,
+    'author_id' => $teacherId,
+    'available_from' => date('Y-m-d H:i:s'),
+    'available_until' => date('Y-m-d H:i:s', strtotime('+1 day')),
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$db->insert('assignment_issue_students', [
+    'issue_id' => $noCopyIssueId,
+    'student_id' => $studentId,
+    'class_id' => $classId,
+    'assigned_at' => date('Y-m-d H:i:s'),
+]);
+
+$noCopyStartPage = $student->get('/work/' . $noCopyWorkId);
+$noCopyStart = $student->post('/work/' . $noCopyWorkId . '/start', [
+    '_token' => $student->tokenFrom($noCopyStartPage) ?? '',
+]);
+
+$noCopyMatch = preg_match(
+    '#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#',
+    (string) ($noCopyStart['location'] ?? ''),
+    $noCopyParts
+);
+
+$t->is($noCopyMatch === 1, 'попытка работы с запретом копирования начата');
+
+if ($noCopyMatch === 1) {
+    $noCopyPage = $student->get('/work/' . $noCopyParts[1] . '/item/' . $noCopyParts[2] . '?t=' . $noCopyParts[3]);
+
+    $t->contains($noCopyPage['body'], 'assets/js/no-copy.js',
+        'на странице прохождения подключён скрипт запрета копирования');
+
+    $t->contains($noCopyPage['body'], 'attempt--no-copy',
+        'форма помечена запретом — без этого выделение оставалось бы возможным');
+
+    $t->contains(
+        (string) @file_get_contents($rootDir . '/public/assets/js/no-copy.js'),
+        "event.preventDefault()",
+        'скрипт запрещает выделение и копирование'
+    );
+}
+
+/*
+ * Без запрета скрипт не подключается: иначе работа, выданная обычным образом,
+ * вдруг запретила бы копировать ответ.
+ */
+$freeCopyPage = $student->get('/work/' . $shuffleWorkId . '/item/' . $shuffleParts[2] . '?t=' . $shuffleParts[3]);
+
+$t->notContains($freeCopyPage['body'], 'assets/js/no-copy.js',
+    'без запрета скрипт не подключается');
+
+/*
+ * Настройка сохраняется и читается обратно.
+ *
+ * Форма редактора общая на все вкладки, и переключатель приходит вместе с
+ * прочими полями. Если бы его значение не доезжало до базы, страница показала
+ * бы «Разрешено» при включённом запрете — и учитель считал бы, что работа
+ * защищена.
+ */
+$settingsPage = $teacher->get('/panel/assignments/' . $noCopyWorkId . '/edit/start');
+$settingsToken = $teacher->tokenFrom($settingsPage) ?? '';
+
+$t->contains($settingsPage['body'], 'name="no_copy"',
+    'в настройках работы есть переключатель запрета копирования');
+
+$teacher->post('/panel/assignments/' . $noCopyWorkId . '/edit/save', [
+    '_token'        => $settingsToken,
+    'no_copy'       => '1',
+    'shuffle_items' => '0',
+]);
+
+$t->equals(
+    1,
+    (int) $db->value('SELECT no_copy FROM assignments WHERE id = :id', ['id' => $noCopyWorkId]),
+    'запрет копирования сохранён'
+);
+
+$teacher->post('/panel/assignments/' . $noCopyWorkId . '/edit/save', [
+    '_token'        => $settingsToken,
+    'no_copy'       => '0',
+    'shuffle_items' => '0',
+]);
+
+$t->equals(
+    0,
+    (int) $db->value('SELECT no_copy FROM assignments WHERE id = :id', ['id' => $noCopyWorkId]),
+    'запрет копирования снят'
+);
+$t->group('Вопрос об уходе со страницы');
+
+/*
+ * При сохранении вопрос об уходе не задаётся.
+ *
+ * Отправка формы и есть сохранение: спрашивать после нажатия «Сохранить», не
+ * потеряются ли данные, нелепо. Вопрос и появлялся — причём «иногда»: модуль
+ * черновиков подключался к странице позже скрипта доски и потому вставал на
+ * место только после первого открытия задания.
+ */
+$draftJs = (string) @file_get_contents($rootDir . '/public/assets/js/task-draft.js');
+$itemsPane = (string) @file_get_contents($rootDir . '/templates/panel/_assignment_items_pane.php');
+
+$t->contains(
+    $draftJs,
+    "document.addEventListener('submit', function () {",
+    'отправка формы отмечается, и вопрос об уходе после неё не задаётся'
+);
+
+$t->contains(
+    $draftJs,
+    'if (submitting) {',
+    'вопрос об уходе пропускается, пока идёт отправка'
+);
+
+$t->contains(
+    $draftJs,
+    '[data-modal]:not([hidden]) [data-editor-for][data-draft-state]',
+    'вопрос задаётся только по открытому редактору, а не по любому черновику'
+);
+
+$t->is(
+    strpos($itemsPane, 'task-draft.js') < strpos($itemsPane, 'assignment-items.js'),
+    'модуль черновиков подключается раньше скрипта доски — иначе он встаёт на место поздно'
+);
+
+$t->group('Редактор задания: вкладки и настройки');
+
+/*
+ * Скрипт вкладок подключается вместе с остальными скриптами редактора.
+ *
+ * Форма плагина попадает в модальное окно и через innerHTML, а такие скрипты
+ * браузер не выполняет: вкладки просто не переключались. Скрипт внутри формы
+ * работает только при полной перезагрузке страницы, а окно открывают как раз
+ * по данным.
+ */
+$uiSource = (string) @file_get_contents($rootDir . '/src/Ui/Ui.php');
+$tabsPartial = (string) @file_get_contents($rootDir . '/templates/panel/_task_editor_tabs.php');
+
+$t->contains(
+    $uiSource,
+    "assets/js/task-editor-tabs.js",
+    'скрипт вкладок подключается вместе со скриптами редактора'
+);
+
+$t->notContains(
+    $tabsPartial,
+    'task-editor-tabs.js',
+    'в разметке вкладок скрипта нет — его вставка не выполнилась бы'
+);
+
+/*
+ * Шапка и строка списка работ — одна и та же сетка.
+ *
+ * Последняя колонка в шапке пустая, а в строке там кнопки. При ширине «по
+ * содержимому» пустая ячейка схлопывалась в ноль, первую колонку забирала
+ * разница, и все подписи шапки уезжали вправо на ширину кнопок.
+ */
+$appCss = (string) @file_get_contents($rootDir . '/public/assets/css/app.css');
+
+$t->contains(
+    $appCss,
+    'grid-template-columns: minmax(0, 1fr) 110px 70px 96px 96px 110px 190px;',
+    'колонка действий в списке работ задана шириной, а не по содержимому'
+);
+
+/*
+ * В модальном окне редактора — две вкладки: «Задание» с полями вопроса и
+ * «Настройки» с тем, что к вопросу отношения не имеет.
+ *
+ * Раньше «Ответ обязателен» и «Пояснение после проверки» стояли в общей форме
+ * рядом с текстом вопроса, и терялись среди полей: человек правил вопрос и не
+ * видел, что ответ можно не давать.
+ */
+$tabsPage = $openTaskEditor($teacher, $wizardId, $wizardTaskId);
+
+$t->contains($tabsPage['body'], 'data-task-pane-tab="task"',
+    'в редакторе есть вкладка «Задание»');
+
+$t->contains($tabsPage['body'], 'data-task-pane-tab="settings"',
+    'в редакторе есть вкладка «Настройки»');
+
+$t->contains($tabsPage['body'], 'data-task-pane="settings"',
+    'есть панель настроек');
+
+$t->contains($tabsPage['body'], 'name="is_required"',
+    'в настройках есть переключатель «Ответ обязателен»');
+
+$t->contains($tabsPage['body'], 'name="explanation"',
+    'в настройках есть поле «Пояснение после проверки»');
+
+$t->contains($tabsPage['body'], 'name="shuffle_options"',
+    'в настройках есть переключатель «Перемешать варианты ответа»');
+
+/*
+ * Перемешивание вариантов — только там, где варианты есть.
+ *
+ * У текстового ответа вариантов нет, и галочка была бы обещанием, которое
+ * нельзя выполнить.
+ */
+$textTaskId = (int) $db->insert('tests', [
+    'subject_id' => null, 'author_id' => $sharedAuthor, 'class_id' => null,
+    'title' => 'Текстовое без вариантов', 'description' => '', 'time_limit_min' => 0,
+    'shuffle_questions' => 0, 'shuffle_options' => 0, 'max_attempts' => 0,
+    'show_results' => 1, 'status' => 'draft',
+    'created_at' => date('Y-m-d H:i:s'), 'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$textQuestionId = (int) $db->insert('questions', [
+    'test_id' => $textTaskId,
+    'type' => 'text',
+    'prompt' => 'Текстовый вопрос',
+    'position' => 1,
+    'weight' => 1.0,
+    'is_required' => 1,
+]);
+
+$textItemId = (int) $db->insert('assignment_items', [
+    'assignment_id' => $wizardId,
+    'position' => 90,
+    'variant' => 1,
+    'plugin_id' => 'test',
+    'task_kind' => 'text',
+    'task_id' => $textTaskId,
+    'weight' => 1.0,
+    'max_score' => 1.0,
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$textPage = $openTaskEditor($teacher, $wizardId, $textTaskId);
+
+$t->notContains($textPage['body'], 'name="shuffle_options"',
+    'у вопроса без вариантов переключателя перемешивания нет');
+
+$t->contains($textPage['body'], 'data-task-pane-tab="settings"',
+    'вкладка «Настройки» есть и у вопроса без вариантов');
+
+/*
+ * Окно редактора — шире на треть.
+ *
+ * Базовое окно 480 пикселей, в редакторе задания полей больше, и в узком окне
+ * они вставали в несколько колонок, между которыми нельзя было прочитать ни
+ * одну подпись.
+ */
+$appCss = (string) @file_get_contents($rootDir . '/public/assets/css/app.css');
+
+$t->contains(
+    $appCss,
+    '.modal-dialog--task { max-width: 624px; }',
+    'окно редактора шире базового на 30 процентов'
+);
+
+$t->contains(
+    $tabsPage['body'],
+    'modal-dialog--task',
+    'окну редактора задания назначен свой размер'
+);
+
+/*
+ * В окно редактора не должна попасть оболочка сайта.
+ *
+ * `View::render()` по умолчанию оборачивает содержимое в оболочку приложения,
+ * и это удобно ровно до тех пор, пока рисуют страницу. Фрагмент, который
+ * кладют в модальное окно, должен быть голым: с оболочкой окно показывало
+ * дубликат всего сайта — с боковым меню, шапкой и подвалом.
+ *
+ * Ошибка выглядела безобидно: страница отдавалась, проверки на вкладки
+ * проходили, а человек видел вместо редактора задания копию панели.
+ */
+$editorFragment = $teacher->getAjax($itemsBoard . '/editor?task=' . $cancelTaskId);
+$fragmentHtml = (string) ($editorFragment['json']['html'] ?? '');
+
+$t->is($editorFragment['status'] === 200, 'фрагмент редактора отдаётся данными');
+
+$t->notContains(
+    $fragmentHtml,
+    'Система контроля знаний',
+    'в окно редактора не попала оболочка сайта'
+);
+
+$t->contains($fragmentHtml, 'data-task-pane-tab',
+    'в окне редактора есть вкладки');
+
+/*
+ * То же на доске, где окно открыто по адресу.
+ *
+ * Это тот самый вид, который увидел человек: доска работ с открытым
+ * редактором задания поверх. Оболочка сайта в нём быть не должна ни разу —
+ * окно показывает форму, а не копию панели.
+ */
+$boardWithEditor = $teacher->get($itemsBoard . '?edit=' . $cancelTaskId);
+$boardBody = (string) ($boardWithEditor['body'] ?? '');
+$boardPlain = $teacher->get($itemsBoard);
+$boardPlainBody = (string) ($boardPlain['body'] ?? '');
+
+/*
+ * Считается не «сколько раз встретилось название», а сколько раз оно
+ * добавилось: в панельной оболочке название идёт дважды — в заголовке и в
+ * боковом меню, — и само по себе это ничего не значит. Значит сравниваем
+ * доску без открытого редактора и с ним: открытое окно не должно добавлять
+ * оболочку.
+ */
+$t->equals(
+    substr_count($boardPlainBody, 'Система контроля знаний'),
+    substr_count($boardBody, 'Система контроля знаний'),
+    'открытый редактор не добавил к доске оболочку сайта'
+);
+
+$t->contains($boardBody, 'data-task-pane-tab',
+    'в открытом окне редактора есть вкладки');
+
+/*
+ * То же — на странице прохождения. Там оболочка есть и должна быть: это
+ * полноценная страница. Но она должна быть ОДНА: таймер и запрет копирования
+ * подключаются ядром, и оболочка внутри оболочки выглядела бы как страница
+ * внутри страницы.
+ */
+$studentPage = $student->get('/work/' . $shuffleAttemptId . '/item/' . $shuffleParts[2] . '?t=' . $shuffleToken);
+$studentBody = (string) ($studentPage['body'] ?? '');
+
+$t->equals(
+    1,
+    substr_count($studentBody, 'Система контроля знаний'),
+    'на странице прохождения оболочка сайта одна, а не вложенная в саму себя'
+);
+
+/*
+ * Настройка перемешивания сохраняется и действует.
+ *
+ * Галочка пишется в задание целиком, а не в вопрос: варианты переставляются
+ * в одном задании, и настройка принадлежит ему.
+ */
+$shuffleEditor = $openTaskEditor($teacher, $wizardId, $wizardTaskId);
+$shuffleToken = $teacher->tokenFrom($shuffleEditor) ?? '';
+
+$shuffleQuestionId = (int) ($db->value(
+    'SELECT id FROM questions WHERE test_id = :id ORDER BY position LIMIT 1',
+    ['id' => $wizardTaskId]
+) ?? 0);
+
+/*
+ * Форма отправляется целиком: у вопроса с вариантами сервер ждёт сами
+ * варианты и отмеченный правильный, и без них правка не сохранится — а
+ * вместе с ней и настройка.
+ */
+$shuffleSave = $teacher->postAjax('/tests/task/' . $wizardTaskId, [
+    '_token'          => $shuffleToken,
+    'back'            => 'panel/assignments/' . $wizardId . '/edit/items?edit=' . $wizardTaskId,
+    'question_id'     => (string) $shuffleQuestionId,
+    'type'            => 'single_choice',
+    'title'           => 'Вопрос с перемешиванием',
+    'prompt'          => 'Какой газ растение поглощает при фотосинтезе?',
+    'weight'          => '1',
+    'is_required'     => '1',
+    'explanation'     => 'Углекислый газ.',
+    'shuffle_options' => '1',
+    'correct_single'  => 'a',
+    ['option_text[]', 'Углекислый газ'],
+    ['option_text[]', 'Кислород'],
+    ['option_text[]', 'Азот'],
+]);
+
+$t->is(
+    $shuffleSave['status'] === 200,
+    'форма с настройками сохранена'
+        . ' [статус ' . $shuffleSave['status']
+        . ', сообщение: ' . (string) ($shuffleSave['json']['message'] ?? '') . ']'
+);
+
+$t->equals(
+    1,
+    (int) $db->value('SELECT shuffle_options FROM tests WHERE id = :id', ['id' => $wizardTaskId]),
+    'перемешивание вариантов сохранено'
+);
+
+$t->group('Редактор задания не открывается сам');
+
+/*
+ * Окно редактора не должно вылезать само.
+ *
+ * На странице редактора работы окон два: окно препятствий публикации стоит
+ * выше по разметке, окно редактора задания — ниже. Наблюдатель за закрытием
+ * брал первое окно на странице, то есть чужое: закрытие редактора не
+ * замечалось, `?edit=` оставался в адресе, и перезагрузка снова открывала
+ * редактор, который человек только что закрыл. Выглядело это как «окно
+ * открылось само».
+ */
+$itemsJs = (string) @file_get_contents($rootDir . '/public/assets/js/assignment-items.js');
+$tabsJs = (string) @file_get_contents($rootDir . '/public/assets/js/work-tabs.js');
+
+$t->contains(
+    $itemsJs,
+    "document.querySelector('[data-editor-shell]')",
+    'за закрытием редактора следит именно окно редактора, а не первое окно страницы'
+);
+
+$t->contains(
+    $tabsJs,
+    "url.searchParams.delete('edit')",
+    'переход между вкладками убирает из адреса открытое задание'
+);
 
 exit($t->report());

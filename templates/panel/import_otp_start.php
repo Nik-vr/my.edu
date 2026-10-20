@@ -3,7 +3,11 @@
 declare(strict_types=1);
 
 /**
- * Импорт из OnlineTestPad: приложить файл.
+ * Импорт из OnlineTestPad: приложить файл, посмотреть разбор, создать работу.
+ *
+ * Всё это — одна страница. Пока файла нет, страница спрашивает файл; после
+ * разбора она показывает разбор и форму создания работы на том же адресе.
+ * Решение владельца: финальный шаг должен быть на той же самой странице.
  *
  * На странице ничего не разбирается и не записывается. Человек сначала видит,
  * какой файл нужен и что с ним будет, и только потом его ищет — иначе поиск
@@ -11,7 +15,10 @@ declare(strict_types=1);
  *
  * @var \MyEdu\Core\View $view
  * @var int $maxUpload
+ * @var array<string,mixed>|null $parsed разобранный тест, если он уже есть
  */
+
+$parsed = is_array($parsed ?? null) ? $parsed : null;
 
 $view->crumbs([
     ['label' => 'Работы', 'url' => 'panel/assignments'],
@@ -27,6 +34,7 @@ $transferTab = 'otp';
 
 <?php require __DIR__ . '/_transfer_tabs.php'; ?>
 
+<?php if ($parsed === null): ?>
 <?php /*
 Описание процесса — одним блоком.
 
@@ -77,3 +85,7 @@ $transferTab = 'otp';
  <button type="submit" class="btn btn-primary">Посмотреть, что перенесётся</button>
  </form>
 </div>
+<?php else: ?>
+<?php /* Разбор и создание работы — на том же адресе, на котором приложен файл. */ ?>
+<?php require __DIR__ . '/_import_otp_parsed.php'; ?>
+<?php endif; ?>

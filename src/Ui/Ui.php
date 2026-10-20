@@ -334,10 +334,24 @@ final class Ui
 
     public function editorScripts(): string
     {
+        /*
+         * Скрипт вкладок редактора — здесь, а не в разметке формы.
+         *
+         * Форма плагина попадает в модальное окно двумя путями: целиком при
+         * перезагрузке страницы и по данным, когда окно открывает скрипт. Во
+         * втором случае разметка вставляется через innerHTML, а такие скрипты
+         * браузер не выполняет: вкладки просто не переключались.
+         *
+         * Здесь скрипт подключается один раз на страницу, и потому работает
+         * при любом способе открытия окна.
+         */
         return sprintf(
-            '<script src="%s"></script>' . "\n" . '<script src="%s" defer></script>',
+            '<script src="%s"></script>' . "\n"
+            . '<script src="%s" defer></script>' . "\n"
+            . '<script src="%s" defer></script>',
             $this->e($this->view->asset('assets/vendor/quill/quill.js')),
-            $this->e($this->view->asset('assets/js/editor.js'))
+            $this->e($this->view->asset('assets/js/editor.js')),
+            $this->e($this->view->asset('assets/js/task-editor-tabs.js'))
         );
     }
 

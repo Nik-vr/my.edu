@@ -31,6 +31,7 @@ use MyEduPlugin\Variable\Number;
  * @var string $attemptUrl
  * @var string $nextUrl
  * @var bool $isLast
+ * @var int|null $remaining сколько секунд осталось на попытку
  */
 $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($value, 1, ',', ''), '0'), ',');
 ?>
@@ -42,11 +43,21 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
  </p>
 </div>
 
+<?php /*
+ Таймер рисует ядро: остаток времени считает оно, а плагин его только
+ показывает. Без лимита таймера нет вовсе.
+ */ ?>
+<?= $view->raw($view->render('work/_timer', ['remaining' => $remaining ?? null], '')) ?>
+
+<?php /* Запрет копирования подключается ядром: решение принимает учитель. */ ?>
+<?= $view->raw($view->render('work/_no_copy', ['noCopy' => !empty($noCopy)], '')) ?>
+
 <form
  id="attempt-form"
  method="post"
  action="<?= $view->e($view->url(sprintf('work/%d/item/%d', $attemptId, $itemId))) ?>"
-class="attempt"
+ class="attempt<?= !empty($noCopy) ? ' attempt--no-copy' : '' ?>"
+ data-remaining="<?= $view->e((string) ($remaining ?? 0)) ?>"
  novalidate><?php /*
  id обязателен: attempt.js начинает работу с поиска #attempt-form и без
  него выходит сразу. Без него страница выглядела бы исправной, просто не

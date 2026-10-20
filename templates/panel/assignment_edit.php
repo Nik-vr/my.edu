@@ -72,37 +72,185 @@ $view->crumbs([
     ]);
 ?>
 
-<h1 class="page-title"><?= $view->e($assignment['title']) ?>
+<?php
+/*
+ * Шапка редактора: название слева, действия справа.
+ *
+ * Так выглядит форма в шаблоне, на котором взят вид: заголовок и кнопки в одной
+ * строке, кнопки прижаты вправо. Раньше кнопка «Сохранить» стояла под вкладками,
+ * а внизу страницы была ещё и кнопка выдачи — человек искал их глазами по
+ * всей странице.
+ *
+ * Название правится прямо в заголовке, как имя ученика в списке класса: карандаш
+ * рядом с названием, поле и «Сохранить» вместо них. Отдельное поле «Название» в
+ * основном блоке убрано: одно и то же название в двух местах расходилось, и
+ * непонятно, какое из них главное.
+ */
+$workTitle = (string) ($assignment['title'] ?? '');
+$isEditingTitle = !empty($editTitle);
+$issued = !empty($issued);
+$blockers = is_array($blockers ?? null) ? $blockers : [];
+$isPublished = in_array((string) $status, ['published', 'archived'], true);
+$publishUrl = 'panel/assignments/' . $assignmentId . '/status';
+$editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
+?>
 
-</h1>
+<div class="work-editor-head">
+  <div class="work-editor-head__title">
+  <?php if ($isEditingTitle): ?>
+  <form method="post" class="inline-form" data-inline-form
+    action="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/edit/save')) ?>">
+  <?= $view->raw($view->csrfField()) ?>
+  <input type="hidden" name="title_only" value="1">
+  <input type="text" name="title" required maxlength="191" autocomplete="off"
+    value="<?= $view->e($workTitle) ?>"
+    aria-label="Название работы" autofocus>
+  <button type="submit" class="icon-btn icon-btn--save" title="Сохранить название">
+  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+  stroke-width="1.6" aria-hidden="true">
+  <path d="M4 4h9l3 3v9H4z"/>
+  <path d="M7 4v4h6V4"/>
+  <path d="M7 16v-4h6v4"/>
+  </svg>
+  <span class="visually-hidden">Сохранить название</span>
+  </button>
+  <a class="icon-btn" title="Отменить"
+  href="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/edit')) ?>">
+  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+  stroke-width="1.6" aria-hidden="true">
+  <path d="M6 6l8 8M14 6l-8 8"/>
+  </svg>
+  <span class="visually-hidden">Отменить</span>
+  </a>
+  </form>
+  <?php else: ?>
+  <h1 class="page-title work-editor-head__name">
+  <?php if ($issued): ?>
+  <?php /*
+   * Значок вместо баннера.
+   *
+   * Баннер занимал всю ширину и повторялся на каждой вкладке, хотя значил
+   * одно: работа уже у учеников, и правки состава и шкалы до них не дойдут.
+   * Значок рядом с названием говорит то же, но не мешает работать, а текст
+   * виден по наведению.
+   *
+   * Показывается только выданной хоть раз работе: невыданную работу правка
+   * не задевает никого, и предупреждение было бы шумом.
+   */ ?>
+  <span class="work-editor-warn" tabindex="0"
+  title="Работа опубликована и доступна ученикам. Изменение состава заданий и шкалы оценок не попадёт к тем, кто уже начал её проходить, — у них итог посчитается по тому, что было на момент старта.">
+  <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+  <path d="M10 2 19 18H1zM9 7h2v6H9zm0 8h2v2H9z"/>
+  </svg>
+  <span class="visually-hidden">Работа уже выдана ученикам: изменения не дойдут до тех, кто её проходит</span>
+  </span>
+  <?php endif; ?>
+  <?= $view->e($workTitle) ?>
+  <a class="icon-btn" href="<?= $view->e($view->url($editTitleUrl)) ?>"
+  title="Изменить название" aria-label="Изменить название работы">
+  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+  stroke-width="1.6" aria-hidden="true">
+  <path d="M13.5 3.5 16.5 6.5 7 16H4v-3z"/>
+  <path d="M12 5l3 3"/>
+  </svg>
+  </a>
+  </h1>
+  <?php endif; ?>
+  </div>
 
-<?php if ($isPublished): ?>
-<?= $view->raw($view->bannerInfo(
-    'Работа опубликована' . (($assignment['published_at'] ?? '') !== ''
-        ? ' ' . (string) $assignment['published_at']
-        : '') . ' и доступна ученикам. Изменение состава заданий и шкалы оценок '
-    . 'не попадёт к тем, кто уже начал её проходить, — у них итог посчитается '
-    . 'по тому, что было на момент старта.'
-)) ?>
-<?php endif; ?>
+    <div class="work-editor-head__actions">
+    <?php /*
+     * «Пройти работу» — в шапке редактора.
+     *
+     * Раньше кнопка жила на отдельной странице работы, а та страница уехала
+     * последней вкладкой сюда. Кнопку убрать было нельзя: автор после правки
+     * задания прогоняет работу на себе, и делает это именно из редактора, где
+     * он правит. Черновик проходить незачем — его не видно ученикам.
+     */
+    ?>
+    <?php if ($isPublished): ?>
+    <a class="btn"
+      href="<?= $view->e($view->url('work/' . $assignmentId)) ?>">
+    Пройти работу
+    </a>
+    <?php endif; ?>
+    <?php /*
+   * Подсказка про кнопку — на самой кнопке.
+   *
+   * Отдельной строкой рядом с кнопкой она занимала место в шапке и читалась
+   * как ещё один текст страницы. На кнопке она там, где её ищут: человек
+   * наводит на «Сохранить», когда не понимает, что кнопка сохраняет.
+   */ ?>
+  <form method="post" class="work-editor-head__publish"
+  action="<?= $view->e($view->url($publishUrl)) ?>">
+  <?= $view->raw($view->csrfField()) ?>
+  <input type="hidden" name="action" value="publish" data-publish-action>
+  <input type="hidden" name="return_to" value="panel/assignments/<?= $assignmentId ?>/edit">
+  <label class="switch" title="Опубликована ли работа">
+  <input type="checkbox" data-publish-toggle
+  <?= $isPublished ? 'checked' : '' ?>
+  <?= $blockers !== [] ? 'data-publish-blocked="1"' : '' ?>
+  aria-label="Опубликовать работу">
+  <span class="track"></span>
+  </label>
+  <span class="work-editor-head__publish-label">Опубликовать</span>
+  </form>
+
+  <noscript>
+  <form method="post" action="<?= $view->e($view->url($publishUrl)) ?>">
+  <?= $view->raw($view->csrfField()) ?>
+  <input type="hidden" name="action" value="<?= $isPublished ? 'draft' : 'publish' ?>">
+  <input type="hidden" name="return_to" value="panel/assignments/<?= $assignmentId ?>/edit">
+  <button type="submit" class="btn btn-sm"><?= $isPublished ? 'Снять с публикации' : 'Опубликовать' ?></button>
+  </form>
+  </noscript>
+
+  <button type="submit" class="btn btn-primary" form="work-editor-form"
+  title="Правки на вкладках «Настройки работы» и «Результат» сохраняются этой кнопкой. Задания сохраняются на доске — у каждого своя кнопка.">
+  Сохранить
+  </button>
+  </div>
+</div>
+
+<?php /*
+ * Окно с препятствиями публикации.
+ *
+ * Переключатель «Опубликовать» при включении может упереться в неготовую работу:
+ * без заданий или без шкалы оценок публиковать нельзя, и сервер откажет. Человек
+ * должен увидеть, чего именно не хватает, а не пустой отказ.
+ *
+ * Окно открывает скрипт: он же не даёт переключателю включиться, пока
+ * препятствия на месте, — иначе форма ушла бы и сервер ответил бы отказом
+ * без объяснения.
+ */
+?>
+<div class="modal" data-modal id="publish-blockers" role="dialog" aria-modal="true"
+  aria-labelledby="publish-blockers-title"
+  <?= !empty($publishBlocked) ? 'data-open-on-load' : '' ?>>
+  <div class="modal-dialog">
+  <div class="modal-header">
+  <h3 class="modal-title" id="publish-blockers-title">Опубликовать пока нельзя</h3>
+  <button type="button" class="modal-close" data-modal-close aria-label="Закрыть">
+  <span aria-hidden="true">&times;</span>
+  </button>
+  </div>
+  <div class="modal-body">
+  <p>Перечислено всё, чего не хватает. Пока это не сделано, работа остаётся
+  черновиком и ученикам не видна.</p>
+  <ul>
+  <?php foreach ($blockers as $blocker): ?>
+  <li><?= $view->e($blocker) ?></li>
+  <?php endforeach; ?>
+  </ul>
+  </div>
+  <div class="modal-footer">
+  <button type="button" class="btn btn-outline" data-modal-close>Закрыть</button>
+  </div>
+  </div>
+</div>
 
 <?php require __DIR__ . '/_work_editor_tabs.php'; ?>
 
-<?php /*
- * Сохранить — одна кнопка на всю страницу, справа сверху от вкладок.
- *
- * Стоит над вкладками, а не внизу каждой из них: под вкладкой её нет, и
- * кнопка на месте независимо от того, какая вкладка открыта. Заданий это не
- * касается — у каждой позиции своя кнопка, и они остаются на доске.
- */
- ?>
-<div class="work-tabs__actions">
- <span class="form-help">
- Правки на вкладках «Начальная страница» и «Результат» сохраняются этой кнопкой.
- Задания сохраняются на доске — у каждого своя кнопка.
- </span>
- <button type="submit" class="btn btn-primary" form="work-editor-form">Сохранить</button>
-</div>
 
 <?php /*
  * Общая форма на две вкладки с полями.
@@ -127,21 +275,28 @@ $view->crumbs([
 </section>
 </form>
 
-<section class="work-tabs__pane<?= $workTab === 'items' ? ' active' : '' ?>"
- id="work-pane-items" role="tabpanel" aria-labelledby="work-tab-items">
-<?php require __DIR__ . '/_assignment_items_pane.php'; ?>
-</section>
+ <section class="work-tabs__pane<?= $workTab === 'items' ? ' active' : '' ?>"
+  id="work-pane-items" role="tabpanel" aria-labelledby="work-tab-items">
+ <?php require __DIR__ . '/_assignment_items_pane.php'; ?>
+ </section>
 
-<section class="work-tabs__pane<?= $workTab === 'publish' ? ' active' : '' ?>"
- id="work-pane-publish" role="tabpanel" aria-labelledby="work-tab-publish">
-<?php require __DIR__ . '/_assignment_publish_pane.php'; ?>
-</section>
+ <?php /*
+  Последняя вкладка: сведения о собранной работе.
+  Раньше они жили на отдельной странице работы, у которой были свои кнопки —
+  «Собрать по шагам», «Опубликовать», «Удалить». Всё это есть в редакторе, и
+  две страницы с одинаковыми кнопками требовали держать в голове, какая из них
+  сейчас открыта. Здесь кнопок нет: есть сведения.
+ */ ?>
+ <section class="work-tabs__pane<?= $workTab === 'about' ? ' active' : '' ?>"
+  id="work-pane-about" role="tabpanel" aria-labelledby="work-tab-about">
+ <?php require __DIR__ . '/_assignment_facts.php'; ?>
 
-<p class="wizard-page__nav">
+ <?php require __DIR__ . '/_assignment_issues_pane.php'; ?>
+ <?php require __DIR__ . '/_assignment_attempts_pane.php'; ?>
+ </section>
+
+ <p class="wizard-page__nav">
  <a class="btn btn-ghost" href="<?= $view->e($view->url('panel/assignments')) ?>">← К списку работ</a>
- <a class="btn btn-primary" href="<?= $view->e($view->url('panel/assignments/' . $assignmentId)) ?>">
- К работе целиком
- </a>
-</p>
+ </p>
 
 <script src="<?= $view->e($view->asset('assets/js/work-tabs.js')) ?>" defer></script>

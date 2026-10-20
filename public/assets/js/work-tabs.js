@@ -72,10 +72,23 @@
     pane.classList.add('active');
 
     if (typeof window.history === 'object' && window.history !== null && window.history.replaceState) {
-      var url = new URL(window.location.href);
+        var url = new URL(window.location.href);
 
-      url.searchParams.set('tab', key);
-      window.history.replaceState(window.history.state, '', url.toString());
+        url.searchParams.set('tab', key);
+
+        /*
+         * `edit` убирается вместе с переходом на другую вкладку.
+         *
+         * Адрес редактора задания живёт в `?edit=`, и по нему окно открывается
+         * при загрузке страницы. Переключение вкладки окно закрывает, а адрес
+         * с `edit` остался бы: вернувшись на вкладку «Задания» и обновив
+         * страницу, человек получал бы открытый редактор задания, который он
+         * уже закрыл. Без скриптов то же самое делает сама ссылка вкладки —
+         * в её адресе `edit` нет.
+         */
+        url.searchParams.delete('edit');
+
+        window.history.replaceState(window.history.state, '', url.toString());
     }
 
     if (focus === true) {
@@ -149,4 +162,52 @@
     event.preventDefault();
     select(tabs[next].getAttribute('data-work-tab'), true);
   });
+})();
+/*
+ * Переключатель «Опубликовать» в шапке редактора.
+ *
+ * Работа опубликована — переключатель включён, черновик — выключен. Включить
+ * не всегда можно: без заданий или без шкалы оценок публикация не пройдёт, и
+ * человек должен увидеть, чего именно не хватает, а не пустой отказ сервера.
+ *
+ * Поэтому при включении сначала смотрим, есть ли препятствия: если есть —
+ * переключатель возвращается в прежнее положение и открывается окно со
+ * списком. Если нет — форма уходит сама, и работа публикуется.
+ *
+ * Отдельным модулем, а не в общем с вкладками: вкладки на странице есть всегда,
+ * а переключатель — только в редакторе работы, и связывать их незачем.
+ */
+(function () {
+    'use strict';
+
+    var toggle = document.querySelector('[data-publish-toggle]');
+
+    if (!toggle) {
+        return;
+    }
+
+    var form = toggle.closest('form');
+    var action = form ? form.querySelector('[data-publish-action]') : null;
+
+    toggle.addEventListener('change', function () {
+        if (toggle.checked && toggle.getAttribute('data-publish-blocked') === '1') {
+            toggle.checked = false;
+
+            var modal = document.getElementById('publish-blockers');
+
+            if (modal && window.MyEduModal) {
+                window.MyEduModal.open(modal);
+            }
+
+            return;
+        }
+
+        if (action) {
+            action.value = toggle.checked ? 'publish' : 'draft';
+        }
+
+        if (form) {
+            form.submit();
+        }
+    });
 })();

@@ -406,6 +406,8 @@ CREATE TABLE IF NOT EXISTS `assignments` (
     COMMENT 'по чему считается итог: проценты или баллы',
   `show_results` TINYINT(1)   NOT NULL DEFAULT 1,
   `time_limit`   SMALLINT UNSIGNED NULL COMMENT 'лимит времени на попытку, минут',
+  `shuffle_items` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'выдавать задания ученику в случайном порядке',
+  `no_copy`       TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'запретить копирование текста задания при выполнении',
   `criteria`     TEXT         NULL,
   `published_at` DATETIME     NULL,
   `created_at`   DATETIME     NOT NULL,

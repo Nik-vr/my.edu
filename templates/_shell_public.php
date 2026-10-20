@@ -135,12 +135,21 @@ declare(strict_types=1);
                 </ul>
             </nav>
 
+            <?php /*
+             Результат действия — всплывающим сообщением, а не баннером.
+
+             Баннер на всю страницу занимал место и оставался там, пока её не
+             закрыли, хотя сообщение относилось к одному нажатию: человек уже
+             видит, что нажал, и ему нужно знать только, чем это кончилось.
+             Сообщение показывает скрипт toast.js, который читает эту метку при
+             загрузке.
+             */ ?>
             <?php if (!empty($notice)): ?>
-                <?= $view->raw($view->bannerOk($notice)) ?>
+                <span data-toast="<?= $view->e($notice) ?>" data-toast-variant="success" hidden></span>
             <?php endif; ?>
 
             <?php if (!empty($error)): ?>
-                <?= $view->raw($view->bannerError($error)) ?>
+                <span data-toast="<?= $view->e($error) ?>" data-toast-variant="error" hidden></span>
             <?php endif; ?>
 
             <?= $view->raw($content) ?>
@@ -155,6 +164,12 @@ declare(strict_types=1);
     <span>Версия <?= $view->e($appVersion) ?></span>
 <?php endif; ?>
 </footer>
+
+<?php /*
+ Скрипт всплывающих сообщений нужен и здесь: оболочка отдаёт результат действия
+ меткой, и без скрипта метка просто молча пропадёт.
+ */ ?>
+<script src="<?= $view->e($view->asset('assets/js/toast.js')) ?>" defer></script>
 
 </body>
 </html>

@@ -361,7 +361,7 @@ $variantCount = count($rows);
  data-editor-url="<?= $view->e($view->url($itemsUrl . '/editor')) ?>"
  <?= $editor !== null ? ' data-open-on-load' : '' ?>
  <?= $editor === null ? 'hidden' : '' ?>>
- <div class="modal-dialog">
+ <div class="modal-dialog modal-dialog--task">
   <div class="modal-header">
    <h2 class="modal-title" id="task-editor-title" data-editor-title>
      <?php if ($isPublished): ?>
@@ -401,11 +401,21 @@ $variantCount = count($rows);
  </div>
 </div>
 
-<script src="<?= $view->e($view->asset('assets/js/assignment-items.js')) ?>" defer></script>
-
 <?php /*
- * Черновик подключается после скрипта доски, а не раньше: доска настраивает
- * формы при открытии окна, и модуль должен быть на месте к этому моменту.
+ * Черновик подключается раньше скрипта доски, а не позже.
+ *
+ * Отсрочка была сделана с добрыми намерениями: доска настраивает формы при
+ * открытии окна, и модуль нужен к этому моменту. Но оба скрипта отложенные и
+ * выполняются по порядку в разметке, и при обратном порядке доска
+ * настраивала формы раньше, чем модуль черновиков появлялся на странице.
+ *
+ * Чем это оборачивалось: модуль не подключался вовсе, пока редактор задания
+ * не открывали хотя бы раз. А он подключал предупреждение об уходе со
+ * страницы. Значит, открыв задание один раз, человек получал вопрос «Закрыть
+ * сайт?» при любом уходе — в том числе при нажатии «Сохранить» в редакторе
+ * работы. Вопрос и появлялся «иногда»: только после первого открытия задания.
  */
 ?>
 <script src="<?= $view->e($view->asset('assets/js/task-draft.js')) ?>" defer></script>
+
+<script src="<?= $view->e($view->asset('assets/js/assignment-items.js')) ?>" defer></script>
