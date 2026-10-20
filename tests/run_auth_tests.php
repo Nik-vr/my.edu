@@ -2204,7 +2204,7 @@ $t->notContains($settingsPage['body'], '<h1 class="card-title">',
  */
 $t->contains($settingsPage['body'], 'Обновление', 'в настройках есть блок обновления');
 $t->contains($settingsPage['body'], 'Текущая версия', 'в блоке названа текущая версия');
-$t->contains($settingsPage['body'], '0.3 beta', 'текущая версия показана та, что стоит в настройках');
+$t->contains($settingsPage['body'], '0.3.1 beta', 'текущая версия показана та, что стоит в настройках');
 
 /*
  * Список работ и создание новой — разные пункты и разные адреса, поэтому

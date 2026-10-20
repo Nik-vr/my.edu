@@ -174,22 +174,50 @@ $t->is(is_file($target . '/src/Core/Version.php'), 'файл разложен п
 $t->is(is_file($target . '/templates/panel/settings.php'), 'вложенный каталог создан');
 $t->equals('<?php // версия', (string) @file_get_contents($target . '/src/Core/Version.php'), 'содержимое файла на месте');
 
-// Запрещённые пути в архиве останавливают распаковку целиком.
+// Запрещённые пути в архиве пропускаются, а не останавливают обновление:
+// прежние файлы остаются на месте, а остальные раскладываются.
 $badArchive = Zip::write([
     'src/Core/Version.php' => '<?php // версия',
     'config/config.local.php' => '<?php // чужие доступы',
+    'var/log/error.log' => 'журнал',
 ]);
 
 $badResult = MyEdu\Core\SystemUpdate::install($badArchive, $target . '-bad');
 
-$t->is(($badResult['ok'] ?? false) === false, 'архив с настройками базы не распакован');
-$t->contains((string) ($badResult['message'] ?? ''), 'config.local.php', 'в отказе назван запрещённый файл');
+$t->is(($badResult['ok'] ?? false) === true, 'архив с запрещёнными путями разложен частично');
+$t->equals(1, (int) ($badResult['files'] ?? 0), 'разложены только те файлы, которые можно');
+$t->equals(2, count($badResult['skipped'] ?? []), 'запрещённые пути перечислены как пропущенные');
 $t->is(!is_file($target . '-bad/config/config.local.php'), 'настройки с доступами к базе не записаны');
+$t->is(!is_file($target . '-bad/var/log/error.log'), 'журналы не записаны');
+$t->is(is_file($target . '-bad/src/Core/Version.php'), 'остальные файлы разложены');
+
+/**
+ * Исходный архив тега лежит в каталоге «имя-репозитория-тег».
+ *
+ * Без снятия этого каталога файлы разложились бы в подкаталог, и обновление
+ * ничего бы не заменило. Это проверяется на настоящем таком архиве: собирается
+ * он сам, структура — как у исходников GitHub.
+ */
+$t->group('Исходный архив тега');
+
+$tagArchive = Zip::write([
+    'my.edu-0.3-beta/src/Core/Version.php' => '<?php // версия',
+    'my.edu-0.3-beta/templates/panel/settings.php' => '<?php // настройки',
+    'my.edu-0.3-beta/config/config.local.php' => '<?php // чужие доступы',
+]);
+
+$tagResult = MyEdu\Core\SystemUpdate::install($tagArchive, $target . '-tag');
+
+$t->is(($tagResult['ok'] ?? false) === true, 'архив тега разложен');
+$t->equals(2, (int) ($tagResult['files'] ?? 0), 'каталог тега не попал в разложенные файлы');
+$t->is(is_file($target . '-tag/src/Core/Version.php'), 'файл лёг по своей дороге, без каталога тега');
+$t->is(is_file($target . '-tag/templates/panel/settings.php'), 'вложенный каталог тоже без общей приставки');
+$t->is(!is_file($target . '-tag/config/config.local.php'), 'настройки с доступами к базе не записаны');
 
 /**
  * Очистка.
  */
-foreach ([$target, $target . '-bad'] as $directory) {
+foreach ([$target, $target . '-bad', $target . '-tag'] as $directory) {
     if (!is_dir($directory)) {
         continue;
     }

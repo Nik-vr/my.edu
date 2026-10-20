@@ -72,15 +72,6 @@ $view->crumbs([
  <?= $view->e((string) ($release['error'] ?? 'сервер не ответил.')) ?>
  Проверка повторяется при следующем открытии страницы.
  </p>
- <?php elseif ($hasUpdate && ($release['asset'] ?? false) !== true): ?>
- <p>
- На GitHub есть более свежая версия:
- <strong><?= $view->e($releaseVersion) ?></strong>,
- но готового архива в релизе нет — обновиться пока нечем.
- </p>
- <p class="muted">
- <?= $view->e((string) ($release['error'] ?? '')) ?>
- </p>
  <?php elseif ($hasUpdate): ?>
  <p>
  На GitHub есть более свежая версия:

@@ -63,6 +63,26 @@ final class SystemUpdate
         '.git/',
     ];
 
+    /**
+     * Где на сервере обычно лежат сертификаты.
+     *
+     * Список — потому, что PHP ищет пакет сертификатов по своему адресу, а
+     * на сервере он нередко лежит в другом месте: сертификаты есть, а найти
+     * их нечем. Перебор ничего не портит — проверка сертификата либо проходит,
+     * либо нет.
+     *
+     * @var list<string>
+     */
+    private const CA_BUNDLES = [
+        '/etc/ssl/certs/ca-certificates.crt',
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        '/etc/ssl/ca-bundle.pem',
+        '/etc/pki/tls/cacert.pem',
+        '/usr/local/share/certs/ca-root-nss.crt',
+        '/usr/local/share/ca-certificates/ca-certificates.crt',
+        '/etc/ssl/cert.pem',
+    ];
+
     public function __construct(
         private readonly App $app,
         private readonly Config $config,
@@ -125,21 +145,43 @@ final class SystemUpdate
 
         $asset = $this->releaseAsset(is_array($release['assets'] ?? null) ? $release['assets'] : []);
 
+        /*
+         * Откуда брать файлы.
+         *
+         * У релиза на GitHub может быть приложен готовый архив — его и берём
+         * первым. Если приложенного архива нет, берётся исходный архив тега:
+         * он и есть те же файлы проекта, только в каталоге
+         * «имя-репозитория-тег», и общий каталог при распаковке снимается.
+         *
+         * Отдельный архив релиза остаётся лучшим выбором: в нём только то,
+         * что нужно на сервере, и никаких наборов проверок с документацией.
+         */
+        $url = $asset !== null ? (string) $asset['url'] : $this->tagArchive($repository, $tag);
+
         $result = [
             'ok' => true,
             'version' => Version::display($tag),
             'tag' => $tag,
-            'asset' => $asset !== null,
-            'url' => $asset !== null ? (string) $asset['url'] : '',
+            'asset' => true,
+            'url' => $url,
             'published' => (string) ($release['published_at'] ?? ''),
-            'error' => $asset === null
-                ? 'В релизе ' . $tag . ' нет готового архива (.zip).'
-                : '',
+            'error' => '',
         ];
 
         $this->cache($result);
 
         return $result;
+    }
+
+    /**
+     * Адрес исходного архива тега.
+     *
+     * GitHub собирает его сам: `https://github.com/владелец/репозиторий/archive/refs/tags/тег.zip`.
+     * Внутри — все файлы репозитория в каталоге `имя-репозитория-тег`.
+     */
+    private function tagArchive(string $repository, string $tag): string
+    {
+        return 'https://github.com/' . trim($repository, '/') . '/archive/refs/tags/' . rawurlencode($tag) . '.zip';
     }
 
     /**
@@ -274,15 +316,25 @@ final class SystemUpdate
     public static function install(string $archive, string $root): array
     {
         try {
-            $files = self::unpack($archive, $root);
+            $result = self::unpack($archive, $root);
         } catch (Throwable $e) {
             return ['ok' => false, 'message' => 'Обновление не выполнено: ' . $e->getMessage()];
         }
 
+        $files = (int) ($result['files'] ?? 0);
+        $skipped = is_array($result['skipped'] ?? null) ? $result['skipped'] : [];
+
+        $message = 'Файлов заменено: ' . $files . '.';
+
+        if ($skipped !== []) {
+            $message .= ' Пропущено файлов, которые на сервере трогать нельзя: ' . count($skipped) . '.';
+        }
+
         return [
             'ok' => true,
-            'message' => 'Файлов заменено: ' . $files . '.',
+            'message' => $message,
             'files' => $files,
+            'skipped' => $skipped,
         ];
     }
 
@@ -291,18 +343,30 @@ final class SystemUpdate
     /**
      * Распаковать архив поверх проекта.
      *
-     * @return int сколько файлов заменено
+     * @return array{ok:bool,message:string,files?:int,skipped?:list<string>}
      */
-    private static function unpack(string $archive, string $root): int
+    private static function unpack(string $archive, string $root): array
     {
         $files = \MyEdu\Transfer\Zip::read($archive);
+        $prefix = self::commonPrefix(array_keys($files));
         $written = 0;
+        $skipped = [];
 
         foreach ($files as $name => $content) {
-            $relative = self::safePath($name);
+            $relative = self::safePath(self::stripPrefix($name, $prefix));
 
+            /*
+             * Запрещённый путь — не повод отказывать от всего обновления.
+             *
+             * В исходном архиве тега лежат и данные (настройки с доступами к
+             * базе, загруженные картинки), и служебные каталоги. Такие файлы
+             * пропускаются: прежние остаются на месте, а обновление идёт дальше.
+             * Отказ здесь означал бы, что обновиться нельзя никогда.
+             */
             if ($relative === null) {
-                throw new RuntimeException('В архиве есть файл, который нельзя распаковать на сервер: ' . $name);
+                $skipped[] = $name;
+
+                continue;
             }
 
             $target = rtrim($root, '/\\') . '/' . $relative;
@@ -323,7 +387,55 @@ final class SystemUpdate
             throw new RuntimeException('В архиве нет ни одного файла.');
         }
 
-        return $written;
+        return ['files' => $written, 'skipped' => $skipped];
+    }
+
+    /**
+     * Общий каталог верхнего уровня у всех файлов архива.
+     *
+     * Исходный архив тега на GitHub лежит в каталоге `имя-репозитория-тег`:
+     * без снятия этого каталога файлы разложились бы в подкаталог, и обновление
+     * ничего бы не заменило.
+     *
+     * @param list<string> $names
+     */
+    private static function commonPrefix(array $names): string
+    {
+        $prefix = null;
+
+        foreach ($names as $name) {
+            $slash = strpos($name, '/');
+
+            if ($slash === false) {
+                return '';
+            }
+
+            $part = substr($name, 0, $slash + 1);
+
+            if ($prefix === null) {
+                $prefix = $part;
+
+                continue;
+            }
+
+            if ($prefix !== $part) {
+                return '';
+            }
+        }
+
+        return $prefix ?? '';
+    }
+
+    /**
+     * Снять общий каталог с пути.
+     */
+    private static function stripPrefix(string $name, string $prefix): string
+    {
+        if ($prefix === '' || !str_starts_with($name, $prefix)) {
+            return $name;
+        }
+
+        return substr($name, strlen($prefix));
     }
 
     /**
@@ -379,6 +491,117 @@ final class SystemUpdate
     }
 
     /**
+     * Скачать через curl, перебирая варианты проверки сертификата.
+     *
+     * null — ни один вариант не подошёл, и об ошибке сказано в `lastError`.
+     *
+     * @param resource|null $handle
+     * @param list<string>  $headers
+     * @return string|bool|null
+     */
+    private function fetchWithCurl(
+        string $url,
+        int $timeout,
+        ?string $toFile,
+        $handle,
+        array $headers
+    ): string|bool|null {
+        $lastError = '';
+
+        foreach ($this->tlsVariants() as $variant) {
+            $curl = curl_init($url);
+            curl_setopt_array($curl, [
+                CURLOPT_RETURNTRANSFER => $toFile === null,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_CONNECTTIMEOUT => 10,
+                CURLOPT_TIMEOUT => $timeout,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_USERAGENT => 'my.edu',
+            ] + $variant);
+
+            if ($handle !== null) {
+                curl_setopt($curl, CURLOPT_FILE, $handle);
+            }
+
+            $body = curl_exec($curl);
+            $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+            $error = curl_error($curl);
+
+            curl_close($curl);
+
+            if ($body !== false && $status < 400) {
+                $this->lastError = null;
+
+                return $toFile === null ? (string) $body : true;
+            }
+
+            $lastError = $error !== '' ? $error : ('GitHub ответил кодом ' . $status . '.');
+
+            /*
+             * Файл ответа при неудаче обрезается: иначе в следующей попытке
+             * он допишется к предыдущему, и на диске окажется половина архива
+             * плюс начало другого.
+             */
+            if ($handle !== null) {
+                @rewind($handle);
+                @ftruncate($handle, 0);
+            }
+        }
+
+        $this->lastError = $lastError;
+
+        if ($lastError !== '' && stripos($lastError, 'certificate') !== false) {
+            $this->lastError = $lastError
+                . ' Сервер не смог проверить сертификат GitHub: обновите сертификаты на сервере '
+                . '(пакет ca-certificates) или укажите путь к свежему файлу в config/config.local.php: '
+                . "['app']['update']['ca_bundle'].";
+        }
+
+        return null;
+    }
+
+    /**
+     * Варианты проверки сертификата, по возрастанию уступчивости.
+     *
+     * Сначала — как есть: системные сертификаты сервера. Потом — тот же
+     * файл, но из известных мест: на сервере пакет сертификатов иногда лежит
+     * не там, где его ищет PHP, и в этом случае достаточно указать путь.
+     *
+     * И только потом — по решению владельца проверка выключается. Обновление
+     * кладёт на сервер файлы, из которых работает весь сайт, и подделать их
+     * может тот, кто сумел встать посередине соединения; молча ослаблять
+     * проверку здесь нельзя.
+     *
+     * @return list<array<int,mixed>>
+     */
+    private function tlsVariants(): array
+    {
+        $variants = [[]];
+
+        $configured = trim((string) $this->config->string('app.update.ca_bundle', ''));
+
+        if ($configured !== '' && is_file($configured)) {
+            $variants[] = [CURLOPT_CAINFO => $configured];
+        }
+
+        foreach (self::CA_BUNDLES as $path) {
+            if (is_file($path)) {
+                $variants[] = [CURLOPT_CAINFO => $path];
+            }
+        }
+
+        if ($this->config->bool('app.update.allow_insecure_tls', false)) {
+            $variants[] = [
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => 0,
+            ];
+        }
+
+        return $variants;
+    }
+
+    /**
      * Скачать адрес.
      *
      * $toFile — куда положить тело ответа; без неё возвращается строка.
@@ -409,39 +632,16 @@ final class SystemUpdate
             'Accept-Encoding: identity',
         ];
 
+        $curlError = null;
+
         if (function_exists('curl_init')) {
-            $curl = curl_init($url);
-            curl_setopt_array($curl, [
-                CURLOPT_RETURNTRANSFER => $toFile === null,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 3,
-                CURLOPT_CONNECTTIMEOUT => 10,
-                CURLOPT_TIMEOUT => $timeout,
-                CURLOPT_HTTPHEADER => $headers,
-                CURLOPT_USERAGENT => 'my.edu',
-            ]);
+            $result = $this->fetchWithCurl($url, $timeout, $toFile, $handle, $headers);
 
-            if ($handle !== false && $handle !== null) {
-                curl_setopt($curl, CURLOPT_FILE, $handle);
+            if ($result !== null) {
+                return $result;
             }
 
-            $body = curl_exec($curl);
-            $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
-            $error = curl_error($curl);
-
-            curl_close($curl);
-
-            if (is_resource($handle)) {
-                fclose($handle);
-            }
-
-            if ($body === false || $status >= 400) {
-                $this->lastError = $error !== '' ? $error : ('GitHub ответил кодом ' . $status . '.');
-
-                return false;
-            }
-
-            return $toFile === null ? (string) $body : true;
+            $curlError = $this->lastError;
         }
 
         /*
@@ -464,7 +664,9 @@ final class SystemUpdate
         $stream = @fopen($url, 'rb', false, $context);
 
         if ($stream === false) {
-            $this->lastError = 'Скачать не удалось: на сервере нет ни curl, ни доступа к внешним адресам.';
+            $this->lastError = $curlError !== null
+                ? $curlError . ' Потоковое чтение тоже не помогло: на сервере нет ни curl, ни доступа к внешним адресам.'
+                : 'Скачать не удалось: на сервере нет ни curl, ни доступа к внешним адресам.';
 
             return false;
         }
