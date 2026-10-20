@@ -2084,7 +2084,7 @@ foreach (['Главная', 'Работы', 'Школа', 'Система'] as $
     $t->contains($console['body'], '>' . $groupTitle . '<', 'группа меню «' . $groupTitle . '»');
 }
 
-foreach (['Консоль', 'Составить работу', 'Журнал работ', 'Пользователи', 'Настройки'] as $itemLabel) {
+foreach (['Консоль', 'Составить работу', 'Результаты', 'Пользователи', 'Настройки'] as $itemLabel) {
     $t->contains($console['body'], '>' . $itemLabel . '</span>', 'пункт меню «' . $itemLabel . '»');
 }
 
@@ -2103,8 +2103,7 @@ foreach ([
     '/panel/settings'  => 'Настройки сайта',
     '/panel/plugins'   => 'Плагины',
     '/panel/assignments' => 'Работы',
-    '/panel/results'    => 'Просмотр результатов',
-    '/panel/journal'   => 'Журнал работ',
+    '/panel/journal'   => 'Результаты',
 ] as $dupAddress => $dupLabel) {
     $t->notContains($consoleMain, 'href="' . $dupAddress . '"',
         'в содержимом панели нет дублирующей ссылки «' . $dupLabel . '»');

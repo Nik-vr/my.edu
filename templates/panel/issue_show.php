@@ -36,7 +36,7 @@ if ($issue['available_from'] !== null || $issue['available_until'] !== null) {
 
 
 $view->crumbs([
-        ['label' => 'Просмотр результатов', 'url' => 'panel/results'],
+        ['label' => 'Результаты', 'url' => 'panel/journal'],
         ['label' => $view->e($issue['assignment_title']), 'url' => ''],
     ]);
 ?>
@@ -161,7 +161,7 @@ $view->crumbs([
 <?php endif; ?>
 
 <p class="page-actions">
- <a class="btn btn-ghost" href="<?= $view->e($view->url('panel/results')) ?>">
- ← Ко всем выдачам
+ <a class="btn btn-ghost" href="<?= $view->e($view->url('panel/journal')) ?>">
+ ← Ко всем результатам
  </a>
 </p>

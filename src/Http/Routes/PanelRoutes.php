@@ -157,10 +157,7 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/issues/{id}/period', [$c->issues, 'period'], Role::TESTS_MANAGE);
         $router->get('/panel/issues/{id}', [$c->issues, 'show'], Role::TESTS_MANAGE);
 
-        // Просмотр результатов: выдачи и сводка по ним.
-        $router->get('/panel/results', [$c->issues, 'index'], Role::TESTS_MANAGE);
-
-        // Журнал работ: кто что сдал. Право class.students — то же, что и на
+        // Результаты: кто что сдал. Право class.students — то же, что и на
         // списки учеников: кто видит состав класса, видит и его результаты.
     $router->get('/panel/journal', [$c->journal, 'index'], Role::CLASS_STUDENTS);
     $router->get('/panel/journal/work/{id}', [$c->journal, 'work'], Role::CLASS_STUDENTS);

@@ -3,11 +3,14 @@
 declare(strict_types=1);
 
 /**
- * Журнал работ: выданные работы, собранные по классам.
+ * Результаты: выданные работы, собранные по классам.
  *
  * Сверху — по одному разделу на класс, внутри — работы, которые этому классу
  * выдавали. Класс взят из выдачи, то есть тот, в котором ученик состоял на
  * момент выдачи.
+ *
+ * Название работы — ссылка на её результаты: отдельная кнопка рядом была бы
+ * второй точкой входа на ту же страницу.
  *
  * @var \MyEdu\Core\View $view
  * @var list<array<string,mixed>> $groups
@@ -15,11 +18,11 @@ declare(strict_types=1);
 
 $view->crumbs([
         ['label' => 'Панель управления', 'url' => 'panel'],
-        ['label' => 'Журнал работ', 'url' => ''],
+        ['label' => 'Результаты', 'url' => ''],
     ]);
 ?>
 
-<h1 class="page-title">Журнал работ
+<h1 class="page-title">Результаты
 
 </h1>
 
@@ -58,14 +61,17 @@ $view->crumbs([
                 <th scope="col">Выдано</th>
                 <th scope="col">Сдали</th>
                 <th scope="col">Ждут проверки</th>
-                <th scope="col" data-orderable="false"></th>
             </tr>
             </thead>
             <tbody>
             <?php foreach ($group['works'] as $work): ?>
                 <tr>
                     <td>
-                        <strong><?= $view->e($work['assignment_title']) ?></strong>
+                        <strong>
+                            <a href="<?= $view->e($view->url('panel/journal/work/' . (int) $work['assignment_id'])) ?>">
+                                <?= $view->e($work['assignment_title']) ?>
+                            </a>
+                        </strong>
                         <?php if (!empty($work['published_at'])): ?>
                             <br><span class="muted">
                                 опубликована <?= $view->e(date('d.m.Y', strtotime((string) $work['published_at']))) ?>
@@ -82,12 +88,6 @@ $view->crumbs([
                         <?php else: ?>
                             <span class="muted">—</span>
                         <?php endif; ?>
-                    </td>
-                    <td class="nowrap">
-                        <a class="btn btn-sm"
-                           href="<?= $view->e($view->url('panel/journal/work/' . (int) $work['assignment_id'])) ?>">
-                            Журнал
-                        </a>
                     </td>
                 </tr>
             <?php endforeach; ?>

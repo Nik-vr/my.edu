@@ -59,7 +59,7 @@ $view->crumbs([
      . $view->plural($pendingReview, 'работа ждёт', 'работы ждут', 'работ ждут')
      . ' проверки.'
  )) ?>
- <p><a class="btn btn-sm" href="<?= $view->e($view->url('panel/results')) ?>">Открыть результаты</a></p>
+ <p><a class="btn btn-sm" href="<?= $view->e($view->url('panel/journal')) ?>">Открыть результаты</a></p>
 <?php endif; ?>
 
 <div class="card">

@@ -30,7 +30,7 @@ $pendingReview = 0;
 
 foreach ($panelNav as $group) {
  foreach ($group['items'] as $item) {
- if (($item['url'] ?? '') === 'panel/results') {
+    if (($item['url'] ?? '') === 'panel/journal') {
  $pendingReview = (int) ($item['badge'] ?? 0);
  }
  }
@@ -193,9 +193,9 @@ if ($crumbsHtml === '') {
 
  <div class="topbar-right">
  <?php /* Ждут проверки — тот же счётчик, что и в меню. */ ?>
- <a class="tb-btn<?= $pendingReview > 0 ? ' tb-notifications' : '' ?>"
- href="<?= $view->e($view->url('panel/results')) ?>"
- title="Выдачи, которые ждут проверки" aria-label="Работы, ждущие проверки">
+  <a class="tb-btn<?= $pendingReview > 0 ? ' tb-notifications' : '' ?>"
+  href="<?= $view->e($view->url('panel/journal')) ?>"
+  title="Результаты, которые ждут проверки" aria-label="Результаты: работы, ждущие проверки">
  <?php $icon = 'needs_review'; ?>
  <?php require __DIR__ . '/_panel_icon.php'; ?>
  <?php if ($pendingReview > 0): ?>
