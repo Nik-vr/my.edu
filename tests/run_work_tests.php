@@ -2932,59 +2932,73 @@ $t->notContains($journalIndex['body'], '<h1 class="card-title">',
     'внутри карточек журнала нет главных заголовков');
 
 /*
+ * В журнале — выданные работы, собранные по классам.
+ *
+ * Числа в журнале разбиты переносами строк («1» / «из 2» / «сдано»), поэтому
+ * содержательные проверки идут по схлопнутому тексту: иначе они ловили бы
+ * вёрстку, а не содержание.
+ */
+$journalIndex = $head->get('/panel/journal');
+$journalFlat = trim(preg_replace('/\s+/', ' ', strip_tags($journalIndex['body'])));
+
+$t->is($journalIndex['status'] === 200, 'завуч открывает журнал');
+$t->contains($journalIndex['body'], $className, 'в журнале есть созданный класс');
+$t->contains($journalIndex['body'], 'Журнал работ', 'страница называется журналом работ');
+$t->contains($journalIndex['body'], 'Контрольная по биологии',
+    'выданная работа видна в журнале');
+
+/*
  * Настройки смотрит администратор: адрес требует права `users.manage`, и завучу
  * он не выдан. Поэтому заголовок настроек проверяется в наборе `auth`, где
  * такой клиент есть.
  */
 
 /*
- * Числа в журнале разбиты переносами строк («1» / «из 2» / «сдано»), поэтому
- * содержательные проверки идут по схлопнутому тексту: иначе они ловили бы
- * вёрстку, а не содержание.
- */
-$classJournal = $head->get('/panel/journal/' . $classId);
-$classFlat = trim(preg_replace('/\s+/', ' ', strip_tags($classJournal['body'])));
-
-$t->is($classJournal['status'] === 200, 'журнал класса открыт');
-$t->contains($classFlat, 'Сидоров Пётр Иванович', 'в журнале есть первый ученик');
-$t->contains($classFlat, 'Контрольная по биологии', 'видна работа, которую сдал ученик');
-$t->contains($classFlat, '85.71%', 'виден процент, посчитанный по весам');
-$t->contains($classFlat, 'сдано', 'работа помечена как сданная');
-$t->contains($classFlat, '1 из 2', 'видно, сколько попыток завершено');
-$t->is($head->get('/panel/journal/999999')['status'] === 404, 'несуществующий класс даёт 404');
-
-/*
- * Ученик без работ виден отдельной меткой: молчаливое отсутствие строки
- * выглядело бы как «его нет в классе».
+ * Внутри работы — вкладки классов и результаты.
  *
- * Без работ двое: Кузнецова, которой попытку так и не выдали, и новый
- * Мельников. Число проверяется явно — иначе проверка на строку не заметила бы,
- * что метка пропала у одного из них.
+ * Раскладка таблицы: ученик, его задания квадратами, отметка и сводка
+ * баллов. Квадрат показывает результат по одному заданию, а подсказка на нём —
+ * ответ ученика.
  */
-$third = $students->create('Мельников Павел Сергеевич', 'tretyuchiy', 'uchebnik2025', $classId)['id'];
+$workJournal = $head->get('/panel/journal/work/' . $assignmentId);
+$workFlat = trim(preg_replace('/\s+/', ' ', strip_tags($workJournal['body'])));
 
-$afterThird = $head->get('/panel/journal/' . $classId);
-$flat = trim(preg_replace('/\s+/', ' ', strip_tags($afterThird['body'])));
+$t->is($workJournal['status'] === 200, 'журнал работы открыт');
 
-$t->contains($afterThird['body'], 'Мельников Павел Сергеевич', 'новый ученик сразу появился в журнале');
-$t->contains($afterThird['body'], 'работ не выполнял', 'ученик без работ помечен в своей строке');
-$t->contains($flat, 'выполнил ни одной работы', 'внизу есть итог по классу');
+$workJournal = $head->get('/panel/journal/work/' . $assignmentId);
+$workFlat = trim(preg_replace('/\s+/', ' ', strip_tags($workJournal['body'])));
+
+$t->contains($workJournal['body'], $className, 'вкладка с классом открыта');
+$t->contains($workJournal['body'], 'Сидоров Пётр Иванович', 'в таблице есть ученик');
+$t->contains($workJournal['body'], 'Отметка', 'в таблице есть отметка');
+$t->is(
+    preg_match_all('~class="journal-cell journal-cell--~u', (string) $workJournal['body']) === 6,
+    'в строке по одному квадрату на задание, у каждого ученика своя строка'
+);
+$t->contains($workJournal['body'], 'Ответ: ',
+    'у квадрата с баллом есть подсказка с ответом ученика');
+$t->contains($workFlat, '85,71',
+    'виден процент, посчитанный по весам');
+
 /*
- * Без работ остаётся только новый Мельников: Кузнецову работа выдана
- * мастером выше, и он выполнял её раньше по сценарию чужой попытки. Число
- * проверяется явно — иначе проверка на строку не заметила бы, что метка
- * пропала у одного из них.
+ * Квадраты идут в порядке редактора работы, а не в том, в каком задания видел
+ * ученик. Номера в квадратах — номера позиций работы.
  */
-$t->contains($flat, 'выполнил ни одной работы', 'внизу есть итог по классу');
-$t->contains($flat, '1 ученик не выполнил', 'без работ остался ровно один');
+$journalPositions = [];
+
+if (preg_match_all('~class="journal-cell[^"]*"[^>]*>\s*(\d+)\s*<~u', (string) $workJournal['body'], $cellMatches)) {
+    $journalPositions = array_map('intval', $cellMatches[1]);
+}
+
+$t->equals([1, 2, 3, 1, 2, 3], $journalPositions, 'задания в таблице идут в порядке редактора');
 
 /*
- * Журнал не должен показывать работы, адресованные другому классу.
+ * Журнал не должен показывать работы, которые никому не выдавали.
  *
  * Попытка ученика по чужой работе — обычное дело, когда адресатов меняют:
- * класс отработал контрольную, а потом её переназначили соседнему. Пока
- * журнал отбирал попытки только по «работа опубликована», такая попытка
- * продолжала попадать в сводку вместе с процентами и общим итогом класса.
+ * класс отработал контрольную, а потом её переназначили соседнему. Работа,
+ * которой не выдавали, в журнале не появляется: попытка без выдачи ничего не
+ * значит.
  *
  * Попытка создаётся прямо в базе: HTTP-пути для этого нет — попытку заводит
  * ученик, а выдать работу чужому классу и дать ему решить её нельзя, иначе
@@ -3017,7 +3031,7 @@ $db->run(
     ['a' => $foreignAssignmentId, 'u' => $studentId, 'tok' => 'журнал-чужой-класс']
 );
 
-$journalBeforeIssue = $head->get('/panel/journal/' . $classId);
+$journalBeforeIssue = $head->get('/panel/journal');
 
 $t->is($journalBeforeIssue['status'] === 200, 'журнал открыт до выдачи');
 $t->notContains($journalBeforeIssue['body'], 'Работа соседнего класса',
@@ -3041,11 +3055,170 @@ $db->run(
     ['i' => $journalIssueId, 'u' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
 );
 
-$journalAfterIssue = $head->get('/panel/journal/' . $classId);
+$journalAfterIssue = $head->get('/panel/journal');
 
 $t->contains($journalAfterIssue['body'], 'Работа соседнего класса',
     'после выдачи работа появилась в журнале');
+$t->is(
+    $head->get('/panel/journal/work/' . $foreignAssignmentId)['status'] === 200,
+    'у выданной работы есть своя страница журнала'
+);
+$t->is(
+    $head->get('/panel/journal/work/999999')['status'] === 404,
+    'несуществующая работа даёт 404'
+);
 
+
+/*
+ * Ученик без работ виден в таблице строкой: молчаливое отсутствие строки
+ * выглядело бы как «его нет в классе». Он же убирается в конце набора.
+ */
+$third = $students->create('Мельников Павел Сергеевич', 'tretyuchiy', 'uchebnik2025', $classId)['id'];
+
+/*
+ * Штрафы.
+ *
+ * Их три, и все они попадают в одну сводку: «набрано, штраф, итого». Здесь
+ * проверяются два, которые ставит человек: за сдачу после срока и ручной.
+ * Штраф за лишний вариант ответа проверяется у плагина — там, где он и
+ * считается.
+ */
+$t->group('Штрафы работы');
+
+/*
+ * Штраф за опоздание задаётся в настройках работы и снимается в момент сдачи.
+ *
+ * Срок берётся у выдачи: у разных выдач он разный, и «срок работы» не значил
+ * бы ничего. Поэтому срок подставляется накануне: сначала ученик начинает
+ * работу, потом срок отодвигается в прошлое — так и выглядит опоздание.
+ */
+$teacher->post('/panel/assignments/' . $assignmentId . '/edit/save', [
+    '_token'       => $teacher->tokenFrom($teacher->get('/panel/assignments/' . $assignmentId . '/edit?tab=start')) ?? '',
+    'work_tab'     => 'start',
+    'late_penalty' => '1',
+]);
+
+$t->equals(
+    1.0,
+    (float) $db->value('SELECT late_penalty FROM assignments WHERE id = :id', ['id' => $assignmentId]),
+    'штраф за опоздание сохранён в настройках работы'
+);
+
+$lateAttemptId = (int) $db->value(
+    'SELECT id FROM assignment_attempts
+      WHERE assignment_id = :a AND student_id = :u AND status = :s
+      ORDER BY id DESC LIMIT 1',
+    ['a' => $assignmentId, 'u' => $studentId, 's' => 'in_progress']
+);
+
+$t->is($lateAttemptId > 0, 'есть начатая попытка, которую можно сдать с опозданием');
+
+$db->run(
+    "UPDATE assignment_issues SET available_until = DATE_SUB(NOW(), INTERVAL 1 HOUR)
+      WHERE id IN (SELECT issue_id FROM assignment_issue_students WHERE student_id = :u AND class_id = :c)",
+    ['u' => $studentId, 'c' => $classId]
+);
+
+$lateItemId = (int) $db->value(
+    'SELECT id FROM assignment_items WHERE assignment_id = :a ORDER BY position LIMIT 1',
+    ['a' => $assignmentId]
+);
+
+$lateToken = (string) $db->value('SELECT token FROM assignment_attempts WHERE id = :id', ['id' => $lateAttemptId]);
+$lateItemPath = '/work/' . $lateAttemptId . '/item/' . $lateItemId;
+$lateItemPage = $student->get($lateItemPath . '?t=' . $lateToken);
+
+$finished = $student->post($lateItemPath, [
+    '_token' => $student->tokenFrom($lateItemPage) ?? '',
+    't'      => $lateToken,
+    ['action', 'finish'],
+]);
+
+$t->is(
+    $finished['status'] === 302,
+    'работа сдана (статус ' . (int) $finished['status'] . ', адрес: '
+    . (string) ($finished['location'] ?? '') . ')'
+);
+$t->equals(
+    1.0,
+    (float) $db->value('SELECT late_penalty FROM assignment_attempts WHERE id = :id', ['id' => $lateAttemptId]),
+    'штраф за опоздание зафиксирован при сдаче'
+);
+
+/*
+ * Итог считается за вычетом штрафа: набрано, штраф, итого.
+ *
+ * Процент работы взвешенный, поэтому сравнивать его с долей от суммы баллов
+ * нельзя — сравнение было бы заведомо неверным. Проверяется то, что верно при
+ * любых весах: процент не больше, чем доля набранных баллов, то есть штраф
+ * его не увеличил.
+ */
+$lateRow = $db->one('SELECT score, max_score, penalty, percent, grade FROM assignment_attempts WHERE id = :id', ['id' => $lateAttemptId]) ?? [];
+
+$t->is(
+    (float) ($lateRow['percent'] ?? 0) <= round(
+        (float) ($lateRow['score'] ?? 0) / max(1.0, (float) ($lateRow['max_score'] ?? 1)) * 100,
+        2
+    ) + 0.01,
+    'процент посчитан по итогу без штрафа'
+);
+
+/*
+ * Ручной штраф учителя — величина работы, а не задания.
+ *
+ * Учитель ставит его на странице проверки и может оставить комментарий:
+ * объяснение видно и учителю, и ученику.
+ */
+$reviewUrl = '/panel/assignments/' . $assignmentId . '/attempts/' . $lateAttemptId;
+$reviewPage = $teacher->get($reviewUrl);
+
+$t->is($reviewPage['status'] === 200, 'страница проверки открыта');
+$t->contains($reviewPage['body'], 'name="manual_penalty"', 'на странице проверки есть поле штрафа');
+$t->contains($reviewPage['body'], 'name="penalty_comment"', 'на странице проверки есть поле комментария');
+
+$teacher->post($reviewUrl, [
+    '_token'          => $teacher->tokenFrom($reviewPage) ?? '',
+    'penalty_form'    => '1',
+    'manual_penalty'  => '2',
+    'penalty_comment' => 'Работа сдана с опозданием',
+]);
+
+$t->equals(
+    2.0,
+    (float) $db->value('SELECT manual_penalty FROM assignment_attempts WHERE id = :id', ['id' => $lateAttemptId]),
+    'ручной штраф сохранён'
+);
+$t->equals(
+    'Работа сдана с опозданием',
+    (string) $db->value('SELECT penalty_comment FROM assignment_attempts WHERE id = :id', ['id' => $lateAttemptId]),
+    'комментарий к штрафу сохранён'
+);
+$t->equals(
+    3.0,
+    (float) $db->value('SELECT penalty FROM assignment_attempts WHERE id = :id', ['id' => $lateAttemptId]),
+    'общий штраф сложил опоздание и ручной'
+);
+
+/*
+ * В журнале штраф виден отдельным числом: «набрано, штраф, итого».
+ */
+$journalWithPenalty = $head->get('/panel/journal/work/' . $assignmentId);
+$journalPenaltyFlat = trim(preg_replace('/\s+/', ' ', strip_tags((string) $journalWithPenalty['body'])));
+
+$t->contains($journalPenaltyFlat, 'штраф',
+    'в журнале штраф показан отдельным числом');
+$t->contains($journalPenaltyFlat, 'итого',
+    'в журнале показан итог за вычетом штрафа');
+
+/*
+ * Срок возвращается: работа, выданная без срока, доступна всегда, и следующие
+ * проверки набора считают её именно такой.
+ */
+$db->run(
+    "UPDATE assignment_issues SET available_until = NULL
+      WHERE id IN (SELECT issue_id FROM assignment_issue_students WHERE student_id = :u AND class_id = :c)",
+    ['u' => $studentId, 'c' => $classId]
+);
 
 $db->run('DELETE FROM class_students WHERE student_id = :u', ['u' => $third]);
 // Роли уходят вместе с пользователем: внешний ключ настроен на каскад. Раньше

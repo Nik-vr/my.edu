@@ -52,15 +52,21 @@ $assignmentId = (int) $assignment['id'];
  <span class="chip">в процессе</span>
  <?php endif; ?>
  </td>
- <td>
- <?php if ($attempt['score'] === null): ?>
- <span class="muted">—</span>
- <?php else: ?>
- <?= $view->e(rtrim(rtrim(number_format((float) $attempt['score'], 2, ',', ''), '0'), ',')) ?>
- /
- <?= $view->e(rtrim(rtrim(number_format((float) $attempt['max_score'], 2, ',', ''), '0'), ',')) ?>
- <?php endif; ?>
- </td>
+  <td>
+  <?php if ($attempt['score'] === null): ?>
+  <span class="muted">—</span>
+  <?php else: ?>
+  <?= $view->e(rtrim(rtrim(number_format((float) $attempt['score'], 2, ',', ''), '0'), ',')) ?>
+  /
+  <?= $view->e(rtrim(rtrim(number_format((float) $attempt['max_score'], 2, ',', ''), '0'), ',')) ?>
+  <?php if ((float) ($attempt['penalty'] ?? 0) > 0.0): ?>
+  <?php /* Штраф показан рядом с баллом: итог без него читался бы неверно. */ ?>
+  <span class="journal-penalty" title="Штраф за лишние варианты, опоздание и ручной">
+  штраф <?= $view->e(rtrim(rtrim(number_format((float) $attempt['penalty'], 2, ',', ''), '0'), ',')) ?>
+  </span>
+  <?php endif; ?>
+  <?php endif; ?>
+  </td>
  <td><?= $view->e($attempt['grade'] ?? '—') ?></td>
  <td class="nowrap">
  <?php if ($attempt['status'] !== 'finished'): ?>

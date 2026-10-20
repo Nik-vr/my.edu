@@ -92,6 +92,17 @@ $field = static fn (string $name, mixed $fallback): string => array_key_exists($
  </label>
 
  <label class="form-group">
+ <span class="form-label">Штраф за сдачу после срока</span>
+ <input type="number" name="late_penalty" min="0" max="999.99" step="0.5"
+ value="<?= $view->e($field('late_penalty', $assignment['late_penalty'] ?? 0)) ?>">
+ <span class="form-help">
+ Баллы, которые снимаются за работу, сданную после срока выдачи. Штраф
+ фиксируется в момент сдачи и попадает в сводку вместе с остальными: «набрано,
+ штраф, итого». Пусто или ноль — без штрафа.
+ </span>
+ </label>
+
+ <label class="form-group">
  <span class="form-label">Порядок заданий</span>
  <select name="shuffle_items">
  <option value="0" <?= (int) $field('shuffle_items', $assignment['shuffle_items'] ?? 0) === 0 ? 'selected' : '' ?>>

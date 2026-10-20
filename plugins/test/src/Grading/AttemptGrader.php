@@ -37,10 +37,11 @@ final class AttemptGrader
  GradeCalculator $calculator,
  bool $enforceRequired = true
  ): GradingResult {
- $items = [];
- $score = 0.0;
- $maxScore = 0.0;
- $missing = [];
+  $items = [];
+  $score = 0.0;
+  $maxScore = 0.0;
+  $penalty = 0.0;
+  $missing = [];
 
  foreach ($questions as $index => $question) {
  $max = $question->maxScore();
@@ -76,30 +77,33 @@ final class AttemptGrader
  }
  }
 
- $grade = $type->grade($question, $answer);
- $itemScore = min($grade->score, $max);
- $itemScore = max(0.0, $itemScore);
+  $grade = $type->grade($question, $answer);
+  $itemScore = min($grade->score, $max);
+  $itemScore = max(0.0, $itemScore);
+  $itemPenalty = max(0.0, $grade->penalty);
 
- $score += $itemScore;
+  $score += $itemScore;
+  $penalty += $itemPenalty;
 
- $items[] = [
- 'question_id' => $question->id,
- 'prompt' => $question->prompt,
- 'type' => $question->type,
- 'type_title' => $type->title(),
- 'answer_text' => $type->answerText($question, $answer),
- 'answer_data' => $answer,
- 'expected_text' => $grade->expectedText !== '' ? $grade->expectedText : $type->expectedText($question),
- 'explanation' => $question->explanation,
- 'is_correct' => $grade->isCorrect,
- 'needs_review' => $grade->needsReview(),
- 'score' => GradeCalculator::roundScore($itemScore),
- 'max_score' => $max,
- 'detail' => $formatError !== null
- ? ['format_error' => $formatError] + $grade->detail
- : $grade->detail,
- ];
- }
+  $items[] = [
+  'question_id' => $question->id,
+  'prompt' => $question->prompt,
+  'type' => $question->type,
+  'type_title' => $type->title(),
+  'answer_text' => $type->answerText($question, $answer),
+  'answer_data' => $answer,
+  'expected_text' => $grade->expectedText !== '' ? $grade->expectedText : $type->expectedText($question),
+  'explanation' => $question->explanation,
+  'is_correct' => $grade->isCorrect,
+  'needs_review' => $grade->needsReview(),
+  'score' => GradeCalculator::roundScore($itemScore),
+  'max_score' => $max,
+  'penalty' => GradeCalculator::roundScore($itemPenalty),
+  'detail' => $formatError !== null
+  ? ['format_error' => $formatError] + $grade->detail
+  : $grade->detail,
+  ];
+  }
 
  if ($enforceRequired && $missing !== []) {
  throw new InvalidAnswerException(
@@ -107,21 +111,33 @@ final class AttemptGrader
  );
  }
 
- $score = GradeCalculator::roundScore($score);
- $maxScore = GradeCalculator::roundScore($maxScore);
- $percent = $maxScore > 0.0 ? round($score / $maxScore * 100, 2) : 0.0;
+  $score = GradeCalculator::roundScore($score);
+  $maxScore = GradeCalculator::roundScore($maxScore);
+  $penalty = GradeCalculator::roundScore($penalty);
 
- $verdict = $calculator->gradeFor($percent);
+  /*
+   * Процент и оценка считаются по итогу без штрафа.
+   *
+   * Штраф — величина отдельная, но решение о оценке принимается по тому, что
+   * ученик реально принёс: набрал за вычетом штрафа. Иначе штраф был бы
+   * показан в сводке, но не влиял бы на оценку, и две разные величины
+   * назывались бы одним словом.
+   */
+  $net = max(0.0, $score - $penalty);
+  $percent = $maxScore > 0.0 ? round($net / $maxScore * 100, 2) : 0.0;
 
- return new GradingResult(
- $items,
- $score,
- $maxScore,
- $percent,
- $verdict['grade'],
- $verdict['label']
- );
- }
+  $verdict = $calculator->gradeFor($percent);
+
+  return new GradingResult(
+  $items,
+  $score,
+  $maxScore,
+  $percent,
+  $verdict['grade'],
+  $verdict['label'],
+  $penalty
+  );
+  }
 
  /**
  * Сколько вопросов каждого типа в работе.

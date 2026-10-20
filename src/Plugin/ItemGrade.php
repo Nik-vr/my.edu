@@ -25,17 +25,28 @@ final class ItemGrade
      * @param int|null             $grade       оценка 1..5, если у плагина есть свои критерии
      * @param bool                 $needsReview ждёт учителя: автопроверки нет
      * @param array<string,mixed>  $snapshot    данные для разбора
+     * @param float                $penalty     штраф за задание, отдельно от балла
      */
     public function __construct(
         public readonly float $score,
         public readonly float $maxScore,
         public readonly ?int $grade = null,
         public readonly bool $needsReview = false,
-        public readonly array $snapshot = []
+        public readonly array $snapshot = [],
+        public readonly float $penalty = 0.0
     ) {
         if (!is_finite($score) || !is_finite($maxScore) || $maxScore < 0.0
             || $score < 0.0 || $score > $maxScore) {
             throw new InvalidArgumentException('Баллы задания должны быть конечными и лежать в диапазоне от 0 до максимума');
+        }
+
+        /*
+         * Штраф — величина отдельная от балла, и она не может быть больше
+         * максимума: снять больше, чем стоит задание, нельзя. Проверяется здесь,
+         * а не при разборе, потому что при разборе ошибка уже записана.
+         */
+        if (!is_finite($penalty) || $penalty < 0.0) {
+            throw new InvalidArgumentException('Штраф задания должен быть конечным и не меньше нуля');
         }
 
         if ($grade !== null && ($grade < 1 || $grade > 5)) {
@@ -58,16 +69,24 @@ final class ItemGrade
     }
 
     /** @param array<string,mixed> $snapshot */
-    public static function scored(float $score, float $maxScore, array $snapshot = [], ?int $grade = null): self
-    {
-        return new self($score, $maxScore, $grade, false, $snapshot);
+    public static function scored(
+        float $score,
+        float $maxScore,
+        array $snapshot = [],
+        ?int $grade = null,
+        float $penalty = 0.0
+    ): self {
+        return new self($score, $maxScore, $grade, false, $snapshot, $penalty);
     }
 
     /**
      * Балл в процентах от максимума задания.
      *
-     * Задание без максимума не считается невыполненным: иначе работа, где у
-     * одного задания не задан балл, молча уронила бы процент у всего ученика.
+     * Задание без максимума не считается невыполненным: иначе работа, где
+     * у одного задания не задан балл, молча уронила бы процент у всего ученика.
+     *
+     * Процент считается по итогу без штрафа: штраф за лишние варианты — это
+     * отдельная величина, и в проценте задания она уже учтена.
      */
     public function percent(): ?float
     {
@@ -75,6 +94,8 @@ final class ItemGrade
             return null;
         }
 
-        return round($this->score / $this->maxScore * 100, 2);
+        $net = max(0.0, $this->score - $this->penalty);
+
+        return round($net / $this->maxScore * 100, 2);
     }
 }

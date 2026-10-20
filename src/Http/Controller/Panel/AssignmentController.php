@@ -1150,6 +1150,14 @@ public function saveNewStart(Request $request): Response
              * приходит строкой «0» или «1», и никаким другим.
              */
             'no_copy' => $request->postParam('no_copy') === '1' ? 1 : 0,
+            /*
+             * Штраф за сдачу после срока — в баллах.
+             *
+             * Пустое поле означает «штрафа нет», а ноль — то же самое: снимать
+             * нечего. Отрицательное значение отбрасывается, иначе «штраф» стал бы
+             * надбавкой за опоздание.
+             */
+            'late_penalty' => $this->latePenalty($request->postParam('late_penalty')),
         ];
 
         /*
@@ -2634,6 +2642,24 @@ $rows[] = $item + [
         $minutes = (int) $value;
 
         return $minutes > 0 ? min($minutes, 600) : null;
+    }
+
+    /**
+     * Штраф за сдачу после срока, в баллах.
+     *
+     * Пустое поле и ноль значат одно и то же: штрафа нет. Отрицательное
+     * значение отбрасывается — иначе «штраф» превратился бы в надбавку за
+     * опоздание, а это противоположно смыслу.
+     */
+    private function latePenalty(?string $value): float
+    {
+        $penalty = $this->postFloatParam($value);
+
+        if ($penalty === null || $penalty <= 0.0) {
+            return 0.0;
+        }
+
+        return min(round($penalty, 2), 999.99);
     }
 
     /**

@@ -144,18 +144,32 @@ final class MultipleChoiceType implements QuestionTypeInterface
             return QuestionGrade::wrong($max, $expected, $detail);
         }
 
-        $penalty = $question->configFloat('miss_penalty', 0.5);
-        $ratio = (count($hits) - count($misses) * $penalty) / count($correctKeys);
-        $ratio = max(0.0, min(1.0, $ratio));
+        /*
+         * Штраф за лишний вариант отделяется от балла.
+         *
+         * Раньше он резал балл задания начисто, и по результату нельзя было
+         * понять, что именно произошло: ученик ответил верно, но зацепил лишнее,
+         * — а это видно только в разборе. Теперь балл задания — это то, что
+         * заработано за верные варианты, а штраф лежит рядом отдельным числом и
+         * попадает в сводку работы: «набрано, штраф, итого».
+         *
+         * Штраф не может стать больше заработанного: снять больше, чем стоит
+         * задание, нельзя, и итог не уходит в минус.
+         */
+        $missPenalty = $question->configFloat('miss_penalty', 0.5);
+        $correctCount = count($correctKeys);
+        $earned = (count($hits) / $correctCount) * $max;
+        $penalty = min((count($misses) * $missPenalty / $correctCount) * $max, $earned);
+        $detail['ratio'] = round($earned / $max, 4);
+        $detail['penalty'] = round($penalty, 2);
 
-        // При нулевом результате всё равно показываем частичную разбивку,
-        // чтобы ученик понял, что было не так.
-        $score = $ratio * $max;
-        $detail['ratio'] = round($ratio, 4);
+        if ($earned - $penalty <= 0.0) {
+            // При нулевом результате всё равно показываем частичную разбивку,
+            // чтобы ученик понял, что было не так.
+            return QuestionGrade::wrong($max, $expected, $detail);
+        }
 
-        return $ratio <= 0.0
-            ? QuestionGrade::wrong($max, $expected, $detail)
-            : QuestionGrade::partial(round($score, 2), $max, $expected, $detail);
+        return QuestionGrade::partial(round($earned, 2), $max, $expected, $detail, round($penalty, 2));
     }
 
     public function expectedText(Question $question): string

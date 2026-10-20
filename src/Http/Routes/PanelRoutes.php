@@ -162,8 +162,8 @@ final class PanelRoutes implements RouteFile
 
         // Журнал работ: кто что сдал. Право class.students — то же, что и на
         // списки учеников: кто видит состав класса, видит и его результаты.
-        $router->get('/panel/journal', [$c->journal, 'index'], Role::CLASS_STUDENTS);
-        $router->get('/panel/journal/{id}', [$c->journal, 'show'], Role::CLASS_STUDENTS);
+    $router->get('/panel/journal', [$c->journal, 'index'], Role::CLASS_STUDENTS);
+    $router->get('/panel/journal/work/{id}', [$c->journal, 'work'], Role::CLASS_STUDENTS);
         $router->get('/panel/ratings', [$c->ratings, 'index'], Role::TESTS_MANAGE);
     }
 }

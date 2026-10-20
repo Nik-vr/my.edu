@@ -42,11 +42,11 @@ $view->crumbs([
  <div class="card">
  <p>Все задания этой работы проверены автоматически.</p>
 
- <p class="muted">
- Текущий итог:
- <?= $view->e($total->percent === null ? '—' : $total->percent . '%') ?>,
- оценка <?= $view->e($total->grade ?? '—') ?>.
- </p>
+  <p class="muted">
+  Текущий итог:
+  <?= $view->e($total->percent === null ? '—' : $total->percent . '%') ?>,
+  оценка <?= $view->e($total->grade ?? '—') ?>.
+  </p>
 
  <p>
  <a class="btn"
@@ -145,3 +145,48 @@ $view->crumbs([
  </ul>
  </div>
 <?php endif; ?>
+
+<?php /*
+ Штраф учителя — величина работы, а не задания.
+
+ Форма отдельная от формы проверки: у формы проверки нет ни одного поля,
+ когда проверять нечего, и отправка такой формы не должна затирать штраф,
+ который учитель поставил раньше. Отдельная метка в форме говорит серверу,
+ что пришёл именно штраф.
+*/ ?>
+<div class="card">
+ <h2 class="card-title">Штраф</h2>
+
+ <?php if ($total->penalty > 0.0): ?>
+ <p class="muted">
+ Сейчас в сводке работы: набрано
+ <?= $view->e((string) (float) $total->score) ?>,
+ штраф <?= $view->e((string) (float) $total->penalty) ?>,
+ итого <?= $view->e((string) $total->net()) ?>.
+ </p>
+ <?php endif; ?>
+
+ <form method="post"
+ action="<?= $view->e($view->url('panel/assignments/' . (int) $assignment['id'] . '/attempts/' . (int) $attempt['id'])) ?>">
+ <?= $view->raw($view->csrfField()) ?>
+ <input type="hidden" name="penalty_form" value="1">
+
+ <label class="form-group">
+ <span class="form-label">Штраф, баллов</span>
+ <input type="number" name="manual_penalty" min="0" max="999.99" step="0.5"
+ value="<?= $view->e((string) (float) ($attempt['manual_penalty'] ?? 0)) ?>">
+ <span class="form-help">
+ Снимается из набранного и попадает в сводку: «набрано, штраф, итого». Ноль —
+ штрафа нет.
+ </span>
+ </label>
+
+ <label class="form-group">
+ <span class="form-label">Комментарий к штрафу</span>
+ <textarea name="penalty_comment" rows="2"><?= $view->e((string) ($attempt['penalty_comment'] ?? '')) ?></textarea>
+ <span class="form-help">Комментарий видят и учитель, и ученик.</span>
+ </label>
+
+ <button type="submit" class="btn btn-primary">Сохранить штраф</button>
+ </form>
+</div>

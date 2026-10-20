@@ -198,6 +198,25 @@ final class WorkItemHandler
     }
 
     /**
+     * Короткий текст ответа — для подсказок в таблицах журнала.
+     *
+     * Берётся из снимка позиции, а не из базы плагина: в таблице ответов
+     * десятки, и запрос на каждый из них сделал бы страницу в разы тяжелее.
+     */
+    public function workAnswerSummary(string $snapshot): ?string
+    {
+        $data = json_decode($snapshot, true);
+
+        if (!is_array($data)) {
+            return null;
+        }
+
+        $text = trim((string) ($data['answer_text'] ?? ''));
+
+        return $text !== '' ? $text : null;
+    }
+
+    /**
      * Разбор задания для страницы результата работы.
      *
      * Это фрагмент, а не страница: разбор встраивается в результат работы

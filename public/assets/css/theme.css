@@ -868,3 +868,72 @@ fieldset > legend {
  * только доступ в интернет.
  */
 body { font-family: var(--font); }
+
+/*
+ * Журнал: результаты по заданиям квадратами.
+ *
+ * Квадрат с номером задания — это результат по одному заданию: зелёный —
+ * полный балл, оранжевый — балл меньше максимального, красный — ноль или
+ * минус, серый — задание не выполнялось. Читается строка сразу, без
+ * вчитывания в числа.
+ *
+ * Цвета взяты те же, что у оценок (--grade-success, --grade-warning,
+ * --grade-danger): это одни и те же смыслы, и два наборов зелёного в одном
+ * интерфейсе сбивали бы с толку.
+ */
+.journal-cells {
+  white-space: nowrap;
+}
+
+.journal-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 2px 4px 2px 0;
+  border-radius: 6px;
+  background: var(--primary-lt);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: default;
+}
+
+.journal-cell--good {
+  background: var(--grade-success);
+  color: #fff;
+}
+
+.journal-cell--mid {
+  background: var(--grade-warning);
+  color: #fff;
+}
+
+.journal-cell--bad {
+  background: var(--grade-danger);
+  color: #fff;
+}
+
+/*
+ * Значок опоздания и подпись штрафа.
+ *
+ * Красный тот же, что у неверного задания: опоздание — это тоже «не так», и
+ * разный цвет заставил бы думать, что это другое свойство.
+ */
+.journal-late {
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: -2px;
+  color: var(--grade-danger);
+}
+
+.journal-late svg {
+  width: 16px;
+  height: 16px;
+}
+
+.journal-penalty {
+  color: var(--grade-danger);
+}

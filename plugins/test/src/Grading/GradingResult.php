@@ -22,7 +22,8 @@ final class GradingResult
         public readonly float $maxScore,
         public readonly float $percent,
         public readonly ?int $grade,
-        public readonly ?string $gradeLabel
+        public readonly ?string $gradeLabel,
+        public readonly float $penalty = 0.0
     ) {
     }
 
@@ -53,6 +54,7 @@ final class GradingResult
             'percent'     => $this->percent,
             'grade'       => $this->grade,
             'grade_label' => $this->gradeLabel,
+            'penalty'     => $this->penalty,
         ];
     }
 

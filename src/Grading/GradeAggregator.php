@@ -67,11 +67,14 @@ final class GradeAggregator
      * @param string                     $mode  weighted или per_item
      * @param string                     $criteriaMode percent или score: по чему
      *                                              выбирается оценка
+     * @param float                      $attemptPenalty штраф самой попытки: за опоздание
+     *                                                и ручной
      */
     public function aggregate(
         array $items,
         string $mode = 'weighted',
-        string $criteriaMode = 'percent'
+        string $criteriaMode = 'percent',
+        float $attemptPenalty = 0.0
     ): AssignmentTotal {
         /*
          * Баллы и максимум копятся дважды, и это не избыточность.
@@ -96,6 +99,15 @@ final class GradeAggregator
         $pending = [];
         $rows = [];
 
+        /*
+         * Первый проход: собираются позиции и их результаты.
+         *
+         * Штраф позиции вычитается из её балла, но остаётся отдельным числом:
+         * в сводке видно, что ученик заработал и сколько за это отняли.
+         */
+        $prepared = [];
+        $itemPenaltyTotal = 0.0;
+
         foreach ($items as $item) {
             $position = (int) ($item['position'] ?? 0);
             $weight = self::weightOf($item);
@@ -112,19 +124,69 @@ final class GradeAggregator
 
             $itemMax = (float) ($item['max_score'] ?? 0.0);
             $itemScore = $needsReview ? 0.0 : (float) ($item['score'] ?? 0.0);
+            $itemPenalty = $needsReview ? 0.0 : max(0.0, (float) ($item['penalty'] ?? 0.0));
 
-            $rows[] = [
+            $prepared[] = [
                 'position'     => $position,
                 'weight'       => $weight,
-                'score'        => $needsReview ? null : $itemScore,
-                'max_score'    => $itemMax > 0.0 ? $itemMax : null,
-                'percent'      => $itemMax > 0.0 ? round($itemScore / $itemMax * 100, 2) : null,
-                'grade'        => $needsReview ? null : $this->asGrade($item['grade'] ?? null),
+                'score'        => $itemScore,
+                'max_score'    => $itemMax,
+                'penalty'      => $itemPenalty,
+                'net'          => max(0.0, $itemScore - $itemPenalty),
                 'needs_review' => $needsReview,
+                'grade'        => $item['grade'] ?? null,
                 'comment'      => (string) ($item['comment'] ?? ''),
                 'plugin_id'    => (string) ($item['plugin_id'] ?? ''),
                 'task_kind'    => (string) ($item['task_kind'] ?? ''),
                 'task_id'      => (int) ($item['task_id'] ?? 0),
+            ];
+
+            $itemPenaltyTotal += $itemPenalty;
+        }
+
+        /*
+         * Штраф попытки — за опоздание и ручной — распределяется по позициям
+         * пропорционально заработанному.
+         *
+         * Процент работы взвешенный, а штраф задан в баллах, и делить одно на
+         * другое напрямую нельзя. Распределение по заработанному решает это:
+         * каждый балл штрафа срезает свою долю из каждой позиции, поэтому и
+         * сумма баллов, и процент уменьшаются на одну и ту же долю, и в сводке
+         * всё сходится: «набрано, штраф, итого».
+         */
+        $attemptPenalty = max(0.0, $attemptPenalty);
+        $netTotal = 0.0;
+
+        foreach ($prepared as $position) {
+            $netTotal += $position['net'];
+        }
+
+        foreach ($prepared as $position) {
+            $itemMax = $position['max_score'];
+            $itemScore = $position['score'];
+            $needsReview = $position['needs_review'];
+
+            $share = $attemptPenalty > 0.0 && $netTotal > 0.0
+                ? $attemptPenalty * ($position['net'] / $netTotal)
+                : 0.0;
+
+            $penalty = $position['penalty'] + $share;
+            $net = max(0.0, $position['net'] - $share);
+
+            $rows[] = [
+                'position'     => $position['position'],
+                'weight'       => $position['weight'],
+                'score'        => $needsReview ? null : $itemScore,
+                'max_score'    => $itemMax > 0.0 ? $itemMax : null,
+                'penalty'      => $penalty,
+                'net_score'    => $needsReview ? null : $net,
+                'percent'      => $itemMax > 0.0 ? round($net / $itemMax * 100, 2) : null,
+                'grade'        => $needsReview ? null : $this->asGrade($position['grade']),
+                'needs_review' => $needsReview,
+                'comment'      => $position['comment'],
+                'plugin_id'    => $position['plugin_id'],
+                'task_kind'    => $position['task_kind'],
+                'task_id'      => $position['task_id'],
             ];
 
             /*
@@ -140,14 +202,14 @@ final class GradeAggregator
             $score += $itemScore;
             $maxScore += $itemMax;
 
-            $weightedScore += $itemScore * $weight;
-            $weightedMax += $itemMax * $weight;
+            $weightedScore += $net * $position['weight'];
+            $weightedMax += $itemMax * $position['weight'];
 
             if ($mode === 'per_item') {
-                $verdict = $this->gradeFor(round($itemScore / $itemMax * 100, 2));
+                $verdict = $this->gradeFor(round($net / $itemMax * 100, 2));
 
-                $gradeSum += $verdict['grade'] * $weight;
-                $gradeWeight += $weight;
+                $gradeSum += $verdict['grade'] * $position['weight'];
+                $gradeWeight += $position['weight'];
             }
         }
 
@@ -170,7 +232,8 @@ final class GradeAggregator
              * означала бы ровно то же, что процентная, и различаться они
              * перестали бы вовсе.
              */
-            $verdict = $this->gradeForScore($score);
+            $net = max(0.0, $score - $itemPenaltyTotal - $attemptPenalty);
+            $verdict = $this->gradeForScore($net);
             $grade = $verdict['grade'];
             $color = $verdict['color'];
         } elseif ($percent !== null) {
@@ -190,7 +253,8 @@ final class GradeAggregator
             $color,
             $complete,
             $rows,
-            $pending
+            $pending,
+            round($itemPenaltyTotal + $attemptPenalty, 2)
         );
     }
 

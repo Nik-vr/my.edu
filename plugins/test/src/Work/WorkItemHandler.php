@@ -229,13 +229,14 @@ $itemAttemptId = (int) $itemAttempt['id'];
  return ItemGrade::forReview($result->maxScore, $snapshot);
  }
 
- return ItemGrade::scored(
- $result->score,
- $result->maxScore,
- $snapshot,
- $result->grade
- );
- }
+  return ItemGrade::scored(
+  $result->score,
+  $result->maxScore,
+  $snapshot,
+  $result->grade,
+  $result->penalty
+  );
+  }
 
 /**
  * Разбор задания для страницы результата работы.
@@ -305,7 +306,36 @@ $itemAttemptId = (int) $itemAttempt['id'];
  ], ''));
  }
 
- // ---------------------------------------------------------------- служебное
+    /**
+     * Короткий текст ответа — для подсказок в таблицах журнала.
+     *
+     * Берётся из снимка позиции, а не из базы плагина: в таблице ответов
+     * десятки, и запрос на каждый из них сделал бы страницу в разы тяжелее.
+     * Снимок и так сохранён рядом с результатом.
+     */
+    public function workAnswerSummary(string $snapshot): ?string
+    {
+        $data = json_decode($snapshot, true);
+
+        if (!is_array($data)) {
+            return null;
+        }
+
+        $items = $data['result']['items'] ?? [];
+        $texts = [];
+
+        foreach (is_array($items) ? $items : [] as $item) {
+            $text = trim((string) (is_array($item) ? ($item['answer_text'] ?? '') : ''));
+
+            if ($text !== '') {
+                $texts[] = $text;
+            }
+        }
+
+        return $texts === [] ? null : implode('; ', $texts);
+    }
+
+    // ---------------------------------------------------------------- служебное
 
  /**
  * Вопросы в виде, пригодном для отрисовки.

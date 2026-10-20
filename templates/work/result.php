@@ -71,6 +71,20 @@ $mode = (string) $assignment['grade_mode'];
                 <span class="metric-value"><?= $view->e($total->score) ?></span>
                 <span class="metric-label">из <?= $view->e($total->maxScore) ?></span>
             </div>
+
+            <?php if ($total->penalty > 0.0): ?>
+            <?php /*
+             * Штраф показан отдельной строкой, а не вычтен из набранного молча.
+             *
+             * Ученик должен видеть, из чего сложился его результат: сколько
+             * заработано, сколько снято и сколько осталось. Иначе «8 из 11»
+             * читалось бы как «8 из 11» же, а на деле означало бы девять.
+             */ ?>
+            <div class="metric">
+                <span class="metric-value">−<?= $view->e($total->penalty) ?></span>
+                <span class="metric-label">штраф, итого <?= $view->e($total->net()) ?></span>
+            </div>
+            <?php endif; ?>
         </div>
 
         <p class="muted">

@@ -16,6 +16,8 @@ final class AssignmentTotal
     /**
      * @param list<array<string,mixed>> $items сводка по позициям для показа
      * @param list<int>                $pendingPositions номера позиций, ждущих учителя
+     * @param float                    $penalty штраф работы: за лишние варианты,
+     *                                            за опоздание и ручной
      */
     public function __construct(
         public readonly float $score,
@@ -32,8 +34,21 @@ public readonly ?int $grade,
     public readonly string $color,
         public readonly bool $complete,
         public readonly array $items,
-        public readonly array $pendingPositions
+        public readonly array $pendingPositions,
+        public readonly float $penalty = 0.0
     ) {
+    }
+
+    /**
+     * Итог за вычетом штрафа: столько баллов работа стоит по-настоящему.
+     *
+     * Это то, из чего выводится оценка, и то, что видит ученик: набрал минус
+     * штраф. Сами составляющие — сколько набрано и сколько снято — показываются
+     * рядом, чтобы сводка сходилась в уме.
+     */
+    public function net(): float
+    {
+        return max(0.0, $this->score - $this->penalty);
     }
 
     /** Работа ждёт проверки учителем: итог пока неполный. */

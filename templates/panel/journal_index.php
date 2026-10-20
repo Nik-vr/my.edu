@@ -3,13 +3,15 @@
 declare(strict_types=1);
 
 /**
- * Журнал работ: по одному списку на класс.
+ * Журнал работ: выданные работы, собранные по классам.
+ *
+ * Сверху — по одному разделу на класс, внутри — работы, которые этому классу
+ * выдавали. Класс взят из выдачи, то есть тот, в котором ученик состоял на
+ * момент выдачи.
  *
  * @var \MyEdu\Core\View $view
- * @var list<array<string,mixed>> $rows
+ * @var list<array<string,mixed>> $groups
  */
-
-
 
 $view->crumbs([
         ['label' => 'Панель управления', 'url' => 'panel'],
@@ -23,71 +25,75 @@ $view->crumbs([
 
 <div class="card">
     <p class="card-subtitle">
-        Что сдали ученики и с каким результатом. Здесь учитель видит работу
-        глазами ученика: сколько заданий, сколько баллов и что осталось
-        на проверку.
+        Какие работы выдавали и кто их сдавал. Откройте работу — внутри вкладки
+        с классами, которым её выдавали, и результаты по каждому ученику.
     </p>
 </div>
+
+<?php if ($groups === []): ?>
 
 <div class="card">
-    <h2 class="card-title">Классы</h2>
-
-    <?php if ($rows === []):
-?>
-
-<p class="muted">
-            Классов пока нет. Создайте класс и заведите учеников — журнал
-            появится здесь сам.
-        </p>
-    <?php else: ?>
-        <div class="table-responsive">
-            <table class="table" data-datatable data-page-length="25">
-                <thead>
-                    <tr>
-                        <th scope="col">Класс</th>
-                        <th scope="col">Учеников</th>
-                        <th scope="col">Попыток</th>
-                        <th scope="col">Сдано</th>
-                        <th scope="col">Ждут проверки</th>
-                        <th scope="col" data-orderable="false"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($rows as $row): ?>
-                        <tr>
-                            <td>
-                                <strong><?= $view->e($row['name']) ?></strong>
-                                <?php if (!empty($row['title'])): ?>
-                                    <br><span class="muted"><?= $view->e($row['title']) ?></span>
-                                <?php endif; ?>
-                            </td>
-                            <td><?= $view->e((int) $row['student_count']) ?></td>
-                            <td><?= $view->e((int) $row['attempt_count']) ?></td>
-                            <td><?= $view->e((int) $row['finished_count']) ?></td>
-                            <td>
-                                <?php if ((int) $row['review_count'] > 0): ?>
-                                    <span class="status status-yellow">
-                                        <?= $view->e((int) $row['review_count']) ?>
-                                    </span>
-                                <?php else: ?>
-                                    <span class="muted">—</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="nowrap">
-                                <a class="btn btn-sm"
-                                   href="<?= $view->e($view->url('panel/journal/' . (int) $row['id'])) ?>">
-                                    Журнал
-                                </a>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    <?php endif; ?>
-
     <p class="muted">
-        Работы пока не закреплены за классами, поэтому в журнал попадают все
-        опубликованные работы, которые ученики этого класса выполняли.
+        Выданных работ пока нет. Журнал наполняется сам: как только работу
+        кому-то выдадут, она появится здесь.
     </p>
 </div>
+<?php endif; ?>
+
+<?php foreach ($groups as $group): ?>
+<section class="work-folder">
+    <details class="work-folder__box" open>
+    <summary class="work-folder__title">
+        <span class="work-folder__name"><?= $view->e($group['name']) ?></span>
+        <span class="work-folder__count">
+            <?= $view->e($view->count(count($group['works']), 'работа', 'работы', 'работ')) ?>
+        </span>
+    </summary>
+
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+            <tr>
+                <th scope="col">Работа</th>
+                <th scope="col">Выдано</th>
+                <th scope="col">Сдали</th>
+                <th scope="col">Ждут проверки</th>
+                <th scope="col" data-orderable="false"></th>
+            </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($group['works'] as $work): ?>
+                <tr>
+                    <td>
+                        <strong><?= $view->e($work['assignment_title']) ?></strong>
+                        <?php if (!empty($work['published_at'])): ?>
+                            <br><span class="muted">
+                                опубликована <?= $view->e(date('d.m.Y', strtotime((string) $work['published_at']))) ?>
+                            </span>
+                        <?php endif; ?>
+                    </td>
+                    <td><?= $view->e((int) $work['issued_count']) ?></td>
+                    <td><?= $view->e((int) $work['finished_count']) ?></td>
+                    <td>
+                        <?php if ((int) $work['review_count'] > 0): ?>
+                            <span class="status status-yellow">
+                                <?= $view->e((int) $work['review_count']) ?>
+                            </span>
+                        <?php else: ?>
+                            <span class="muted">—</span>
+                        <?php endif; ?>
+                    </td>
+                    <td class="nowrap">
+                        <a class="btn btn-sm"
+                           href="<?= $view->e($view->url('panel/journal/work/' . (int) $work['assignment_id'])) ?>">
+                            Журнал
+                        </a>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    </details>
+</section>
+<?php endforeach; ?>

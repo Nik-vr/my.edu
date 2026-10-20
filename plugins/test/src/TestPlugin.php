@@ -540,6 +540,14 @@ public function taskEditorUrl(TaskRef $task): ?string
         return $this->workHandler()->renderSubmitted($context);
     }
 
+    /**
+     * Короткий текст ответа — для подсказок в таблицах журнала.
+     */
+    public function workAnswerSummary(string $snapshot): ?string
+    {
+        return $this->workHandler()->workAnswerSummary($snapshot);
+    }
+
 public function canManageTask(TaskRef $task, int $userId): bool
       {
           $test = $this->testRepository()->find($task->taskId);

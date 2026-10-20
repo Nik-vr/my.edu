@@ -15,6 +15,7 @@ final class QuestionGrade
     /**
      * @param list<string>          $correctKeys  ключи вариантов, которые автор считает верными
      * @param array<string,mixed>   $detail       разбор для показа ученику
+     * @param float                 $penalty      штраф за лишний вариант, отдельно от балла
      */
     public function __construct(
         public readonly float $score,
@@ -22,7 +23,8 @@ final class QuestionGrade
         public readonly bool $isCorrect,
         public readonly string $expectedText = '',
         public readonly array $correctKeys = [],
-        public readonly array $detail = []
+        public readonly array $detail = [],
+        public readonly float $penalty = 0.0
     ) {
     }
 
@@ -37,9 +39,14 @@ final class QuestionGrade
      *
      * @param array<string,mixed> $detail
      */
-    public static function partial(float $score, float $maxScore, string $expected, array $detail = []): self
-    {
-        return new self($score, $maxScore, false, $expected, [], $detail);
+    public static function partial(
+        float $score,
+        float $maxScore,
+        string $expected,
+        array $detail = [],
+        float $penalty = 0.0
+    ): self {
+        return new self($score, $maxScore, false, $expected, [], $detail, $penalty);
     }
 
     /** @param array<string,mixed> $detail */

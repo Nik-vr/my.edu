@@ -1591,7 +1591,7 @@ final class AssignmentRepository
          */
         return $this->db->all(
             'SELECT i.*, r.id AS result_id, r.score, r.max_score, r.percent, r.grade,
-                    r.status AS result_status, r.needs_review, r.comment, r.checked_at,
+                    r.penalty, r.status AS result_status, r.needs_review, r.comment, r.checked_at,
                     r.checked_by, r.snapshot
                FROM assignment_items i
           LEFT JOIN assignment_item_results r
@@ -1631,147 +1631,200 @@ final class AssignmentRepository
         );
     }
 
-    // ---------------------------------------------------------------- журнал
+    // ------------------------------------------------------- журнал: новый вид
 
     /**
-     * Журнал: сводка по каждому классу.
+     * Журнал: выданные работы, сгруппированные по классам.
      *
-     * Работы не закреплены за классами (см. раздел «Что осталось»), поэтому
-     * в сводку попадают все опубликованные работы, которые ученики этого
-     * класса выполняли. Это осмысленный показатель даже сейчас: он показывает,
-     * сколько работы сдано и с каким результатом.
+     * В журнале попадают только те работы, которые кому-то выдавали: работа,
+     * которую никто не получал, результатов не имеет и в журнале была бы
+     * пустым разделом.
      *
-     * Средний процент считается по попыткам, а не по ученикам: один ученик с
-     * тремя пересдачами не должен весить в среднем больше, чем один с одной.
+     * Класс берётся из `assignment_issue_students` — это класс на момент
+     * выдачи, и он может отличаться от того, где ученик учится сейчас.
      *
-     * @return list<array<string,mixed>>
+     * @return list<array<string,mixed>> строки «класс + работа»
      */
-    public function journalByClass(int $classId): array
+    public function journalIssuedWorks(): array
     {
         return $this->db->all(
-            "SELECT u.id, u.full_name,
-                    COUNT(t.id) AS attempt_count,
-                    SUM(t.status = 'finished') AS finished_count,
-                    SUM(t.status = 'in_progress') AS in_progress_count,
-                    SUM(t.manual = 1 AND t.status = 'finished') AS review_count,
-                    ROUND(AVG(CASE WHEN t.status = 'finished' THEN t.percent END), 2) AS avg_percent,
-                    ROUND(AVG(CASE WHEN t.status = 'finished' THEN t.grade END), 2) AS avg_grade
-               FROM class_students cs
-               JOIN users u ON u.id = cs.student_id
-          LEFT JOIN assignment_attempts t
-                 ON t.student_id = u.id
-                AND t.assignment_id IN " . $this->visiblePublishedSql(':journal_class') . "
-              WHERE cs.class_id = :class
-           GROUP BY u.id, u.full_name
-           ORDER BY u.full_name",
-            ['class' => $classId, 'journal_class' => $classId]
+            "SELECT DISTINCT c.id AS class_id, c.name AS class_name, c.title AS class_title,
+                    a.id AS assignment_id, a.title AS assignment_title,
+                    a.published_at, a.status AS assignment_status,
+                    (SELECT COUNT(DISTINCT s2.student_id)
+                       FROM assignment_issue_students s2
+                       JOIN assignment_issues i2 ON i2.id = s2.issue_id
+                      WHERE i2.assignment_id = a.id
+                        AND s2.class_id = c.id) AS issued_count,
+                    (SELECT COUNT(*)
+                       FROM assignment_attempts t
+                      WHERE t.assignment_id = a.id
+                        AND t.status = 'finished') AS finished_count,
+                    (SELECT COUNT(*)
+                       FROM assignment_attempts t
+                      WHERE t.assignment_id = a.id
+                        AND t.manual = 1
+                        AND t.status = 'finished') AS review_count
+               FROM assignment_issue_students s
+               JOIN assignment_issues i ON i.id = s.issue_id
+               JOIN assignments a ON a.id = i.assignment_id
+               JOIN classes c ON c.id = s.class_id
+              ORDER BY c.name, a.title"
         );
     }
 
     /**
- * Работы, которые видны классу: выданные его ученикам.
-     *
-     * $classExpr — SQL-выражение с идентификатором класса: и связанный
-     * параметр, и коррелированная ссылка `c.id` из внешнего запроса. Подзапрос
-     * возвращается строкой, а не массивом id: классов в базе десятки, а id
-     * меняются при каждой правке, и такой список пришлось бы пересобирать на
-     * каждый запрос журнала.
-     *
-     * Класс ищется через `assignment_issue_students`, где он записан на момент
-     * выдачи. Именно поэтому в журнале видно ту работу, которая была выдана
-     * классу, даже если позже работа ушла в другой параллели.
-     */
-    private function visiblePublishedSql(string $classExpr): string
-    {
-        return "(SELECT a.id FROM assignments a
-                  WHERE a.status = 'published'
-                    AND EXISTS (
-                          SELECT 1
-                            FROM assignment_issues i
-                            JOIN assignment_issue_students s ON s.issue_id = i.id
-                           WHERE i.assignment_id = a.id
-                             AND s.class_id = " . $classExpr . "
-                        )
-                )";
-    }
-
-    /**
-     * Сводка по всем классам — для списка журналов.
+     * Классы, которым работа выдавалась: вкладки на странице работы.
      *
      * @return list<array<string,mixed>>
      */
-    public function journalSummary(): array
+    public function journalWorkClasses(int $assignmentId): array
     {
-        // Здесь класс не передан параметром, а берётся из внешней выборки,
-        // поэтому подзапрос видимых работ строится на ссылке c.id.
-        $visible = $this->visiblePublishedSql('c.id');
-
         return $this->db->all(
             "SELECT c.id, c.name, c.title,
-                    (SELECT COUNT(*) FROM class_students cs WHERE cs.class_id = c.id) AS student_count,
-                    (SELECT COUNT(DISTINCT t.id)
-                       FROM class_students cs
-                       JOIN assignment_attempts t ON t.student_id = cs.student_id
-                      WHERE cs.class_id = c.id
-                        AND t.assignment_id IN $visible
-                    ) AS attempt_count,
-                    (SELECT COUNT(*)
-                       FROM class_students cs
-                       JOIN assignment_attempts t ON t.student_id = cs.student_id
-                      WHERE cs.class_id = c.id
-                        AND t.status = 'finished'
-                        AND t.assignment_id IN $visible
-                    ) AS finished_count,
-                    (SELECT COUNT(*)
-                       FROM class_students cs
-                       JOIN assignment_attempts t ON t.student_id = cs.student_id
-                      WHERE cs.class_id = c.id
-                        AND t.manual = 1 AND t.status = 'finished'
-                        AND t.assignment_id IN $visible
-                    ) AS review_count
-               FROM classes c
-            ORDER BY c.name"
+                    COUNT(DISTINCT s.student_id) AS student_count
+               FROM assignment_issue_students s
+               JOIN assignment_issues i ON i.id = s.issue_id
+               JOIN classes c ON c.id = s.class_id
+              WHERE i.assignment_id = :assignment
+              GROUP BY c.id, c.name, c.title
+              ORDER BY c.name",
+            ['assignment' => $assignmentId]
         );
     }
 
     /**
-     * Попытки одного ученика по опубликованным работам.
+     * Ученики класса и их последняя попытка по работе.
      *
-     * Одна работа — одна строка: берётся последняя попытка, потому что
-     * пересдачи не должны превращать журнал в список дублей.
+     * Показывается последняя попытка: пересдачи не должны превращать журнал в
+     * список дублей, а учителю важен итоговый результат.
+     *
+     * Срок выдачи нужен для отметки опоздания: работа, сданная после срока,
+     * помечается в таблице отдельно.
      *
      * @return list<array<string,mixed>>
      */
-    public function journalForStudent(int $studentId, ?int $classId = null): array
+    public function journalWorkStudents(int $assignmentId, int $classId): array
     {
-        /*
-         * В журнале класса показываются только те работы, которые этому классу
-         * выдавались. У ученика попытка по чужой работе остаётся после того,
-         * как выдачу отозвали или класс сменили, и без фильтра журнал
-         * показывал бы чужой процент в сводке класса.
-         *
-         * $classId = null — показывать всё опубликованное. Так смотрит сам
-         * ученик в личном кабинете: там работа, которую он делал, остаётся его
-         * работой независимо от того, кому она адресована сейчас.
-         */
-        $visibility = $classId === null ? '' : ' AND a.id IN ' . $this->visiblePublishedSql(':journal_class');
+        return $this->db->all(
+            "SELECT DISTINCT u.id AS student_id, u.full_name,
+                    t.id AS attempt_id, t.attempt_no, t.status, t.score, t.max_score,
+                    t.percent, t.grade, t.penalty, t.late_penalty, t.manual_penalty,
+                    t.penalty_comment, t.started_at, t.finished_at, t.manual
+               FROM assignment_issue_students s
+               JOIN assignment_issues i ON i.id = s.issue_id
+               JOIN users u ON u.id = s.student_id
+          LEFT JOIN assignment_attempts t
+                 ON t.student_id = u.id
+                AND t.assignment_id = :assignment
+              WHERE i.assignment_id = :assignment2
+                AND s.class_id = :class
+              ORDER BY u.full_name, t.attempt_no",
+            [
+                'assignment' => $assignmentId,
+                'assignment2' => $assignmentId,
+                'class' => $classId,
+            ]
+        );
+    }
+
+    /**
+     * Срок выдачи работы для ученика — независимо от того, истёк он или нет.
+     *
+     * Для штрафа за опоздание срок нужен именно истёкшим: адрес, который
+     * отдаёт только действующие выдачи, истёкшую не находит — и «опоздал» и
+     * «срок ещё не наступил» оказались бы одним и тем же.
+     *
+     * Ученика может быть несколько выдач, и берётся самый поздний срок:
+     * последний, когда работа была доступна.
+     */
+    public function deadlineForStudent(int $assignmentId, int $studentId): ?string
+    {
+        $deadline = $this->db->value(
+            "SELECT MAX(i.available_until)
+               FROM assignment_issues i
+               JOIN assignment_issue_students s ON s.issue_id = i.id
+              WHERE i.assignment_id = :assignment
+                AND s.student_id = :student
+                AND i.available_until IS NOT NULL",
+            ['assignment' => $assignmentId, 'student' => $studentId]
+        );
+
+        return $deadline === null ? null : (string) $deadline;
+    }
+
+    /**
+     * Сроки выдачи работы: ученик и срок, под которым он её получил.
+     *
+     * Срок нужен для отметки опоздания: работа, сданная после него, помечается
+     * в таблице отдельным значком. У ученика может быть несколько выдач, и
+     * берётся самый поздний срок — последний, когда работа была доступна.
+     *
+     * @return array<int,string> срок по ученику
+     */
+    public function journalWorkDeadlines(int $assignmentId): array
+    {
+        $rows = $this->db->all(
+            "SELECT s.student_id, MAX(i.available_until) AS deadline
+               FROM assignment_issue_students s
+               JOIN assignment_issues i ON i.id = s.issue_id
+              WHERE i.assignment_id = :assignment
+                AND i.available_until IS NOT NULL
+              GROUP BY s.student_id",
+            ['assignment' => $assignmentId]
+        );
+
+        $deadlines = [];
+
+        foreach ($rows as $row) {
+            $deadlines[(int) $row['student_id']] = (string) $row['deadline'];
+        }
+
+        return $deadlines;
+    }
+
+    /**
+     * Результаты позиций по попыткам.
+     *
+     * Позиции отдаются в порядке редактора, а не в том, в каком их видел
+     * ученик: при перемешивании порядок выдачи другой, а учителю нужен
+     * порядок работы — тот, в котором задания стоят в редакторе.
+     *
+     * @param list<int> $attemptIds
+     * @return list<array<string,mixed>>
+     */
+    public function journalItemResults(array $attemptIds): array
+    {
+        if ($attemptIds === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_map(static fn (int $id): string => (string) $id, $attemptIds));
 
         return $this->db->all(
-            "SELECT t.*, a.title AS assignment_title
-               FROM assignment_attempts t
-               JOIN assignments a ON a.id = t.assignment_id
-              WHERE t.student_id = :user
-                AND a.status = 'published'"
-            . $visibility
-            . "
-                AND t.attempt_no = (
-                    SELECT MAX(last.attempt_no)
-                      FROM assignment_attempts last
-                     WHERE last.student_id = t.student_id
-                       AND last.assignment_id = t.assignment_id
-                )
-           ORDER BY a.published_at DESC, a.id DESC",
-            $classId === null ? ['user' => $studentId] : ['user' => $studentId, 'journal_class' => $classId]
+            "SELECT r.attempt_id, r.item_id, r.score, r.max_score, r.penalty, r.status,
+                    r.percent, r.snapshot, r.needs_review,
+                    i.position, i.weight, i.task_kind, i.plugin_id, i.task_id
+               FROM assignment_item_results r
+               JOIN assignment_items i ON i.id = r.item_id
+              WHERE r.attempt_id IN ($placeholders)
+              ORDER BY i.position"
+        );
+    }
+
+    /**
+     * Позиции работы в порядке редактора.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function journalWorkItems(int $assignmentId): array
+    {
+        return $this->db->all(
+            "SELECT id, position, weight, task_kind, plugin_id, task_id
+               FROM assignment_items
+              WHERE assignment_id = :assignment
+              ORDER BY position",
+            ['assignment' => $assignmentId]
         );
     }
 

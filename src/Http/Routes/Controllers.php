@@ -149,7 +149,7 @@ final class Controllers
         );
 
         $this->journal = new JournalController(
-            $view, $session, $auth, $app->get(ClassRepository::class), $assignments
+            $view, $session, $auth, $assignments, $app->get(PluginManager::class)
         );
 
         $this->ratings = new RatingController($view, $auth, $app->get(RatingRepository::class));

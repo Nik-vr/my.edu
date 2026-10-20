@@ -124,6 +124,30 @@ final class AttemptReviewController
         $marks = $request->postArray('mark');
 
         /*
+         * Ручной штраф учителя — величина работы, а не задания.
+         *
+         * Он ставится на саму попытку и может быть оставлен без объяснения или
+         * с комментарием: объяснение видит и учитель, и ученик, и в сводке
+         * работы штраф стоит рядом с набрано и итого.
+         *
+         * Форма штрафа отдельная от формы проверки, поэтому о смене штрафа
+         * говорит её собственная метка: иначе пустая форма проверки, отправленная
+         * без единого балла, обнулила бы штраф вместе с остальным.
+         */
+        $penaltyChanged = $request->postParam('penalty_form') === '1';
+
+        if ($penaltyChanged) {
+            $manualPenalty = $this->number($request->postParam('manual_penalty')) ?? 0.0;
+            $manualPenalty = max(0.0, round($manualPenalty, 2));
+            $penaltyComment = trim((string) $request->postParam('penalty_comment', ''));
+
+            $this->assignments->updateAttempt([
+                'manual_penalty'  => $manualPenalty,
+                'penalty_comment' => $penaltyComment !== '' ? $penaltyComment : null,
+            ], ['id' => $attemptId]);
+        }
+
+        /*
          * Проверяются задания этой попытки — по одному на строку. Альтернативы
          * ученику не выпадали, результатов у них нет, и править их нечего:
          * в форме их попросту не будет.
@@ -194,13 +218,15 @@ final class AttemptReviewController
             $checked++;
         }
 
-        if ($checked === 0) {
+        if ($checked === 0 && !$penaltyChanged) {
             $this->session->set('flash_error', 'Нечего сохранять: нет позиций, ждущих проверки.');
         } else {
             // Итог пересчитывается тем же правилом, что и при автопроверке.
             $this->works->updateTotals($attemptId, false);
 
-            $this->session->set('flash_notice', 'Проверка сохранена, итог пересчитан');
+            $this->session->set('flash_notice', $checked === 0
+                ? 'Штраф сохранён, итог пересчитан'
+                : 'Проверка сохранена, итог пересчитан');
         }
 
         return $this->redirect(sprintf(

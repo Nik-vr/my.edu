@@ -408,6 +408,7 @@ CREATE TABLE IF NOT EXISTS `assignments` (
   `time_limit`   SMALLINT UNSIGNED NULL COMMENT 'лимит времени на попытку, минут',
   `shuffle_items` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'выдавать задания ученику в случайном порядке',
   `no_copy`       TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'запретить копирование текста задания при выполнении',
+  `late_penalty`  DECIMAL(8,2) NOT NULL DEFAULT 0.00 COMMENT 'штраф в баллах за сдачу после срока',
   `criteria`     TEXT         NULL,
   `published_at` DATETIME     NULL,
   `created_at`   DATETIME     NOT NULL,
@@ -542,6 +543,14 @@ CREATE TABLE IF NOT EXISTS `assignment_attempts` (
   `max_score`     DECIMAL(8,2)      NULL,
   `percent`       DECIMAL(5,2)      NULL,
   `grade`         TINYINT UNSIGNED  NULL,
+  `penalty`       DECIMAL(8,2)      NOT NULL DEFAULT 0.00
+                    COMMENT 'штраф попытки: за лишние варианты, за опоздание и ручной',
+  `late_penalty`  DECIMAL(8,2)      NOT NULL DEFAULT 0.00
+                    COMMENT 'штраф за сдачу после срока, зафиксирован при сдаче',
+  `manual_penalty` DECIMAL(8,2)     NOT NULL DEFAULT 0.00
+                    COMMENT 'штраф, поставленный учителем вручную',
+  `penalty_comment` TEXT            NULL
+                    COMMENT 'комментарий учителя к ручному штрафу',
   `manual`        TINYINT(1)        NOT NULL DEFAULT 0,
   `started_at`    DATETIME          NOT NULL,
   `finished_at`   DATETIME          NULL,
@@ -567,6 +576,8 @@ CREATE TABLE IF NOT EXISTS `assignment_item_results` (
   `score`         DECIMAL(8,2)     NULL,
   `max_score`     DECIMAL(8,2)     NULL,
   `percent`       DECIMAL(5,2)     NULL,
+  `penalty`       DECIMAL(8,2)     NOT NULL DEFAULT 0.00
+                  COMMENT 'штраф за лишние варианты в этом задании, отдельно от балла',
   `grade`         TINYINT UNSIGNED NULL,
   `status`        ENUM('pending','correct','partial','wrong','skipped') NOT NULL DEFAULT 'pending',
   `needs_review`  TINYINT(1)       NOT NULL DEFAULT 0,

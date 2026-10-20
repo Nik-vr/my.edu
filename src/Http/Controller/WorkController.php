@@ -421,9 +421,52 @@ if ($this->expired($attempt)) {
             return $this->resultRedirect($attempt);
         }
 
+        /*
+         * Штраф за опоздание фиксируется до подсчёта итога: он должен попасть
+         * в тот же пересчёт, что и баллы, иначе сводка показала бы «набрано»
+         * без вычета.
+         */
+        $this->applyLatePenalty($attempt);
+
         $this->gradeAttempt($attempt);
 
         return $this->resultRedirect($this->assignments->findAttempt($attemptId) ?? $attempt);
+    }
+
+    /**
+     * Штраф за сдачу после срока.
+     *
+     * Срок берётся у выдачи, по которой ученик получил работу: у разных
+     * выдач сроки разные, и срок «всей работы» не значил бы ничего.
+     *
+     * Штраф фиксируется один раз — в момент сдачи. Срок потом может быть
+     * изменён, и опоздавшая работа не должна от этого вдруг стать вовремя.
+     *
+     * @param array<string,mixed> $attempt
+     */
+    private function applyLatePenalty(array $attempt): void
+    {
+        $assignmentId = (int) $attempt['assignment_id'];
+        $assignment = $this->assignments->find($assignmentId);
+        $penalty = max(0.0, (float) ($assignment['late_penalty'] ?? 0.0));
+
+        if ($penalty <= 0.0) {
+            return;
+        }
+
+        $deadline = $this->assignments->deadlineForStudent(
+            $assignmentId,
+            (int) $attempt['student_id']
+        );
+
+        if ($deadline === null || $deadline === '' || date('Y-m-d H:i:s') <= $deadline) {
+            return;
+        }
+
+        $this->assignments->updateAttempt(
+            ['late_penalty' => $penalty],
+            ['id' => (int) $attempt['id']]
+        );
     }
 
     /**
@@ -444,7 +487,13 @@ if ($this->expired($attempt)) {
         $rows = $this->assignments->resultsForAttempt((int) $attempt['id']);
 
         $total = GradeAggregator::create($this->config, $this->criteria($assignment))
-            ->aggregate($rows, (string) $assignment['grade_mode'], (string) ($assignment['criteria_mode'] ?? 'percent'));
+            ->aggregate(
+                $rows,
+                (string) $assignment['grade_mode'],
+                (string) ($assignment['criteria_mode'] ?? 'percent'),
+                max(0.0, (float) ($attempt['late_penalty'] ?? 0.0))
+                    + max(0.0, (float) ($attempt['manual_penalty'] ?? 0.0))
+            );
 
         $showResults = (int) $assignment['show_results'] === 1;
         $reviews = $this->renderReviews($attempt, $rows, $showResults);
@@ -523,14 +572,26 @@ if ($this->expired($attempt)) {
 
             $needsReview = $needsReview || $grade->needsReview;
 
+            /*
+             * Штраф позиции пишется отдельно от балла.
+             *
+             * Балл — это то, что заработано за верную часть ответа, а штраф —
+             * то, что снято за лишнее. В сводке работы они показываются порознь:
+             * «набрано, штраф, итого».
+             */
             $this->assignments->saveResult($attemptId, (int) $item['id'], [
                 'score'        => $grade->score,
+                'penalty'      => $grade->penalty,
                 'max_score'    => $grade->maxScore,
                 'percent'      => $grade->percent(),
                 'grade'        => $grade->grade,
                 'status'       => $grade->needsReview
                     ? 'pending'
-                    : $this->itemStatus($grade->score, $grade->maxScore, $grade->needsReview),
+                    : $this->itemStatus(
+                        max(0.0, $grade->score - $grade->penalty),
+                        $grade->maxScore,
+                        $grade->needsReview
+                    ),
                 'needs_review' => $grade->needsReview ? 1 : 0,
                 'snapshot'     => self::encode($grade->snapshot),
                 'checked_at'   => date('Y-m-d H:i:s'),
@@ -555,8 +616,23 @@ if ($this->expired($attempt)) {
 
         $rows = $this->assignments->resultsForAttempt($attemptId);
 
+        /*
+         * Штраф попытки складывается из двух частей: за опоздание (оно
+         * фиксируется при сдаче и с тех пор не меняется) и ручной (его ставит
+         * учитель при проверке). Штраф за лишние варианты сидит в позициях и
+         * приходит из них — здесь считается только то, что относится к самой
+         * попытке.
+         */
+        $attemptPenalty = max(0.0, (float) ($attempt['late_penalty'] ?? 0.0))
+            + max(0.0, (float) ($attempt['manual_penalty'] ?? 0.0));
+
         $total = GradeAggregator::create($this->config, $this->criteria($attempt))
-            ->aggregate($rows, (string) $attempt['grade_mode'], (string) ($attempt['criteria_mode'] ?? 'percent'));
+            ->aggregate(
+                $rows,
+                (string) $attempt['grade_mode'],
+                (string) ($attempt['criteria_mode'] ?? 'percent'),
+                $attemptPenalty
+            );
 
         $pending = $needsReview || $total->isPending();
         $now = date('Y-m-d H:i:s');
@@ -566,6 +642,7 @@ if ($this->expired($attempt)) {
             'max_score' => $total->maxScore > 0.0 ? $total->maxScore : null,
             'percent'   => $total->percent,
             'grade'     => $total->grade,
+            'penalty'   => $total->penalty,
             'manual'    => $pending ? 1 : 0,
             'status'    => AssignmentRepository::ATTEMPT_FINISHED,
             'checked_at' => $pending ? null : $now,
