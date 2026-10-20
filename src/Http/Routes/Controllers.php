@@ -16,6 +16,7 @@ use MyEdu\Core\App;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
 use MyEdu\Core\Database;
+use MyEdu\Core\SystemUpdate;
 use MyEdu\Core\ImageUpload;
 use MyEdu\Core\MailerFactory;
 use MyEdu\Core\Session;
@@ -35,6 +36,7 @@ use MyEdu\Http\Controller\Panel\PluginController;
 use MyEdu\Http\Controller\Panel\RatingController;
 use MyEdu\Http\Controller\Panel\StudentController;
 use MyEdu\Http\Controller\Panel\SubjectController;
+use MyEdu\Http\Controller\Panel\UpdateController;
 use MyEdu\Http\Controller\Panel\UserController;
 use MyEdu\Http\Controller\Panel\WorkTransferController;
 use MyEdu\Http\Controller\PortalController;
@@ -81,6 +83,7 @@ final class Controllers
     public readonly SubjectController $subjects;
     public readonly StudentController $students;
     public readonly HealthController $health;
+    public readonly UpdateController $update;
 
     public function __construct(App $app)
     {
@@ -112,7 +115,7 @@ final class Controllers
 
         $this->users = new UserController(
             $app, $db, $view, $session, $csrf, $config, $auth, $users, $settings,
-            $app->get(AuthService::class), $uploads, $baseUrl
+            $app->get(AuthService::class), $uploads, $app->get(SystemUpdate::class), $baseUrl
         );
 
         $this->plugins = new PluginController(
@@ -179,6 +182,14 @@ final class Controllers
          */
         $this->health = new HealthController(
             $app, $db, $config, $app->get(MailerFactory::class)
+        );
+
+        // Обновление системы: отдельный контроллер, потому что дело это не о
+        // настройках сайта, а о файлах, из которых сайт работает.
+        $this->update = new UpdateController(
+            $csrf,
+            $session,
+            $app->get(SystemUpdate::class)
         );
     }
 }

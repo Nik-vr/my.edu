@@ -78,6 +78,7 @@ $suites = @(
     @{ Name = 'variable'; Path = 'plugins/variable/tests/run_variable_tests.php'; Http = $false },
     @{ Name = 'aggregation'; Path = 'tests/run_grade_aggregation_tests.php'; Http = $false },
     @{ Name = 'schema'; Path = 'tests/run_schema_tests.php'; Http = $false },
+    @{ Name = 'update'; Path = 'tests/run_update_tests.php'; Http = $false },
     @{ Name = 'transfer'; Path = 'tests/run_transfer_tests.php'; Http = $false },
     @{ Name = 'plugin'; Path = 'tests/run_plugin_tests.php'; Http = $false },
     @{ Name = 'ui'; Path = 'tests/run_ui_rules_tests.php'; Http = $false },

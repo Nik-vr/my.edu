@@ -19,6 +19,7 @@ use MyEdu\Core\HttpException;
 use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\Settings;
+use MyEdu\Core\SystemUpdate;
 use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
 use MyEdu\Ui\Messages;
@@ -46,6 +47,7 @@ final class UserController
         private readonly Settings $settings,
         private readonly AuthService $authService,
         private readonly ImageUpload $uploads,
+        private readonly SystemUpdate $update,
         private readonly string $baseUrl
     ) {
     }
@@ -60,9 +62,19 @@ final class UserController
      */
     public function settings(Request $request): Response
     {
+        /*
+         * Сведения об обновлении тянутся с GitHub и могут не прийти: сервер без
+         * доступа в интернет — обычное дело для школьного хостинга. Тогда блок
+         * обновления говорит, что проверить не удалось, и ничего не ломает.
+         */
+        $release = $this->update->latest();
+
         return $this->render('panel/settings', [
             'title'      => 'Настройки сайта',
             'schoolName' => $this->settings->schoolName(),
+            'release'    => $release,
+            'version'    => $this->update->currentVersion(),
+            'hasUpdate'  => $this->update->hasUpdate($release),
             'notice'     => $this->session->pull('flash_notice'),
             'error'      => $this->session->pull('flash_error'),
         ]);

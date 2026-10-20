@@ -819,3 +819,7 @@ Write-Host ''
 Write-Host '  Дальше на GitHub: Repository → Releases → Create a new release' -ForegroundColor DarkGray
 Write-Host "  выберите тег $tag и напишите то, что уже есть в разделе changelog." -ForegroundColor DarkGray
 Write-Host ''
+Write-Host '  К релизу нужно прикрепить архив: соберите его скриптом tools\make_release.ps1' -ForegroundColor DarkGray
+Write-Host '  и прикрепите получившийся my.edu-<версия>.zip. Без архива обновление на сервере' -ForegroundColor DarkGray
+Write-Host '  не сработает: система обновляется именно из файла релиза.' -ForegroundColor DarkGray
+Write-Host ''

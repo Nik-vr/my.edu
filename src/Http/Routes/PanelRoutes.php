@@ -38,8 +38,9 @@ final class PanelRoutes implements RouteFile
         $router->get('/panel/users/{id}', [$c->users, 'edit'], Role::USERS_MANAGE);
         $router->post('/panel/users/{id}', [$c->users, 'saveProfile'], Role::USERS_MANAGE);
         $router->post('/panel/users/{id}/avatar', [$c->users, 'saveAvatar'], Role::USERS_MANAGE);
-        $router->get('/panel/settings', [$c->users, 'settings'], Role::USERS_MANAGE);
-        $router->post('/panel/settings', [$c->users, 'saveSettings'], Role::USERS_MANAGE);
+    $router->get('/panel/settings', [$c->users, 'settings'], Role::USERS_MANAGE);
+    $router->post('/panel/settings', [$c->users, 'saveSettings'], Role::USERS_MANAGE);
+    $router->post('/panel/settings/update', [$c->update, 'apply'], Role::USERS_MANAGE);
 
         // Каталог предметов. Порядок тот же, что у пользователей: литеральные
         // адреса раньше адресов с {id}, иначе «store» и «status» попали бы

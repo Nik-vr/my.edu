@@ -224,12 +224,13 @@ php tests\run_school_tests.php             классы, ученики, пре�
 php tests\run_plugin_tests.php             плагины и миграции
 php tests\run_grade_aggregation_tests.php  подсчёт итогов
 php tests\run_transfer_tests.php           перенос работ между инсталляциями
+php tests\run_update_tests.php             обновление системы: версии и распаковка
 plugins\test\tests\run_grading_tests.php   проверка заданий плагина «Тест»
 plugins\variable\tests\run_variable_tests.php  проверка заданий плагина «Вариативная задача»
 php tests\run_http_tests.php               маршруты и права
 ```
 
-Наборов двенадцать, и порядок в `tools\run_tests.ps1` задан не произвольно:
+Наборов тринадцать, и порядок в `tools\run_tests.ps1` задан не произвольно:
 чистящие идут раньше, сеющий — последним.
 
 Подробности разработки — в [ПРОДОЛЖИТЬ_РАБОТУ.md](ПРОДОЛЖИТЬ_РАБОТУ.md).

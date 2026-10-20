@@ -1266,9 +1266,9 @@ $table = $map->all();
  * вернулись два адреса, без которых работа не публикуется и не оценивается:
  * сохранение шкалы и сама публикация.
  */
-$t->equals(124, count($table), 'в карте 124 адреса ядра');
+$t->equals(125, count($table), 'в карте 125 адресов ядра');
 $t->equals(
-    ['AuthRoutes' => 19, 'PanelRoutes' => 70, 'PublicRoutes' => 3, 'SchoolRoutes' => 23, 'WorkRoutes' => 9],
+    ['AuthRoutes' => 19, 'PanelRoutes' => 71, 'PublicRoutes' => 3, 'SchoolRoutes' => 23, 'WorkRoutes' => 9],
     $perFile,
     'каждый файл карты даёт свою часть адресов'
 );

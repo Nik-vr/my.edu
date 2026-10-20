@@ -15,6 +15,8 @@ use MyEdu\Auth\TokenRepository;
 use MyEdu\Auth\UserRepository;
 use MyEdu\Core\App;
 use MyEdu\Core\Database;
+use MyEdu\Core\DatabaseDump;
+use MyEdu\Core\SystemUpdate;
 use MyEdu\Core\View;
 use MyEdu\Http\Presenter\PanelNav;
 use MyEdu\Plugin\PluginManager;
@@ -125,6 +127,25 @@ final class Wiring
             $a->get(Auth::class),
             $a->get(AssignmentRepository::class),
             $a->get(Database::class)
+        ));
+
+        /*
+         * Обновление системы из релизов GitHub.
+         *
+         * Копия базы снимается тем же кодом, что и перед миграциями: правило
+         * одно, и две разные копии расходились бы при первой же правке.
+         */
+        $app->define(SystemUpdate::class, static fn (App $a): SystemUpdate => new SystemUpdate(
+            $a,
+            $a->config(),
+            new DatabaseDump(
+                $a,
+                $a->config(),
+                $a->get(Database::class),
+                // Обновление без копии базы не продолжается: файлы уже заменены
+                // и откатывать их нечем.
+                true
+            )
         ));
     }
 }
