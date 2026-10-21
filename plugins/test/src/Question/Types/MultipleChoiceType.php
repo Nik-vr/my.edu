@@ -65,7 +65,10 @@ final class MultipleChoiceType implements QuestionTypeInterface
 
     public function payload(Question $question): array
     {
-        $options = $question->optionsOfKind(Question::KIND_OPTION);
+        $options = $question->visibleOptionsOfKind(
+            Question::KIND_OPTION,
+            $this->correctKeys($question)
+        );
 
         if ($question->shouldShuffleOptions()) {
             $options = $question->shuffled($options);

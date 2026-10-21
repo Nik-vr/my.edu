@@ -508,10 +508,37 @@ final class Ui
             $this->e('Удалить вариант')
         );
 
+        /*
+         * Отметка «обязательно показывать» — не у всех типов заданий.
+         *
+         * Имя поля задаёт вызывающий: пустое имя — значит, отметки у этого типа
+         * нет, и в строку варианта она не попадает. Так список вариантов у
+         * текстового ответа остался бы прежним.
+         */
+        $alwaysName = trim((string) ($o['alwaysName'] ?? ''));
+        $always = '';
+
+        if ($alwaysName !== '') {
+            $alwaysId = $this->uniqueId('always-' . $index);
+
+            $always = sprintf(
+                '<label class="option-row__always" for="%s">'
+                . '<input type="checkbox" name="%s" value="%d" id="%s"%s>'
+                . '<span>%s</span></label>',
+                $this->e($alwaysId),
+                $this->e($alwaysName . '[]'),
+                $index,
+                $this->e($alwaysId),
+                !empty($o['alwaysChecked']) ? ' checked' : '',
+                $this->e((string) ($o['alwaysLabel'] ?? 'Обязательно показывать'))
+            );
+        }
+
         return sprintf(
             '<div class="option-row" data-row-index="%d">'
             . '<input type="text" name="%s" value="%s" placeholder="%s">'
             . '<label class="option-row__pick" for="%s">%s<span>%s</span></label>'
+            . '%s'
             . '%s'
             . '</div>',
             $index,
@@ -521,6 +548,7 @@ final class Ui
             $this->e($markId),
             $mark,
             $this->e($o['markLabel'] ?? 'правильный'),
+            $always,
             $drop
         );
     }
@@ -551,6 +579,9 @@ final class Ui
                 'markLabel' => $o['markLabel'] ?? 'правильный',
                 'checked'   => in_array($i, $checked, true),
                 'drop'      => $o['drop'] ?? true,
+                'alwaysName' => $o['alwaysName'] ?? '',
+                'alwaysLabel' => $o['alwaysLabel'] ?? 'Обязательно показывать',
+                'alwaysChecked' => in_array($i, (array) ($o['alwaysChecked'] ?? []), true),
             ]);
         }
 

@@ -406,6 +406,7 @@ final class TestEditorRepository
                 'text'        => $text,
                 'position'    => $position,
                 'pair_key'    => $option['pair_key'] ?? null,
+                'always_show' => (int) ($option['always_show'] ?? 0) === 1 ? 1 : 0,
             ]);
         }
     }

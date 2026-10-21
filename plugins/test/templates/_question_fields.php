@@ -105,6 +105,34 @@ $checkedIndexes = static function (array $keys, array $correct): array {
 };
 
 /*
+ * Номера строк, отмеченных как «обязательно показывать».
+ *
+ * Отметка хранится у варианта, а строки формы и варианты — одно и то же
+ * в том же порядке, поэтому сопоставление идёт по номеру строки.
+ */
+$alwaysIndexes = static function (array $form): array {
+    $out = [];
+
+    foreach ((array) ($form['options'] ?? []) as $index => $option) {
+        if ((int) ($option['always_show'] ?? 0) === 1) {
+            $out[] = (int) $index;
+        }
+    }
+
+    return $out;
+};
+
+$alwaysChecked = $alwaysIndexes($form);
+
+/*
+ * Отметка «обязательно показывать» есть только у видов, где варианты есть и
+ * их можно выбирать случайно. У остальных видов она была бы бессмысленной: не
+ * из чего выбирать.
+ */
+$withChoices = in_array($formType, ['single_choice', 'multiple_choice'], true);
+$alwaysName = $withChoices ? 'option_always_show' : '';
+
+/*
  * Сколько строк вариантов показывать в новом вопросе.
  *
  * Три, а не восемь: пустые строки занимают место и тянут взгляд вниз по
@@ -148,6 +176,8 @@ $optionRows = max(3, count($texts));
         'kind'    => 'single',
         'minimum' => $optionRows,
         'checked' => $checkedIndexes($keys, $correct),
+        'alwaysName' => $alwaysName,
+        'alwaysChecked' => $alwaysChecked,
         'help'    => 'Отметьте переключателем правильный вариант справа. Нужно минимум два '
             . 'заполненных варианта — остальные добавьте кнопкой ниже.',
     ])
@@ -163,6 +193,8 @@ $optionRows = max(3, count($texts));
         'kind'    => 'multiple',
         'minimum' => $optionRows,
         'checked' => $checkedIndexes($keys, $correct),
+        'alwaysName' => $alwaysName,
+        'alwaysChecked' => $alwaysChecked,
     ])
 )) ?>
 

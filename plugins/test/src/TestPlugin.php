@@ -795,7 +795,7 @@ public function canManageTask(TaskRef $task, int $userId): bool
             $options = [];
 
             foreach ($db->all(
-                'SELECT kind, value_key, text, position, pair_key FROM question_options WHERE question_id = :q ORDER BY position, id',
+                'SELECT kind, value_key, text, position, pair_key, always_show FROM question_options WHERE question_id = :q ORDER BY position, id',
                 ['q' => (int) $question['id']]
             ) as $option) {
                 $options[] = [

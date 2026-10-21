@@ -291,6 +291,8 @@ CREATE TABLE IF NOT EXISTS `question_options` (
   `text`        TEXT         NOT NULL,
   `position`    SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   `pair_key`    VARCHAR(64)  NULL,
+  `always_show` TINYINT(1)    NOT NULL DEFAULT 0
+  COMMENT 'вариант показывается всегда, даже при выборе случайных',
   PRIMARY KEY (`id`),
   KEY `idx_qopt_question` (`question_id`, `kind`, `position`),
   CONSTRAINT `fk_qopt_question` FOREIGN KEY (`question_id`) REFERENCES `questions` (`id`) ON DELETE CASCADE

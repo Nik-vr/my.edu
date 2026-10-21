@@ -921,4 +921,52 @@ $legacy = GradeAggregator::create($legacyConfig);
 $t->equals(5, $legacy->gradeForScore(20.0)['grade'], 'старая шкала без верхних границ даёт пятёрку за полный балл');
 $t->equals(4, $legacy->gradeForScore(12.0)['grade'], 'старая шкала даёт четвёрку между границами');
 
+/*
+ * Сколько вариантов показывать ученику.
+ *
+ * Правило: показывается ровно N вариантов, но отмеченные как «обязательно
+ * показывать» и правильный ответ попадают в выбор в любом случае. Иначе вопрос
+ * останется без верного варианта и станет неразрешимым, а это молча ломает
+ * проверку.
+ */
+$t->group('Выбор случайных вариантов ответа');
+
+$variantOptions = [
+    ['kind' => 'option', 'value_key' => 'a', 'text' => 'А', 'position' => 1, 'always_show' => 1],
+    ['kind' => 'option', 'value_key' => 'b', 'text' => 'Б', 'position' => 2, 'always_show' => 0],
+    ['kind' => 'option', 'value_key' => 'c', 'text' => 'В', 'position' => 3, 'always_show' => 0],
+    ['kind' => 'option', 'value_key' => 'd', 'text' => 'Г', 'position' => 4, 'always_show' => 0],
+];
+
+$limited = new Question(
+    1,
+    'single_choice',
+    'Вопрос',
+    1.0,
+    true,
+    null,
+    ['random_options' => 2, 'correct' => 'c'],
+    $variantOptions
+);
+
+$shown = array_column($limited->visibleOptionsOfKind(Question::KIND_OPTION, ['c']), 'value_key');
+
+$t->equals(2, count($shown), 'показано ровно столько вариантов, сколько велено');
+$t->is(in_array('a', $shown, true), 'вариант с отметкой «обязательно показывать» не выпал');
+$t->is(in_array('c', $shown, true), 'правильный ответ не выпал');
+$t->is(count($shown) === count(array_unique($shown)), 'варианты не повторяются');
+
+$all = new Question(1, 'single_choice', 'Вопрос', 1.0, true, null, ['random_options' => 0], $variantOptions);
+
+$t->equals(
+    4,
+    count($all->visibleOptionsOfKind(Question::KIND_OPTION, ['c'])),
+    'без числа показываются все варианты'
+);
+
+$t->equals(
+    4,
+    count($all->visibleOptionsOfKind(Question::KIND_OPTION, [])),
+    'без числа показываются все варианты, даже если правильный не отмечен'
+);
 exit($t->report());

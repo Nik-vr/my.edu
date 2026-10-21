@@ -456,32 +456,35 @@ try {
  *
  * @return array{0:array<string,mixed>,1:list<array<string,mixed>>}
  */
- private function readSingleChoice(Request $request): array
- {
- $keyMap = [];
- $options = $this->readOptions($request, $keyMap);
+  private function readSingleChoice(Request $request): array
+  {
+    $keyMap = [];
+    $options = $this->readOptions($request, $keyMap);
 
- /*
- * Отметка приходит номером строки формы и превращается в ключ варианта.
- *
- * Поле зовётся correct_single, а не correct: обе формы выбора стоят в
- * одной странице, и при общем имени PHP складывал их в одно место —
- * `correct=1` от кружка перекрывался `correct[]=1` от галочки того же
- * вопроса, значение становилось массивом, и одиночный выбор читал его
- * как «отметки нет». Проявлялось это только у сохранённого вопроса: у
- * нового в чужом блоке отметки ещё нет, и он проходил.
- */
- $row = (string) $request->postParam('correct_single', '');
- $correct = $this->resolveCorrect($row, $keyMap, count($options));
+    /*
+     * Отметка приходит номером строки формы и превращается в ключ варианта.
+     *
+     * Поле зовётся correct_single, а не correct: обе формы выбора стоят в
+     * одной странице, и при общем имени PHP складывал их в одно место —
+     * `correct=1` от кружка перекрывался `correct[]=1` от галочки того же
+     * вопроса, значение становилось массивом, и одиночный выбор читал его
+     * как «отметки нет». Проявлялось это только у сохранённого вопроса: у
+     * нового в чужом блоке отметки ещё нет, и он проходил.
+     */
+    $row = (string) $request->postParam('correct_single', '');
+    $correct = $this->resolveCorrect($row, $keyMap, count($options));
 
- // Пустой правильный ответ не считаем: тест без верного варианта
- // невозможно пройти правильно, и это должен заметить автор.
- if ($correct === '') {
- throw new InvalidAnswerException('Отметьте правильный вариант ответа', 'correct_single');
- }
+    // Пустой правильный ответ не считаем: тест без верного варианта
+    // невозможно пройти правильно, и это должен заметить автор.
+    if ($correct === '') {
+        throw new InvalidAnswerException('Отметьте правильный вариант ответа', 'correct_single');
+    }
 
- return [['correct' => $correct], $options];
- }
+    $config = ['correct' => $correct];
+    $this->readRandomOptions($request, $config, $options, $keyMap);
+
+    return [$config, $options];
+    }
 
  /**
  * Ключ варианта по тому, что прислала форма.
@@ -540,15 +543,85 @@ try {
  throw new InvalidAnswerException('Отметьте хотя бы один правильный вариант', 'correct_multi');
  }
 
- $partial = $this->checkedFlag($request, 'partial');
- $penalty = $this->number($request->postParam('miss_penalty'));
+  $partial = $this->checkedFlag($request, 'partial');
+  $penalty = $this->number($request->postParam('miss_penalty'));
 
- return [[
- 'correct' => $correct,
- 'partial' => $partial,
- 'miss_penalty' => $penalty !== null && $penalty >= 0.0 ? min($penalty, 1.0) : 0.5,
- ], $options];
- }
+  $config = [
+    'correct' => $correct,
+    'partial' => $partial,
+    'miss_penalty' => $penalty !== null && $penalty >= 0.0 ? min($penalty, 1.0) : 0.5,
+  ];
+  $this->readRandomOptions($request, $config, $options, $keyMap);
+
+  return [$config, $options];
+  }
+
+    /**
+     * Сколько вариантов показывать ученику и какие показывать всегда.
+     *
+     * Число приходит из настроек вопроса, а отметки «обязательно показывать» —
+     * из строк вариантов. Если отмечено больше, чем показывать, автору
+     * говорят: либо показывать больше, либо снять лишние отметки. Иначе часть
+     * отметок молча пропала бы, и автор не узнал бы, что его правило не
+     * сработало.
+     *
+     * Номер строки формы и номер варианта — не одно и то же: пустые строки
+     * пропускаются, и варианты считаются заново. Поэтому отметка переводится
+     * через ключ варианта, а не берётся по номеру строки.
+     *
+     * @param array<string,mixed>       $config  настройки вопроса
+     * @param list<array<string,mixed>> $options варианты вопроса
+     * @param array<string,string>      $keyMap  номер строки формы → ключ варианта
+     */
+    private function readRandomOptions(Request $request, array &$config, array $options, array $keyMap): void
+    {
+    $always = 0;
+
+    foreach ($request->postArray('option_always_show') as $index => $value) {
+        if (!is_scalar($value) || (string) $value === '') {
+            continue;
+        }
+
+        $key = $keyMap[(string) $index] ?? null;
+
+        if ($key === null) {
+            continue;
+        }
+
+        foreach ($options as $position => $option) {
+            if ((string) ($option['value_key'] ?? '') === $key) {
+                $options[$position]['always_show'] = 1;
+                $always++;
+            }
+        }
+    }
+
+    $limit = (int) ($request->postParam('random_options') ?? 0);
+
+    if ($limit < 0) {
+        $limit = 0;
+    }
+
+    if ($limit > 0 && $always > $limit) {
+        throw new InvalidAnswerException(
+            'Отмечено ' . $always . ' вариантов как обязательные, а показывать можно '
+            . $limit . '. Увеличьте число или снимите лишние отметки «Обязательно показывать».',
+            'random_options'
+        );
+    }
+
+    /*
+     * Ноль — это «показывать все», и в настройках его незачем хранить.
+     *
+     * Заодно снимается старое значение: автор поставил три, потом вернул
+     * «показывать все», и без этого в вопросе осталось бы три.
+     */
+    if ($limit > 0) {
+        $config['random_options'] = $limit;
+    } else {
+        unset($config['random_options']);
+    }
+    }
 
  /**
  * Порядок: автор задаёт верную последовательность.

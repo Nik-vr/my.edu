@@ -51,7 +51,10 @@ final class SingleChoiceType implements QuestionTypeInterface
 
     public function payload(Question $question): array
     {
-        $options = $question->optionsOfKind(Question::KIND_OPTION);
+        $options = $question->visibleOptionsOfKind(
+            Question::KIND_OPTION,
+            [(string) $question->configValue('correct', '')]
+        );
 
         if ($question->shouldShuffleOptions()) {
             $options = $question->shuffled($options);

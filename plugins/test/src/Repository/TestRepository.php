@@ -162,7 +162,7 @@ final class TestRepository
         $placeholders = implode(',', array_fill(0, count($questionIds), '?'));
 
         $rows = $this->db->all(
-            "SELECT question_id, kind, value_key, text, position, pair_key
+            "SELECT question_id, kind, value_key, text, position, pair_key, always_show
                FROM question_options
               WHERE question_id IN ($placeholders)
            ORDER BY question_id, position, id",

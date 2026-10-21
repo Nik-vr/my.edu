@@ -185,6 +185,65 @@ final class Question
         return $filtered;
     }
 
+    /**
+     * Сколько вариантов ответа показывать ученику.
+     *
+     * Ноль — показываются все. Число в настройках вопроса: «выбрать N
+     * случайных вариантов».
+     */
+    public function randomOptionsCount(): int
+    {
+        return max(0, (int) ($this->config['random_options'] ?? 0));
+    }
+
+    /**
+     * Варианты, которые ученик увидит.
+     *
+     * Если число не задано, показываются все. Если задано — показываются
+     * отмеченные как «обязательно показывать», те, без которых вопрос не
+     * имеет смысла (правильный ответ), и ещё случайные до этого числа; выбор
+     * детерминирован seed'ом попытки, так что при обновлении страницы ученик
+     * видит те же варианты.
+     *
+     * Правильный ответ показывается всегда: вопрос без верного варианта
+     * неразрешим, и это молча сломало бы проверку.
+     *
+     * @param list<string> $mustInclude ключи вариантов, которые показать в любом случае
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function visibleOptionsOfKind(string $kind, array $mustInclude = []): array
+    {
+        $options = $this->optionsOfKind($kind);
+        $limit = $this->randomOptionsCount();
+
+        if ($limit <= 0 || count($options) <= $limit) {
+            return $options;
+        }
+
+        $always = [];
+        $rest = [];
+
+        foreach ($options as $option) {
+            $key = (string) ($option['value_key'] ?? '');
+
+            if ((int) ($option['always_show'] ?? 0) === 1 || in_array($key, $mustInclude, true)) {
+                $always[] = $option;
+            } else {
+                $rest[] = $option;
+            }
+        }
+
+        if (count($always) >= $limit) {
+            return $always;
+        }
+
+        $shuffled = $this->shuffled($rest);
+        $chosen = array_slice($shuffled, 0, $limit - count($always));
+
+        return array_merge($always, $chosen);
+    }
+
     /** @return array<string,mixed>|null */
     public function optionByKey(string $kind, string $valueKey): ?array
     {

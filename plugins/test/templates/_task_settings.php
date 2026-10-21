@@ -22,6 +22,15 @@ declare(strict_types=1);
  */
 
 $hasOptions = !empty($form['hasOptions']);
+
+/*
+ * Сколько вариантов показывать — только у видов с выбором ответа.
+ *
+ * У «Соответствие» варианты есть, но выбрать из них N нельзя: там выбирают
+ * пары, и урезание списка сделало бы часть пар неразрешимой.
+ */
+$hasRandomCount = in_array((string) ($form['type'] ?? ''), ['single_choice', 'multiple_choice'], true);
+$config = (array) ($form['config'] ?? []);
 ?>
 
 <div class="card">
@@ -39,6 +48,25 @@ $hasOptions = !empty($form['hasOptions']);
      'rows'        => 3,
      'placeholder' => 'Показывается в разборе: почему такой ответ верный',
  ])) ?>
+
+ <?php if ($hasRandomCount): ?>
+ <?php /*
+ Вариантов у вопроса бывает больше, чем показывается: лишние только мешают.
+ Состав и порядок выбора закреплены за попыткой, так что при обновлении страницы
+ ученик видит те же варианты.
+ */ ?>
+ <?= $view->raw($ui->field('random_options', [
+     'label'       => 'Выбрать N случайных вариантов ответа',
+     'type'        => 'number',
+     'value'       => (int) ($config['random_options'] ?? 0),
+     'min'         => '0',
+     'max'         => '99',
+     'step'        => '1',
+     'size'        => 5,
+     'help'        => 'Пусто или ноль — показываются все варианты. Отмеченные как «Обязательно '
+         . 'показывать» показываются в любом случае, и правильный ответ — тоже.',
+ ])) ?>
+ <?php endif; ?>
 
  <?php if ($hasOptions): ?>
  <?= $view->raw($ui->checkbox('shuffle_options', [

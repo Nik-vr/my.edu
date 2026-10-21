@@ -1608,10 +1608,34 @@ input[type="file"]::file-selector-button:hover {
     white-space: nowrap;
 }
 
-.option-row__pick input[type="radio"],
+/*
+ * Отметка «обязательно показывать» рядом с вариантом.
+
+ * Подпись мелкая: это правило для конкретного варианта, а не главное действие
+ * с вопросом. Но она рядом с самим вариантом, а не в настройках вопроса: иначе
+ * пришлось бы искать, к какому варианту отметка относится.
+ */
+.option-row__always {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    cursor: pointer;
+    padding: 4px 2px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.option-row__always input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+}
+.option-row__pick input[type="radio],
 .option-row__pick input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
+    width: 18px;    height: 18px;
     margin: 0;
     cursor: pointer;
     accent-color: var(--accent-link);
