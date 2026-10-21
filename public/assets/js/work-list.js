@@ -86,13 +86,42 @@
                 body: '_token=' + encodeURIComponent(token()),
                 credentials: 'same-origin'
             }).then(function (response) {
+                /*
+                 * Код ответа разбирается раньше разбора тела.
+                 *
+                 * Истёкшая сессия отвечает не данными, а страницей входа: её
+                 * нельзя разобрать как JSON, и прежняя ветка говорила «сервер
+                 * ответил не так, как ожидалось» — то есть виноватым оказывался
+                 * сервер, а на самом деле кончилась сессия. Разбор отказа по
+                 * коду ответа называет причину.
+                 */
+                var denied = response.status === 401 || response.status === 403 || response.status === 419;
+
+                if (denied || response.redirected) {
+                    return { denied: true, ok: false, data: { message: denied
+                        ? 'Сессия закончилась. Войдите заново — работа не удалена.'
+                        : 'Сервер перенаправил запрос. Войдите заново — работа не удалена.' } };
+                }
+
                 return response.json().then(function (data) {
-                    return { ok: response.ok && data.ok !== false, data: data };
+                    return { denied: false, ok: response.ok && data.ok !== false, data: data };
                 }).catch(function () {
-                    return { ok: false, data: { message: 'Сервер ответил не так, как ожидалось' } };
+                    return { denied: false, ok: false, data: { message: 'Сервер ответил не так, как ожидалось' } };
                 });
             }).then(function (result) {
                 link.classList.remove('is-busy');
+
+                if (result.denied) {
+                    /*
+                     * Отказ виден рядом со строкой — там, где он случился, и
+                     * остаётся, пока человек не разберётся. Второе сообщение
+                     * поверх неё было бы тем самым двойным баннером, который
+                     * в проекте запрещён: текст один, а показан дважды.
+                     */
+                    report(row, result.data.message);
+
+                    return;
+                }
 
                 if (!result.ok) {
                     report(row, result.data.message || 'Удалить не удалось');

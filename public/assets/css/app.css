@@ -173,21 +173,6 @@ a { color: var(--accent-link); }
 
 .topnav--tabs .topnav__tab--active:hover { color: #fff; }
 
-.btn--quiet {
-    background: transparent;
-    border-color: var(--border-strong);
-    color: var(--text-muted);
-    padding: 5px 12px;
-}
-
-.btn--quiet:hover { border-color: var(--accent); color: var(--accent-ink); }
-
-.btn--sm { padding: 6px 12px; font-size: 14px; }
-
-.btn--danger { background: var(--bad); color: #fff; }
-
-.btn--danger:hover { background: #8f1e17; }
-
 /* ---------------------------------------------------------------- страницы входа */
 
 .auth {
@@ -618,8 +603,6 @@ code {
 
 .badge--bad { background: var(--bad-soft); color: var(--bad-text); }
 
-.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good-text); }
-
 .issue-list { margin: 0; padding-left: 20px; font-size: 14px; }
 
 .issue-list li { margin-bottom: 4px; }
@@ -784,35 +767,12 @@ code {
 
 .hero__text { color: var(--text-muted); margin: 0; max-width: 60ch; }
 
-.breadcrumbs {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    font-size: 14px;
-    color: var(--text-muted);
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-}
-
-.breadcrumbs a { color: var(--text-muted); }
-
-.alert {
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    margin: 0 0 16px;
-    border: 1px solid transparent;
-    font-size: 15px;
-}
-
-.alert--error { background: var(--bad-soft); border-color: #f3c6c3; color: var(--bad-text); }
-
-.alert--warn { background: var(--mid-soft); border-color: #efdda9; color: var(--mid-text); }
-
-.alert--ok { background: var(--good-soft); border-color: #bfe2ce; color: var(--good-text); }
-
-/* Убираем повтор: ниже, в разделе показателей, описание .stat__label.
-   Здесь нужен только цвет текста предупреждения внутри карточки. */
-.alert code { background: rgba(0, 0, 0, .06); }
+/*
+ * Крошки размечены классом `breadcrumb` (единственное число) — так их назвал
+ * шаблон gentelella, и вид даёт gentelella.css. Своего правила для них здесь
+ * нет: правило с двойным `breadcrumbs` никогда не применялось, потому что
+ * такого класса в разметке нет.
+ */
 
 /* ---------------------------------------------------------------- список тестов */
 
@@ -1284,12 +1244,6 @@ input[type="file"]::file-selector-button:hover {
     color: var(--text);
 }
 
-.btn--primary { background: var(--accent); color: #fff; }
-
-.btn--primary:hover { background: var(--accent-dark); }
-
-.btn--lg { padding: 13px 26px; font-size: 16px; }
-
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 
 .code {
@@ -1434,14 +1388,6 @@ input[type="file"]::file-selector-button:hover {
    не понял бы, было нажато «Завершить тест» или «Далее». */
 .attempt--sending .qnav-controls,
 .attempt--sending .question__body { pointer-events: none; opacity: .6; }
-
-.btn--ghost {
-    background: transparent;
-    border-color: var(--border-strong);
-    color: var(--text-muted);
-}
-
-.btn--ghost:hover { border-color: var(--accent); color: var(--accent-ink); }
 
 .timer {
     font-variant-numeric: tabular-nums;
@@ -3631,9 +3577,6 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 }
 
 .field--error .field__label { color: var(--bad-text); }
-
-/* Заголовок внутри блока ошибки — чтобы «что не так» читалось первым. */
-.alert__title { font-weight: 600; margin: 0 0 6px; }
 
 /* --- узкие экраны --------------------------------------------------------- */
 

@@ -4370,7 +4370,7 @@ $expiredBrowser = $guest->post($expiredSaveUrl, [
     '_token'      => 'любой',
     'question_id' => '0',
     'action'      => 'save_task',
-    'prompt'      => 'правка без се��сии',
+    'prompt'      => 'правка без сессии',
 ]);
 
 $t->is(

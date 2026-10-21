@@ -152,40 +152,29 @@ $fullName = (string) ($currentUser->fullName ?? '');
 
             <?php require __DIR__ . '/../_name_fields.php'; ?>
 
-            <div class="form-group">
-                <label class="form-label" for="profile-birth">Дата рождения</label>
-                <input class="form-control<?= isset($errors['birth_date']) ? ' is-invalid' : '' ?>"
-                       type="date" id="profile-birth" name="birth_date" autocomplete="bday"
-                       value="<?= $view->e($birthDate) ?>"
-                       max="<?= $view->e(date('Y-m-d')) ?>"
-                       <?= isset($errors['birth_date']) ? 'aria-invalid="true"' : '' ?>>
-                <?php if (isset($errors['birth_date'])): ?>
-                    <div class="form-error"><?= $view->e($errors['birth_date']) ?></div>
-                <?php else: ?>
-                    <?php /*
-                     * Возраст не хранится: он считается из даты рождения при
-                     * чтении. Сохранённый возраст завтра стал бы неверным.
-                     */ ?>
-                    <div class="form-help">
-                        Необязательно. Возраст считается сам и отдельно не хранится:
-                        сохранённый возраст завтра стал бы неверным.
-                    </div>
-                <?php endif; ?>
-            </div>
+            <?= $view->raw($ui->field('birth_date', [
+                'label' => 'Дата рождения',
+                'type' => 'date',
+                'value' => $birthDate,
+                'max' => date('Y-m-d'),
+                'autocomplete' => 'bday',
+                'error' => $errors['birth_date'] ?? '',
+                /*
+                 * Возраст не хранится: он считается из даты рождения при
+                 * чтении. Сохранённый возраст завтра стал бы неверным.
+                 */
+                'help' => 'Необязательно. Возраст считается сам и отдельно не хранится: сохранённый возраст завтра стал бы неверным.',
+            ])) ?>
 
-            <div class="form-group">
-                <label class="form-label" for="profile-vk">ВКонтакте</label>
-                <input class="form-control<?= isset($errors['vk_url']) ? ' is-invalid' : '' ?>"
-                       type="text" id="profile-vk" name="vk_url" maxlength="191" inputmode="url"
-                       value="<?= $view->e($vkValue) ?>"
-                       placeholder="vk.com/ivanov"
-                       <?= isset($errors['vk_url']) ? 'aria-invalid="true"' : '' ?>>
-                <?php if (isset($errors['vk_url'])): ?>
-                    <div class="form-error"><?= $view->e($errors['vk_url']) ?></div>
-                <?php else: ?>
-                    <div class="form-help">Ссылка на профиль: vk.com или vk.ru. Необязательно.</div>
-                <?php endif; ?>
-            </div>
+            <?= $view->raw($ui->field('vk_url', [
+                'label' => 'ВКонтакте',
+                'value' => $vkValue,
+                'maxlength' => 191,
+                'inputmode' => 'url',
+                'placeholder' => 'vk.com/ivanov',
+                'error' => $errors['vk_url'] ?? '',
+                'help' => 'Ссылка на профиль: vk.com или vk.ru. Необязательно.',
+            ])) ?>
 
             <button type="submit" class="btn btn-primary">Сохранить</button>
         </form>

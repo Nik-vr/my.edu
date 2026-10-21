@@ -510,13 +510,44 @@
                     credentials: 'same-origin',
                     headers: { 'Accept': 'application/json' },
                 }).then(function (response) {
+                    /*
+                     * Код ответа разбирается раньше разбора тела.
+                     *
+                     * Истёкшая сессия отвечает не данными, а страницей входа: её
+                     * нельзя разобрать как JSON, и прежняя ветка молча уходила
+                     * по ссылке. Человек видел перезагрузку без объяснения и
+                     * не понимал, что его выкинуло из панели. Здесь отказ
+                     * называют словами.
+                     */
+                    var denied = response.status === 401 || response.status === 403 || response.status === 419;
+
+                    if (denied || response.redirected) {
+                        return { denied: true, ok: false, data: { ok: false, message: denied
+                            ? 'Сессия закончилась. Войдите заново — задание не открылось.'
+                            : 'Сервер перенаправил запрос. Войдите заново — задание не открылось.' } };
+                    }
+
                     return response.json().then(function (data) {
-                        return { ok: response.ok, data: data };
+                        return { denied: false, ok: response.ok, data: data };
                     }).catch(function () {
-                        return { ok: false, data: { message: 'Сервер ответил не данными.' } };
+                        return { denied: false, ok: false, data: { message: 'Сервер ответил не данными.' } };
                     });
                 }).then(function (result) {
                     link.removeAttribute('aria-busy');
+
+                    if (result.denied) {
+                        /*
+                         * Страницу входа человек откроет и сам — любой ссылкой.
+                         * Переводить его туда сразу значило бы отнимать
+                         * управление: он мог ещё доделывать правку, и потеря
+                         * места в списке хуже лишнего сообщения.
+                         */
+                        if (window.myEduToast) {
+                            window.myEduToast(result.data.message, 'error');
+                        }
+
+                        return;
+                    }
 
                     if (!result.ok || !result.data || !result.data.html) {
                         /*

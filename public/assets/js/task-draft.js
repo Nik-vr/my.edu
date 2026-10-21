@@ -59,6 +59,34 @@
     /* Формы, для которых черновик уже взят при открытии. */
     var loaded = [];
 
+    /*
+     * Сказано ли уже про истёкшую сессию.
+     *
+     * Один раз на страницу, а не на каждый запрос: автосохранение идёт раз в
+     * 700 миллисекунд, и при истёкшей сессии каждый такой запрос отвечает
+     * отказом. Без этого ограничения сообщение об ошибке сыпалось бы поверх
+     * правки — и то, что должно было сказать одну причину, превратилось бы в
+     * шум.
+     */
+    var sessionWarned = false;
+
+    /**
+     * Сообщить, что сессия закончилась.
+     *
+     * @param {string} message Что сказать
+     */
+    function warnSession(message) {
+        if (sessionWarned) {
+            return;
+        }
+
+        sessionWarned = true;
+
+        if (window.myEduToast) {
+            window.myEduToast(message, 'error');
+        }
+    }
+
     function editorOf(node) {
         return node && node.closest ? node.closest('[data-editor-for]') : null;
     }
@@ -287,9 +315,40 @@
                 'X-Requested-With': 'XMLHttpRequest',
                 'Accept': 'application/json',
             },
-        }).then(function () {
+        }).then(function (response) {
+            /*
+             * Код ответа разбирается раньше разбора тела.
+             *
+             * Истёкшая сессия отвечает не данными, а страницей входа: её нельзя
+             * разобрать как JSON, и прежняя ветка считала такой ответ успешным —
+             * правка помечалась сохранённой, хотя её в базе не было.
+             */
+            var denied = response.status === 401 || response.status === 403 || response.status === 419;
+
+            if (denied || response.redirected) {
+                return { denied: true };
+            }
+
+            return response.json().then(function () {
+                return { denied: false };
+            }).catch(function () {
+                return { denied: false };
+            });
+        }).then(function (result) {
             if (done) {
-                done(true);
+                done(result.denied !== true);
+            }
+
+            if (result.denied) {
+                /*
+                 * Текст зависит от действия: при сохранении правка не дошла,
+                 * а при удалении черновик остался на сервере — и вернётся при
+                 * следующем открытии. Одно сообщение на оба случая сказало бы
+                 * половину неправды.
+                 */
+                warnSession(body.get('action') === 'drop'
+                    ? 'Сессия закончилась — черновик не удалён. Войдите заново, и он вернётся.'
+                    : 'Сессия закончилась — черновик не сохранён. Войдите заново, и он вернётся.');
             }
         }).catch(function () {
             /*
@@ -498,8 +557,33 @@
                 'Accept': 'application/json',
             },
         }).then(function (response) {
-            return response.json();
-        }).then(function (data) {
+            /*
+             * Код ответа разбирается раньше разбора тела.
+             *
+             * Истёкшая сессия отвечает не данными, а страницей входа: её нельзя
+             * разобрать как JSON, и прежняя ветка считала это «черновика нет».
+             * Теперь у отказа есть причина, и человек знает, что делать.
+             */
+            var denied = response.status === 401 || response.status === 403 || response.status === 419;
+
+            if (denied || response.redirected) {
+                return { denied: true, data: null };
+            }
+
+            return response.json().then(function (data) {
+                return { denied: false, data: data };
+            }).catch(function () {
+                return { denied: false, data: null };
+            });
+        }).then(function (result) {
+            if (result.denied) {
+                warnSession('Сессия закончилась — черновик не восстановлен. Войдите заново, и он вернётся.');
+
+                return false;
+            }
+
+            var data = result.data;
+
             if (!data || data.ok !== true || !data.fields || !Object.keys(data.fields).length) {
                 return false;
             }
