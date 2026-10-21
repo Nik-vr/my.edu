@@ -318,4 +318,98 @@ $t->is(
     @rmdir($directory);
 }
 
+/*
+ * Устаревших вызовов в коде нет.
+ *
+ * curl_close() с PHP 8.0 ничего не делает, а с 8.5 объявлен устаревшим.
+ * На сервере с 8.5 это сообщение печаталось прямо в ответ на обновление, и
+ * ответ переставал быть разбираемым: обновление падало не из-за сети, а из-за
+ * строчки в ответе.
+ */
+$t->group('Код без устаревших вызовов');
+
+$deprecatedCalls = [];
+
+foreach ([$rootDir . '/src', $rootDir . '/plugins'] as $directory) {
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory));
+
+    foreach ($files as $file) {
+        if (!$file->isFile() || !str_ends_with($file->getFilename(), '.php')) {
+            continue;
+        }
+
+        $source = (string) @file_get_contents($file->getPathname());
+
+        /*
+         * Комментарии не в счёт: там вызов может быть назван словами, и
+         * проверка ругалась бы на объяснение, а не на код.
+         */
+        $code = (string) preg_replace(['#/\*.*?\*/#s', '#//[^\r\n]*#'], ' ', $source);
+
+        foreach (['curl_close(', 'utf8_encode(', 'utf8_decode(', 'strftime(', 'create_function('] as $call) {
+            if (str_contains($code, $call)) {
+                $deprecatedCalls[] = str_replace($rootDir . '/', '', $file->getPathname()) . ': ' . $call;
+            }
+        }
+    }
+}
+
+$t->equals([], $deprecatedCalls, 'устаревших вызовов в коде нет: ' . implode('; ', $deprecatedCalls));
+
+/*
+ * Служебные сообщения PHP не попадают в ответ.
+ *
+ * На боевом сервере display_errors включён, и без обработчика любое
+ * предупреждение печатается прямо в страницу — туда, где человек ждёт
+ * результата. Теперь такие сообщения уходят в журнал, а страница остаётся
+ * целой.
+ */
+$t->group('Служебные сообщения не попадают в ответ');
+
+$logFile = sys_get_temp_dir() . '/myedu-error-handler-' . bin2hex(random_bytes(4)) . '.log';
+
+$handler = static function () use ($logFile): void {
+    MyEdu\Core\ErrorHandler::register($logFile);
+
+    // Предупреждение без фатальных последствий: страница должна остаться целой.
+    trigger_error('проверка предупреждения', E_USER_WARNING);
+
+    echo 'СТРАНИЦА ЦЕЛА';
+};
+
+$snippet = <<<'PHP'
+<?php
+require 'ROOT/src/Core/Autoloader.php';
+$autoloader = new MyEdu\Core\Autoloader();
+$autoloader->addNamespace('MyEdu\\', 'ROOT/src');
+$autoloader->register();
+MyEdu\Core\ErrorHandler::register('LOGFILE');
+trigger_error('проверка предупреждения', E_USER_WARNING);
+echo 'СТРАНИЦА ЦЕЛА';
+PHP;
+
+$snippetFile = sys_get_temp_dir() . '/myedu-warning-' . bin2hex(random_bytes(4)) . '.php';
+file_put_contents(
+    $snippetFile,
+    str_replace(['ROOT', 'LOGFILE'], [addslashes($rootDir), addslashes($logFile)], $snippet)
+);
+
+$output = (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($snippetFile) . ' 2>&1');
+
+@unlink($snippetFile);
+
+$t->is(
+    str_contains($output, 'СТРАНИЦА ЦЕЛА'),
+    'страница осталась целой после предупреждения'
+);
+
+$t->is(
+    !str_contains($output, 'проверка предупреждения'),
+    'текст предупреждения не попал в ответ'
+);
+
+$t->is(
+    is_file($logFile) && str_contains((string) @file_get_contents($logFile), 'проверка предупреждения'),
+    'предупреждение записано в журнал'
+);
 exit($t->report());

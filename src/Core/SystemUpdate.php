@@ -528,7 +528,12 @@ final class SystemUpdate
             $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
             $error = curl_error($curl);
 
-            curl_close($curl);
+            /*
+             * Ручку закрывать не надо: с PHP 8.0 она ничего не делает, а с
+             * PHP 8.5 объявлена устаревшей, и сервер с этой версией печатал
+             * предупреждение прямо в ответ на обновление. Ресурс освобождается
+             * сам, когда переменная выходит из области видимости.
+             */
 
             if ($body !== false && $status < 400) {
                 $this->lastError = null;

@@ -60,6 +60,31 @@ final class ErrorHandler
             self::report($e, $logFile);
         });
 
+        /*
+         * Предупреждения, заметки и сообщения об устаревании — в журнал, а не
+         * в ответ.
+         *
+         * На боевом сервере `display_errors` бывает включён, и тогда PHP печатает
+         * такое прямо в страницу: человек видел «Deprecated: curl_close() ...»
+         * вместо результата обновления. Само по себе сообщение ничего не ломает,
+         * но оно попадает туда, где человек ждёт ответа, и выглядит как поломка.
+         *
+         * Обработчик не превращает их в исключения: страница остаётся рабочей,
+         * а сообщение уходит в `var/log/error.log` — там оно и место.
+         */
+        set_error_handler(static function (int $level, string $message, string $file = '', int $line = 0) use ($logFile): bool {
+            if (in_array($level, self::FATAL_TYPES, true)) {
+                return false;
+            }
+
+            self::write(
+                $logFile,
+                'Предупреждение: ' . $message . ' в ' . $file . ':' . $line
+            );
+
+            return true;
+        });
+
         register_shutdown_function(static function () use ($logFile): void {
             self::reportFatal($logFile);
         });
