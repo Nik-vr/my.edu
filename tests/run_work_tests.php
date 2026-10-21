@@ -10051,8 +10051,8 @@ $appCss = (string) @file_get_contents($rootDir . '/public/assets/css/app.css');
 
 $t->contains(
     $appCss,
-    '.modal-dialog--task { max-width: 624px; }',
-    'окно редактора шире базового на 30 процентов'
+    '#task-editor .modal-dialog { max-width: 648px; }',
+    'окно редактора шире базового на 35 процентов'
 );
 
 $t->contains(

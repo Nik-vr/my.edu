@@ -283,6 +283,23 @@ foreach (readFiles($root, ['public/assets/css'], ['css']) as $path => $source) {
 }
 
 $runner->equals([], $cssBroken, 'в стилях не потеряны кавычки: ' . implode(', ', $cssBroken));
+/*
+ * Правила из app.css, которые перебивают сборку, — с адресом.
+ *
+ * app.css подключается раньше gentelella.css, и правило равной силы проигрывает
+ * сборке: так окно редактора задания осталось 480 пикселей, хотя в app.css
+ * было написано другое. Правило перестало действовать молча.
+ *
+ * Проверяются те правила, что перекрывают размеры сборки: с адресом они
+ * работают, без адреса — нет.
+ */
+$overridden = [];
+
+if (preg_match('/^\.modal-dialog--task\s*\{/m', (string) file_get_contents($root . '/public/assets/css/app.css'))) {
+    $overridden[] = 'modal-dialog--task: правило без адреса проиграет сборке';
+}
+
+$runner->equals([], $overridden, 'правила, перебивающие сборку, написаны с адресом: ' . implode('; ', $overridden));
 $runner->group('Правила интерфейса: разметка');
 
 $inline = findAll($templates, '/\sstyle="[^"]{1,200}"/');

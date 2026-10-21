@@ -509,28 +509,31 @@ final class Ui
         );
 
         /*
-         * Отметка «обязательно показывать» — не у всех типов заданий.
+         * Отметка «обязательно показывать» — без подписи рядом.
          *
-         * Имя поля задаёт вызывающий: пустое имя — значит, отметки у этого типа
-         * нет, и в строку варианта она не попадает. Так список вариантов у
-         * текстового ответа остался бы прежним.
+         * Подпись занимала больше места, чем само поле для текста: вариант
+         * ответа ужимался в два символа, и править его было невозможно.
+         * Теперь подпись живёт в подсказке (title) и в доступном имени, а на
+         * экране остаётся один флажок.
          */
         $alwaysName = trim((string) ($o['alwaysName'] ?? ''));
         $always = '';
 
         if ($alwaysName !== '') {
             $alwaysId = $this->uniqueId('always-' . $index);
+            $alwaysLabel = (string) ($o['alwaysLabel'] ?? 'Обязательно показывать');
 
             $always = sprintf(
-                '<label class="option-row__always" for="%s">'
-                . '<input type="checkbox" name="%s" value="%d" id="%s"%s>'
-                . '<span>%s</span></label>',
+                '<label class="option-row__always" for="%s" title="%s">'
+                . '<input type="checkbox" name="%s" value="%d" id="%s" aria-label="%s"%s>'
+                . '</label>',
                 $this->e($alwaysId),
+                $this->e($alwaysLabel),
                 $this->e($alwaysName . '[]'),
                 $index,
                 $this->e($alwaysId),
-                !empty($o['alwaysChecked']) ? ' checked' : '',
-                $this->e((string) ($o['alwaysLabel'] ?? 'Обязательно показывать'))
+                $this->e($alwaysLabel),
+                !empty($o['alwaysChecked']) ? ' checked' : ''
             );
         }
 
