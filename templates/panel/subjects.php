@@ -73,15 +73,25 @@ $subtitle = 'Список, из которого выбирается предм
 require __DIR__ . '/_page_header.php';
 ?>
 
-<div class="card">
-    <div class="card-header">
-        <div>
-        <button type="button" class="btn btn-primary" id="subject-add-opener"
-                data-modal-open="subject-add">
-            Добавить предмет
-        </button>
-    </div>
+<?php /*
+ Кнопка — в своей карточке, таблица — в следующей.
 
+ Раньше всё это лежало в одной карточке, а шапка карточки оставалась незакрытой:
+ таблица и счётчик оказывались внутри неё, а шапка — flex-строкой. Получалось
+ три вещи в ряд: кнопка слева, таблица посередине, счётчик справа.
+
+ Устроено так же, как на странице классов: действие — одна карточка, таблица —
+ другая.
+ */
+?>
+<div class="card">
+    <button type="button" class="btn btn-primary" id="subject-add-opener"
+            data-modal-open="subject-add">
+        Добавить предмет
+    </button>
+</div>
+
+<div class="card">
     <?php if ($subjects === []): ?>
         <div class="card-body">
             <p class="muted">

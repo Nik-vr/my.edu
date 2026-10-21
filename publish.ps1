@@ -475,7 +475,7 @@ function Ensure-Remote {
 }
 
 function Get-RemoteBranchState {
-    $state = [ordered]@{ Exists = $false; Related = $false; Behind = 0; Ahead = 0; Tip = '' }
+    $state = [ordered]@{ Exists = $false; Related = $false; Behind = 0; Ahead = 0; Tip = ''; NoLocalCommits = $false }
 
     $null = Invoke-GitRaw @('fetch', $Remote, '--quiet')
     $ls = @(Invoke-GitRaw @('ls-remote', '--heads', $Remote, "refs/heads/$Branch"))
@@ -487,8 +487,26 @@ function Get-RemoteBranchState {
     $state.Tip = @((([string]$line) -split '\s+'))[0]
     $remoteRef = "$Remote/$Branch"
 
+# Локальных коммитов может не быть вовсе: репозиторий только что создан,
+# и HEAD ещё ни на что не указывает.
+# Раньше это приводило к падению. `merge-base HEAD origin/main` в таком
+# репозитории возвращает не результат, а текст ошибки, — а `Invoke-GitRaw`
+# отдаёт и stderr тоже. Текст ошибки принимался за найденное основание,
+# и сценарий «истории связаны» проходил для репозитория, у которого
+# истории нет; следующий за тем `rev-list --count origin/main ^HEAD`
+# требовал уже несуществующий HEAD и обрывал всю публикацию.
+# Теперь отсутствие своих коммитов проверяется прямо, и сравнивать не с чем
+# — значит и спрашивать нечего.
+    $null = Invoke-GitRaw @('rev-parse', '--verify', 'HEAD')
+
+    if ($script:GitExitCode -ne 0) {
+        $state.NoLocalCommits = $true
+
+        return [pscustomobject]$state
+    }
+
     $base = @(Invoke-GitRaw @('merge-base', 'HEAD', $remoteRef))[0]
-    $state.Related = [bool]$base
+    $state.Related = ($script:GitExitCode -eq 0) -and [bool]$base
 
     if (-not $state.Related) { return [pscustomobject]$state }
 
@@ -554,7 +572,10 @@ if ((Get-Remotes) -contains $Remote) {
     if ($remoteState.Exists) {
         $tip = $remoteState.Tip.Substring(0, 7)
 
-        if ($remoteState.Related) {
+        if ($remoteState.NoLocalCommits) {
+            Write-WarnMsg "ветка $Branch на GitHub: $tip — а локальных коммитов ещё нет"
+            Write-Note 'локальная копия пришла файлами, без истории: продолжаем с того, что на GitHub'
+        } elseif ($remoteState.Related) {
             Write-Ok "ветка $Branch на GitHub: $tip (с вашей историей)"
             Write-Note "впереди: $($remoteState.Ahead), отсутствует локально: $($remoteState.Behind)"
         } else {
@@ -581,6 +602,24 @@ if (-not $inRepo) {
     Write-Host '  Проверка завершена, ничего не изменено.' -ForegroundColor Green
     Write-Host ''
     exit 0
+}
+
+# Локальных коммитов может не быть, а история на GitHub — есть: сюда пришли
+# файлами, без репозитория. Тогда историю надо продолжить с GitHub, а не завести
+# свою с нуля: отправка поверх чужой истории переписала бы её целиком, и
+# прежние коммиты пропали бы.
+#
+# Рабочее дерево при этом не трогается — `reset --mixed` двигает только HEAD и
+# индекс, а файлы остаются как есть. Список изменений скрипт печатает перед
+# коммитом, и человек видит, что именно уедет в историю.
+if ($remoteState -and $remoteState.NoLocalCommits -and $remoteState.Exists) {
+    Write-Step 'История'
+
+    if ($PSCmdlet.ShouldProcess("$Remote/$Branch", 'продолжить историю с GitHub')) {
+        Invoke-Git @('fetch', $Remote, $Branch, '--quiet') | Out-Null
+        Invoke-Git @('reset', '--mixed', "$Remote/$Branch") | Out-Null
+        Write-Ok "история продолжена с $Remote/$Branch"
+    }
 }
 
 Write-Step 'Коммит'
@@ -684,13 +723,10 @@ if ($NoPush) {
 } elseif (-not ((Get-Remotes) -contains $Remote)) {
     Write-WarnMsg 'remote не настроен — отправка не выполнена'
 } elseif ($remoteState -and $remoteState.Exists -and $remoteState.Related -and $remoteState.Behind -gt 0) {
-    /*
-     * На сервере есть коммиты, которых нет локально.
-     *
-     * Их нельзя терять: перезапись удалила бы их, и человек, который их
-     * сделал, не узнал бы, что его работа исчезла. Поэтому здесь — только
-     * подсказка, и перезапись здесь не помогает.
-     */
+# На сервере есть коммиты, которых нет локально.
+# Их нельзя терять: перезапись удалила бы их, и человек, который их
+# сделал, не узнал бы, что его работа исчезла. Поэтому здесь — только
+# подсказка, и перезапись здесь не помогает.
     Write-WarnMsg "на GitHub в ветке $Branch есть $($remoteState.Behind) коммитов, которых нет локально"
     Write-Host '   продолжить историю:' -ForegroundColor Yellow
     Write-Host "        git -C `"$($script:Root)`" pull --rebase $($Remote) $Branch" -ForegroundColor Yellow
@@ -700,19 +736,15 @@ if ($NoPush) {
     Write-Host '   ОТПРАВКА НЕ ВЫПОЛНЕНА: сначала забрать изменения с сервера.' -ForegroundColor Red
     Write-Host ''
 } elseif ($remoteState -and $remoteState.Exists -and -not $remoteState.Related -and -not $ForceSync) {
-    /*
-     * Истории разные: на сервере нет ни одного нашего коммита.
-     *
-     * Обычная отправка тут невозможна — git отвечает «non-fast-forward», и
-     * правильно: он не знает, что терять. Но терять тут нечего: серверная
-     * история — это чужой коммит (обычно пустой репозиторий с одним файлом), а
-     * локальная содержит весь проект. Отправка идёт с перезаписью, и «lease»
-     * защищает и её: если на сервере после нашей проверки что-то изменилось,
-     * отправка не пройдёт.
-     *
-     * Без ключа -ForceSync скрипт только объясняет, что делать, и ничего не
-     * отправляет: перезапись истории — решение человека, а не скрипта.
-     */
+# Истории разные: на сервере нет ни одного нашего коммита.
+# Обычная отправка тут невозможна — git отвечает «non-fast-forward», и
+# правильно: он не знает, что терять. Но терять тут нечего: серверная
+# история — это чужой коммит (обычно пустой репозиторий с одним файлом), а
+# локальная содержит весь проект. Отправка идёт с перезаписью, и «lease»
+# защищает и её: если на сервере после нашей проверки что-то изменилось,
+# отправка не пройдёт.
+# Без ключа -ForceSync скрипт только объясняет, что делать, и ничего не
+# отправляет: перезапись истории — решение человека, а не скрипта.
     Write-WarnMsg "история на GitHub другая: общих коммитов с веткой $Branch нет"
     Write-Host '   Локальная история полнее (в ней первый релиз и все исправления),' -ForegroundColor Yellow
     Write-Host '   поэтому её нужно отправить с перезаписью. Старый коммит останется' -ForegroundColor Yellow

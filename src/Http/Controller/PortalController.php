@@ -69,13 +69,20 @@ final class PortalController
             ]);
         }
 
-        return $this->render('portal/index', [
+        return $this->render('portal/home', [
             /*
              * Работы идут первыми: по решению владельца проекта все выдачи
              * проходят через работу, и именно её ученик должен видеть на
              * главной.
              */
             'works' => $this->publishedWorks($user->id),
+            /*
+             * Сведения о школе — тем, кому положено их видеть. Ученику они
+             * не достаются: сводка просто не считается, и на странице её нет.
+             */
+            'classes'    => $this->can(Role::CLASSES_MANAGE) ? $this->classSummary() : [],
+            'users'      => $this->can(Role::USERS_MANAGE) ? $this->userSummary() : null,
+            'schoolName' => $this->settings->schoolName(),
         ]);
     }
 
@@ -123,13 +130,17 @@ final class PortalController
         return $works;
     }
 
+    /**
+     * Старый адрес панели управления.
+     *
+     * Панель и главная ученика стали одной страницей: `/portal` открывает всё
+     * сразу — и работы, и сводки школы, если права позволяют. Старый адрес
+     * не исчезает: на него стоят закладки и ссылки в письмах, поэтому он
+     * переадресует на новую страницу, а не отвечает отказом.
+     */
     public function panel(Request $request): Response
     {
-        return $this->render('portal/panel', [
-            'classes'    => $this->can(Role::CLASSES_MANAGE) ? $this->classSummary() : [],
-            'users'      => $this->can(Role::USERS_MANAGE) ? $this->userSummary() : null,
-            'schoolName' => $this->settings->schoolName(),
-        ]);
+        return $this->redirect('portal');
     }
 
     /** @return list<array<string,mixed>> */

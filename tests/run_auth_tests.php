@@ -453,7 +453,7 @@ $guestTests = $guest->get('/tests/1');
 $t->is($guestTests['status'] === 302 && str_contains($guestTests['location'], '/login'),
     'гость отправляется на страницу входа вместо теста');
 
-$guestPanel = $guest->get('/panel');
+$guestPanel = $guest->get('/portal');
 $t->is($guestPanel['status'] === 302, 'панель закрыта для гостя');
 
 // ------------------------------------------------------------------ регистрация первого
@@ -697,7 +697,7 @@ $t->is($portal['status'] === 200, 'кабинет открыт');
 $t->contains($portal['body'], 'Ольга Петровна', 'в кабинете обращение по имени и отчеству');
 $t->contains($portal['body'], 'владелец сайта', 'указано, что это владелец');
 
-$t->is($guest->get('/panel')['status'] === 200, 'панель управления владельцу доступна');
+$t->is($guest->get('/portal')['status'] === 200, 'главная страница владельцу доступна');
 $t->is($guest->get('/classes')['status'] === 200, 'список классов владельцу доступен');
 $t->is($guest->get('/panel/users')['status'] === 200, 'управление пользователями владельцу доступно');
 
@@ -765,9 +765,11 @@ $guest->post('/login', [
 
 $t->is($guest->get('/portal')['status'] === 200, 'наблюдатель вошёл в систему');
 
-$observerPanel = $guest->get('/panel');
-$t->is($observerPanel['status'] === 403, 'панель управления наблюдателю закрыта');
-$t->contains($observerPanel['body'], 'Недостаточно прав', 'показано сообщение о нехватке прав');
+$observerPanel = $guest->get('/portal');
+$t->is($observerPanel['status'] === 200, 'наблюдатель открыл общую главную страницу');
+$t->notContains($observerPanel['body'], 'metric-value', 'сводка школы наблюдателю не показана');
+$t->notContains($observerPanel['body'], '>Классы<', 'список классов наблюдателю не показан');
+$t->is($guest->get('/panel')['status'] === 403, 'старый адрес панели наблюдателю закрыт');
 
 $t->is($guest->get('/classes')['status'] === 403, 'список классов наблюдателю закрыт');
 $t->is($guest->get('/classes/1/students')['status'] === 403, 'регистрация учеников наблюдателю закрыта');
@@ -949,7 +951,7 @@ $guest->post('/login', [
     'password'  => 'uchitel2025',
 ]);
 
-$t->is($guest->get('/panel')['status'] === 200, 'завуч видит панель управления');
+$t->is($guest->get('/portal')['status'] === 200, 'завуч видит главную страницу');
 $t->is($guest->get('/classes')['status'] === 200, 'завуч видит список классов');
 $t->is($guest->get('/panel/users')['status'] === 403, 'завуч не управляет пользователями');
 
@@ -2068,7 +2070,7 @@ $t->group('Оболочка панели управления');
  * сборка перестанет их отдавать, страница останется без оформления, и это
  * заметят не проверки, а человек.
  */
-$console = $owner->get('/panel');
+$console = $owner->get('/portal');
 
 $t->is($console['status'] === 200, 'консоль открывается');
 $t->contains($console['body'], 'data-theme="dark"', 'панель в тёмной теме');
@@ -2088,8 +2090,33 @@ foreach (['Консоль', 'Составить работу', 'Результа
     $t->contains($console['body'], '>' . $itemLabel . '</span>', 'пункт меню «' . $itemLabel . '»');
 }
 
-$t->group('Панель не дублирует меню');
+/*
+ * Панель и главная ученика — одна страница.
+ *
+ * Раньше войти можно было в две точки входа: `/portal` для ученика (его
+ * работы) и `/panel` для сотрудника (цифры и классы). Человек, у которого были и
+ * работы, и классы, должен был помнить, где что лежит, а половина сведений
+ * оказывалась в стороне.
+ *
+ * Проверяется, что на одной странице есть и то и другое, а старый адрес не
+ * исчезает: на него стоят закладки и ссылки в письмах.
+ */
+$t->group('Главная страница одна');
 
+$merged = $owner->get('/portal');
+$mergedBody = (string) $merged['body'];
+
+$t->is($merged['status'] === 200, 'общая главная открывается');
+$t->contains($mergedBody, '>Работы<', 'на главной есть работы');
+$t->contains($mergedBody, 'metric-value', 'на главной есть сводка школы');
+$t->contains($mergedBody, '>Классы<', 'на главной есть классы');
+$t->contains($mergedBody, 'Здравствуйте', 'на главной есть приветствие');
+
+$oldPanel = $owner->get('/panel');
+$t->is($oldPanel['status'] === 302, 'старый адрес панели переадресует');
+$t->contains((string) ($oldPanel['location'] ?? ''), 'portal', 'переадресация ведёт на общую главную');
+
+$t->group('Панель не дублирует меню');
 /*
  * Пять кнопок на главной странице панели повторяли пункты бокового меню.
  * Проверяется именно область содержимого: в меню эти адреса остались и
@@ -2223,12 +2250,12 @@ $t->equals('Составить работу', $activeLabel($owner->get('/panel/a
  * разделу: иначе меню появлялось бы только внутри панели и пропадало на
  * главной, и переход туда и обратно выглядел бы как смена сайта.
  */
-foreach (['/portal', '/profile', '/works', '/panel', '/classes'] as $staffPath) {
+foreach (['/portal', '/profile', '/works', '/classes'] as $staffPath) {
     $t->contains($owner->get($staffPath)['body'], 'class="topbar"',
         'шапка шаблона применена на ' . $staffPath);
 }
 
-foreach (['/panel', '/classes'] as $staffPath) {
+foreach (['/portal', '/classes'] as $staffPath) {
     $t->contains($owner->get($staffPath)['body'], 'aria-label="Разделы панели"', 'у сотрудника есть меню на ' . $staffPath);
 }
 

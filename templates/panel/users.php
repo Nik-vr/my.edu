@@ -126,8 +126,6 @@ require __DIR__ . '/_page_header.php';
 ?>
 
 <div class="card">
-    <div class="card-header">
-        <div>
     <div class="table-responsive">
         <table class="table" data-datatable data-page-length="25">
             <thead>
