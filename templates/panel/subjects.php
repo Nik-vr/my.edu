@@ -45,11 +45,8 @@ $valueBlock = static function (array $row) use ($view): string {
            href="<?= $view->e($view->url('panel/subjects?edit=' . (int) $row['id'])) ?>"
            title="Изменить название"
            aria-label="Изменить название предмета: <?= $view->e($row['name']) ?>">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                 stroke-width="1.6" aria-hidden="true">
-                <path d="M13.5 3.5 16.5 6.5 7 16H4v-3z"/>
-                <path d="M12 5l3 3"/>
-            </svg>
+            <?php $icon = 'edit'; ?>
+            <?php require __DIR__ . '/../_action_icon.php'; ?>
         </a>
     </div>
     <?php
@@ -131,20 +128,14 @@ require __DIR__ . '/_page_header.php';
                                        autofocus>
                                 <button type="submit" class="icon-btn icon-btn--save"
                                         title="Сохранить название">
-                                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                                         stroke-width="1.6" aria-hidden="true">
-                                        <path d="M4 4h9l3 3v9H4z"/>
-                                        <path d="M7 4v4h6V4"/>
-                                        <path d="M7 16v-4h6v4"/>
-                                    </svg>
+                                    <?php $icon = 'copy'; ?>
+                                    <?php require __DIR__ . '/../_action_icon.php'; ?>
                                     <span class="visually-hidden">Сохранить название</span>
                                 </button>
                                 <a class="icon-btn" title="Отменить"
                                    href="<?= $view->e($view->url('panel/subjects')) ?>">
-                                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                                         stroke-width="1.6" aria-hidden="true">
-                                        <path d="M6 6l8 8M14 6l-8 8"/>
-                                    </svg>
+                                    <?php $icon = 'cancel'; ?>
+                                    <?php require __DIR__ . '/../_action_icon.php'; ?>
                                     <span class="visually-hidden">Отменить</span>
                                 </a>
                             </form>
@@ -161,11 +152,8 @@ require __DIR__ . '/_page_header.php';
                             <details class="row-menu">
                                 <summary class="card-opt-btn"
                                          aria-label="Действия: <?= $view->e($row['name']) ?>">
-                                    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                                        <circle cx="8" cy="3" r="1.2"/>
-                                        <circle cx="8" cy="8" r="1.2"/>
-                                        <circle cx="8" cy="13" r="1.2"/>
-                                    </svg>
+                                    <?php $icon = 'more'; ?>
+                                    <?php require __DIR__ . '/../_action_icon.php'; ?>
                                 </summary>
                                 <div class="menu-popover" role="menu">
                                     <?php /*
@@ -214,10 +202,8 @@ require __DIR__ . '/_page_header.php';
         <div class="modal-header">
             <h2 class="modal-title" id="subject-add-title">Новый предмет</h2>
             <button type="button" class="modal-close" data-modal-close aria-label="Закрыть">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="1.5" aria-hidden="true">
-                    <path d="M18 6 6 18M6 6l12 12"/>
-                </svg>
+                <?php $icon = 'close'; ?>
+                <?php require __DIR__ . '/../_action_icon.php'; ?>
             </button>
         </div>
 

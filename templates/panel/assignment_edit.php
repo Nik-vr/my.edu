@@ -106,20 +106,14 @@ $editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
     value="<?= $view->e($workTitle) ?>"
     aria-label="Название работы" autofocus>
   <button type="submit" class="icon-btn icon-btn--save" title="Сохранить название">
-  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-  stroke-width="1.6" aria-hidden="true">
-  <path d="M4 4h9l3 3v9H4z"/>
-  <path d="M7 4v4h6V4"/>
-  <path d="M7 16v-4h6v4"/>
-  </svg>
+  <?php $icon = 'copy'; ?>
+  <?php require __DIR__ . '/../_action_icon.php'; ?>
   <span class="visually-hidden">Сохранить название</span>
   </button>
   <a class="icon-btn" title="Отменить"
   href="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/edit')) ?>">
-  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-  stroke-width="1.6" aria-hidden="true">
-  <path d="M6 6l8 8M14 6l-8 8"/>
-  </svg>
+  <?php $icon = 'cancel'; ?>
+  <?php require __DIR__ . '/../_action_icon.php'; ?>
   <span class="visually-hidden">Отменить</span>
   </a>
   </form>
@@ -148,11 +142,8 @@ $editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
   <?= $view->e($workTitle) ?>
   <a class="icon-btn" href="<?= $view->e($view->url($editTitleUrl)) ?>"
   title="Изменить название" aria-label="Изменить название работы">
-  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-  stroke-width="1.6" aria-hidden="true">
-  <path d="M13.5 3.5 16.5 6.5 7 16H4v-3z"/>
-  <path d="M12 5l3 3"/>
-  </svg>
+  <?php $icon = 'edit'; ?>
+  <?php require __DIR__ . '/../_action_icon.php'; ?>
   </a>
   </h1>
   <?php endif; ?>

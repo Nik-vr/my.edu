@@ -28,6 +28,16 @@ require __DIR__ . '/support/TestKit.php';
 $root = str_replace('\\', '/', dirname(__DIR__));
 $runner = new TestRunner();
 
+/*
+ * Ядро нужно для настоящей разметки хуков: правило про подпись поля
+ * проверяет не текст исходника, а то, что поле на самом деле рисует.
+ */
+require $root . '/src/Core/Autoloader.php';
+
+$autoloader = new MyEdu\Core\Autoloader();
+$autoloader->addNamespace('MyEdu\\', $root . '/src');
+$autoloader->register();
+
 /**
  * Все файлы проекта по расширениям, с путями через прямой слэш.
  *
@@ -444,8 +454,53 @@ $createsErrorNode = str_contains($jsCode['public/assets/js/form-validate.js'] ??
 $runner->is($createsErrorNode, 'браузер рисует ошибку тем же узлом, что и сервер');
 
 $runner->is(
-    str_contains((string) file_get_contents($root . '/src/Ui/Ui.php'), '\'<div class="form-error">\''),
+    str_contains((string) file_get_contents($root . '/src/Ui/Ui.php'), 'class="form-error"'),
     'сервер рисует ошибку полем .form-error'
+);
+
+/*
+ * Подпись под полем объявлена для чтения с экрана.
+ *
+ * Поле ссылается на подпись через `aria-describedby`, а подпись отвечает
+ * своим `id`. Без этой связи подсказка и ошибка читаются с экрана только как
+ * текст рядом с полем: человек, который не видит страницу, узнаёт об ошибке
+ * лишь тогда, когда программа чтения дойдёт до подписи, — а до подписи она
+ * не доходит.
+ *
+ * Проверяется на настоящей разметке хуков: адрес на поле и адрес на подписи
+ * должны совпадать, и подпись с таким адресом обязана быть на странице.
+ */
+$runner->group('Правила интерфейса: подпись поля');
+
+$uiSource = (string) file_get_contents($root . '/src/Ui/Ui.php');
+
+$runner->is(
+    str_contains($uiSource, "'aria-describedby' => \$this->descriptionId(\$id, \$o) ?: null"),
+    'поле объявляет подпись под собой'
+);
+
+$runner->is(
+    str_contains($uiSource, "return \$id . '-error';") && str_contains($uiSource, "return \$id . '-help';"),
+    'адрес подписи выводится из идентификатора поля'
+);
+
+$uiObject = (new MyEdu\Core\View($root . '/templates'))->ui();
+
+foreach (['title' => 'Подсказка', 'email' => 'Ошибка'] as $field => $text) {
+    $markup = $field === 'title'
+        ? $uiObject->field($field, ['label' => 'Поле', 'help' => $text])
+        : $uiObject->field($field, ['label' => 'Поле', 'error' => $text]);
+
+    $runner->is(
+        preg_match('/aria-describedby="([^"]+)"/', $markup, $ref) === 1
+        && str_contains($markup, 'id="' . $ref[1] . '"'),
+        'адрес с поля указывает на подпись, которая есть на странице: ' . $field
+    );
+}
+
+$runner->is(
+    !str_contains($uiObject->field('plain', ['label' => 'Поле']), 'aria-describedby'),
+    'у поля без подписи адрес не выставляется'
 );
 
 // ---------------------------------------------------------------------------
@@ -755,6 +810,48 @@ $runner->equals(
     $sortableEmpty,
     'пустая колонка не сортируется: ' . implode(', ', $sortableEmpty)
 );
+
+/*
+ * Библиотека таблиц стоит только там, где списку она нужна.
+ *
+ * DataTables — спискам, которые переросли одну страницу: классам, предметам и
+ * сотрудникам. Подключать её к таблице на двадцать строк незачем, а своя
+ * разметка под библиотекой рискует получить чужие правила оформления. Правило
+ * записано в файле для разработчика; здесь оно проверяется, чтобы новая
+ * таблица с библиотекой не появилась молча.
+ *
+ * Список разрешённых мест — с именем файла, а не числом: файл переименуют, и
+ * проверка должна сказать об этом, а не молчать о неожиданном числе.
+ */
+$runner->group('Правила интерфейса: библиотека таблиц');
+
+$datatableAllowed = [
+    'templates/panel/classes.php',
+    'templates/panel/subjects.php',
+    'templates/panel/users.php',
+];
+
+$datatableUnexpected = [];
+
+foreach (readFiles($root, ['templates', 'plugins'], ['php']) as $path => $src) {
+    if (str_contains($src, 'data-datatable') && !in_array($path, $datatableAllowed, true)) {
+        $datatableUnexpected[] = $path;
+    }
+}
+
+$runner->equals(
+    [],
+    $datatableUnexpected,
+    'библиотека таблиц стоит только в списках, которые переросли страницу: '
+    . implode(', ', $datatableUnexpected)
+);
+
+foreach ($datatableAllowed as $path) {
+    $runner->is(
+        str_contains((string) (readFiles($root, ['templates/panel'], ['php'])[$path] ?? ''), 'data-datatable'),
+        'таблица со списком на всю школу осталась с библиотекой: ' . basename($path)
+    );
+}
 
 // ---------------------------------------------------------------------------
 // 12. Подсказка поля поиска начинается за значком.
@@ -1338,6 +1435,64 @@ $runner->equals(
     $withoutDenied,
     'каждый запрос разбирает отказ по коду ответа'
     . (count($withoutDenied) > 0 ? ': ' . implode(', ', $withoutDenied) : '')
+);
+
+/*
+ * Один значок — одно место, где он нарисован.
+ *
+ * Пять значков действий повторялись в шести шаблонах по два-три раза. Копия
+ * значка — это копия его начертания: поправили в одном месте, в остальных
+ * осталось старое, и кнопки в разных таблицах выглядели по-разному. Теперь
+ * начертание лежит в карте `templates/_action_icons.php`, а шаблоны зовут его
+ * по имени.
+ *
+ * Проверяется по разметке, а не по файлам карты: одинаковый svg в двух
+ * шаблонах — это и есть та самая копия, которую ищут. Совпадения сравниваются
+ * без учёта пробелов: в разметке один и тот же значок написан с разными
+ * отступами, и из-за отступов копия прошла бы незамеченной.
+ *
+ * Пункт H ревью 2026-10-21.
+ */
+$runner->group('Правила интерфейса: значки действий');
+
+$iconMap = (string) file_get_contents($root . '/templates/_action_icons.php');
+$iconFiles = readFiles($root, ['templates', 'plugins'], ['php']);
+
+$svgSeen = [];
+$copiedIcons = [];
+
+foreach ($iconFiles as $path => $src) {
+    if (preg_match_all('#<svg\b.*?</svg>#s', $src, $matches) === 0) {
+        continue;
+    }
+
+    foreach ($matches[0] as $svg) {
+        $plain = (string) preg_replace('/\s+/', ' ', trim($svg));
+
+        if (isset($svgSeen[$plain])) {
+            $copiedIcons[] = $path . ' (тот же значок, что в ' . $svgSeen[$plain] . ')';
+            continue;
+        }
+
+        $svgSeen[$plain] = $path;
+    }
+}
+
+$runner->equals(
+    [],
+    $copiedIcons,
+    'значок нарисован в одном месте: ' . implode(', ', $copiedIcons)
+);
+
+$runner->is(
+    $iconMap !== '' && preg_match_all("#'([a-z_]+)' => '#", $iconMap) >= 5,
+    'в карте значков действий есть все пять значков'
+);
+
+$runner->is(
+    is_file($root . '/templates/_action_icon.php')
+    && str_contains((string) file_get_contents($root . '/templates/_action_icon.php'), '_action_icons.php'),
+    'значок рисуется через общий вызов, а не копируется в шаблон'
 );
 
 exit($runner->report());

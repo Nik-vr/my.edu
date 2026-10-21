@@ -81,8 +81,14 @@ final class Ui
             'value'    => (string) ($o['value'] ?? ''),
             'data-hint' => $hint === '' ? null : $hint,
             /*
+             * Поле объявляет подпись под собой, чтобы программа чтения
+             * произнесла её вместе с полем. Адрес тот же, что у подписи: иначе
+             * ссылка вела бы в пустоту.
+             */
+            'aria-describedby' => $this->descriptionId($id, $o) ?: null,
+            /*
              * Поле с ошибкой объявляется и для чтения с экрана: иначе человек,
-             * который не видит страницу, узнает об ошибке только из подписи под
+             * который не видит страницу, узнаёт об ошибке только из подписи под
              * полем — а её он тоже не видит.
              */
             'aria-invalid' => $error === '' ? null : 'true',
@@ -90,6 +96,7 @@ final class Ui
 
         return $this->wrap($control, $o, $id);
     }
+
 
     /**
      * Поле в несколько строк.
@@ -106,6 +113,7 @@ final class Ui
             'id'      => $id,
             'name'    => $name,
             'rows'    => (string) max(1, (int) ($o['rows'] ?? 3)),
+            'aria-describedby' => $this->descriptionId($id, $o) ?: null,
             'aria-invalid' => $error === '' ? null : 'true',
         ] + $this->attributeOptions($o, ['rows']), (string) ($o['value'] ?? ''));
 
@@ -144,6 +152,7 @@ final class Ui
             'class' => 'form-control' . ($error === '' ? '' : ' is-invalid'),
             'id'    => $id,
             'name'  => $name,
+            'aria-describedby' => $this->descriptionId($id, $o) ?: null,
             'aria-invalid' => $error === '' ? null : 'true',
         ] + $this->attributeOptions($o), $options);
 
@@ -292,6 +301,7 @@ final class Ui
             'type'  => 'file',
             'id'    => $id,
             'name'  => $name,
+            'aria-describedby' => $this->descriptionId($id, $o) ?: null,
             'aria-invalid' => $error === '' ? null : 'true',
         ] + $this->attributeOptions($o));
 
@@ -361,10 +371,46 @@ final class Ui
      * Отдельный метод, а не только состояние поля: ошибку ставит сервер, а
      * рисовали её вручную в каждом шаблоне — в плагинах в том числе, где она
      * попросту не появлялась.
+     *
+     * Идентификатор передаётся, когда ошибка должна быть объявлена для чтения
+     * с экрана: на поле ставится `aria-describedby` с этим адресом, и программа
+     * читания произносит ошибку вместе с подписью поля. Без адреса подпись
+     * видна только глазом.
      */
-    public function fieldError(string $message): string
+    public function fieldError(string $message, string $id = ''): string
     {
-        return '<div class="form-error">' . $this->e($message) . '</div>';
+        return '<div class="form-error"'
+            . ($id === '' ? '' : ' id="' . $this->e($id) . '"')
+            . '>' . $this->e($message) . '</div>';
+    }
+
+    /**
+     * Адрес подписи под полем: ошибки или подсказки.
+     *
+     * Возвращает пустую строку, когда подписи нет: незачем ставить на поле
+     * `aria-describedby`, который ни на что не указывает.
+     *
+     * Адрес выводится из идентификатора поля, а не выдумывается: тот же
+     * идентификатор у подписи поля и у самой подсказки, иначе связь между ними
+     * пришлось бы передавать в двух местах и она однажды разошлась бы.
+     *
+     * @param array<string,mixed> $o
+     */
+    private function descriptionId(string $id, array $o): string
+    {
+        if ($id === '') {
+            return '';
+        }
+
+        if (trim((string) ($o['error'] ?? '')) !== '') {
+            return $id . '-error';
+        }
+
+        if (trim((string) ($o['help'] ?? '')) !== '') {
+            return $id . '-help';
+        }
+
+        return '';
     }
 
     /**
@@ -624,7 +670,7 @@ final class Ui
  * Подпись всегда экранируется.
  *
  * Раньше подпись, начинающаяся с «<», вставлялась как есть — на случай, если
- * кто-то захотел подписать поле готовой разметкой. Такого подписывающего поля
+ * кто-то захочет подписать поле готовой разметкой. Такого подписывающего поля
  * в проекте нет ни одного: все 179 вызовов передают обычный текст. А ветка
  * осталась и ждала того, кто передаст в подпись то, что покажет пользователю:
  * имя класса или фамилию из базы, начинающееся с «<», уехало бы в страницу
@@ -639,8 +685,28 @@ $labelHtml = $label === ''
                 . ($id === '' ? '' : ' for="' . $this->e($id) . '"')
                 . '>' . $this->e($label) . '</label>';
 
-        $footer = $error !== '' ? $this->fieldError($error)
-            : ($help === '' ? '' : '<div class="form-help">' . $this->e($help) . '</div>');
+        /*
+         * Подпись под полем получает адрес, а поле ссылается на него через
+         * `aria-describedby`.
+         *
+         * Без этой связи подсказка и ошибка читаются с экрана только как текст
+         * рядом с полем: человек, который не видит страницу, узнаёт об ошибке
+         * лишь тогда, когда программа чтения дойдёт до подписи, а до подписи
+         * она не доходит — поле называет себя и всё. Адрес выводится из
+         * идентификатора поля, поэтому и подпись поля, и её объяснение
+         * указывают на одно и то же.
+         */
+        $describedBy = $this->descriptionId($id, $o);
+
+        if ($error !== '') {
+            $footer = $this->fieldError($error, $describedBy);
+        } elseif ($help !== '') {
+            $footer = '<div class="form-help"'
+                . ($describedBy === '' ? '' : ' id="' . $this->e($describedBy) . '"')
+                . '>' . $this->e($help) . '</div>';
+        } else {
+            $footer = '';
+        }
 
         return '<div class="' . $this->e($this->wrapperClass($o)) . '"'
             . $this->extraAttributes($o['wrapperAttrs'] ?? null)
@@ -648,6 +714,7 @@ $labelHtml = $label === ''
             . $labelHtml . $control . $footer
             . '</div>';
     }
+
 
     private function wrapperClass(array $o): string
     {

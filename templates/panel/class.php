@@ -206,16 +206,13 @@ aria-label="Выбрать всех учеников">
  ?>
  <div class="inline-value">
  <span class="inline-value__text"><?= $view->e($student['full_name']) ?></span>
- <a class="icon-btn"
- href="<?= $view->e($view->url('classes/' . $classId . '?edit=' . $studentId)) ?>"
- title="Изменить имя"
- aria-label="Изменить имя: <?= $view->e($student['full_name']) ?>">
- <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
- stroke-width="1.6" aria-hidden="true">
- <path d="M13.5 3.5 16.5 6.5 7 16H4v-3z"/>
- <path d="M12 5l3 3"/>
- </svg>
- </a>
+  <a class="icon-btn"
+  href="<?= $view->e($view->url('classes/' . $classId . '?edit=' . $studentId)) ?>"
+  title="Изменить имя"
+  aria-label="Изменить имя: <?= $view->e($student['full_name']) ?>">
+  <?php $icon = 'edit'; ?>
+  <?php require __DIR__ . '/../_action_icon.php'; ?>
+  </a>
  </div>
  <?php $nameBlock = (string) ob_get_clean(); ?>
  <tr>
@@ -273,20 +270,14 @@ class="inline-form"
   aria-label="Фамилия, имя и отчество"
   autofocus>
  <button type="submit" class="icon-btn icon-btn--save" title="Сохранить имя">
- <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
- stroke-width="1.6" aria-hidden="true">
- <path d="M4 4h9l3 3v9H4z"/>
- <path d="M7 4v4h6V4"/>
- <path d="M7 16v-4h6v4"/>
- </svg>
+ <?php $icon = 'copy'; ?>
+ <?php require __DIR__ . '/../_action_icon.php'; ?>
  <span class="visually-hidden">Сохранить имя</span>
  </button>
  <a class="icon-btn" title="Отменить"
  href="<?= $view->e($view->url('classes/' . $classId)) ?>">
- <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
- stroke-width="1.6" aria-hidden="true">
- <path d="M6 6l8 8M14 6l-8 8"/>
- </svg>
+ <?php $icon = 'cancel'; ?>
+ <?php require __DIR__ . '/../_action_icon.php'; ?>
  <span class="visually-hidden">Отменить</span>
  </a>
  </form>
@@ -352,11 +343,8 @@ $issuedPassword = (string) (($issuedPasswords[(string) $studentId]['password'] ?
 <details class="row-menu">
 <summary class="card-opt-btn"
 aria-label="Действия: <?= $view->e($student['full_name']) ?>">
-<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-<circle cx="8" cy="3" r="1.2"/>
-<circle cx="8" cy="8" r="1.2"/>
-<circle cx="8" cy="13" r="1.2"/>
-</svg>
+<?php $icon = 'more'; ?>
+<?php require __DIR__ . '/../_action_icon.php'; ?>
 </summary>
 <div class="menu-popover" role="menu">
 

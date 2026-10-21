@@ -1557,9 +1557,17 @@ foreach ($hooks as $hook) {
     $t->is(method_exists($ui, $hook), 'есть хук ' . $hook);
 }
 
+/*
+ * Образцы разметки хуков.
+ *
+ * Поле объявляет подпись под собой через `aria-describedby`: без этой связи
+ * подсказка и ошибка читаются с экрана только как текст рядом, и человек,
+ * который не видит страницу, узнаёт об ошибке лишь тогда, когда программа
+ * чтения дойдёт до подписи, — а до подписи она не доходит.
+ */
 $expectedField = '<div class="form-group"><label class="form-label" for="title">Название</label>'
-    . '<input class="form-control" type="text" id="title" name="title" value="Тест" required maxlength="191">'
-    . '<div class="form-help">Подсказка</div></div>';
+    . '<input class="form-control" type="text" id="title" name="title" value="Тест" aria-describedby="title-help" required maxlength="191">'
+    . '<div class="form-help" id="title-help">Подсказка</div></div>';
 
 $t->equals($expectedField, $ui->field('title', [
     'label' => 'Название',
@@ -1571,8 +1579,8 @@ $t->equals($expectedField, $ui->field('title', [
 
 $t->equals(
     '<div class="form-group"><label class="form-label" for="email">Почта</label>'
-    . '<input class="form-control is-invalid" type="email" id="email" name="email" value="" aria-invalid="true">'
-    . '<div class="form-error">Адрес указан неверно</div></div>',
+    . '<input class="form-control is-invalid" type="email" id="email" name="email" value="" aria-describedby="email-error" aria-invalid="true">'
+    . '<div class="form-error" id="email-error">Адрес указан неверно</div></div>',
     $ui->field('email', [
         'label' => 'Почта',
         'type' => 'email',

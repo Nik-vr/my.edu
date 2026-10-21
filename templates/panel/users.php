@@ -207,11 +207,8 @@ require __DIR__ . '/_page_header.php';
                                 <details class="row-menu row-menu--role">
                                     <summary class="row-menu__current">
                                         <span class="role-chip"><?= $view->e(Role::title($role)) ?></span>
-                                        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                                            <circle cx="8" cy="3" r="1.2"/>
-                                            <circle cx="8" cy="8" r="1.2"/>
-                                            <circle cx="8" cy="13" r="1.2"/>
-                                        </svg>
+                                        <?php $icon = 'more'; ?>
+                                        <?php require __DIR__ . '/../_action_icon.php'; ?>
                                         <span class="visually-hidden">
                                             Сменить роль: <?= $view->e($row['full_name']) ?>
                                         </span>
@@ -264,11 +261,8 @@ require __DIR__ . '/_page_header.php';
                             <details class="row-menu">
                                 <summary class="card-opt-btn"
                                          aria-label="Действия: <?= $view->e($row['full_name']) ?>">
-                                    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                                        <circle cx="8" cy="3" r="1.2"/>
-                                        <circle cx="8" cy="8" r="1.2"/>
-                                        <circle cx="8" cy="13" r="1.2"/>
-                                    </svg>
+                                    <?php $icon = 'more'; ?>
+                                    <?php require __DIR__ . '/../_action_icon.php'; ?>
                                 </summary>
                                 <div class="menu-popover" role="menu">
                                     <a class="menu-item" role="menuitem"

@@ -375,10 +375,8 @@ $variantCount = count($rows);
      Задание № <?= $view->e($editor['order'] ?? 0) ?>
 </h2>
    <button type="button" class="modal-close" data-modal-close aria-label="Закрыть">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-     stroke-width="1.5" aria-hidden="true">
-     <path d="M18 6 6 18M6 6l12 12"/>
-    </svg>
+    <?php $icon = 'close'; ?>
+    <?php require __DIR__ . '/../_action_icon.php'; ?>
    </button>
   </div>
 
