@@ -49,3 +49,5 @@ Thumbs.db
 public/_shot_tmp.php
 public/_probe*.html
 public/_probe*.js
+public/_session_probe*
+public/_enc_probe*

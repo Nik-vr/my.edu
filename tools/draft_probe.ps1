@@ -1,4 +1,4 @@
-# Проверка черновика правки задания: пишет в форму, ждёт запись в браузере,
+# Проверка черновика правки задания: пишет в форму, ждёт запись на сервер,
 # портит форму так, как это сделала бы перезагрузка, и смотрит, что вернулось.
 #
 # Зачем отдельный инструмент, если есть набор проверок. Поведение черновика —
@@ -6,6 +6,11 @@
 # галочек, списки вариантов по позициям и живой текст визуального редактора.
 # Проверкой по тексту файла это не поймать: строка может называться верно и при
 # этом ничего не делать. Здесь форма настоящая, набор тот же, что и на странице.
+#
+# Черновик лежит на сервере, и сервер в пробе подменён: модуль ходит к нему
+# сам, а проба смотрит, что ушло в запросе и что вернулось в ответе. Так
+# проверяется больше, чем чтением хранилища браузера, — и не нужно заводить
+# настоящую работу с заданием ради проверки скрипта.
 #
 # Страница кладётся в public/, а не в документы приложения: проверяется не
 # приложение, а скрипты, и подмена ответа сервера мешала бы — скрипт отдаёт
@@ -28,12 +33,15 @@ $script = Join-Path (Get-Location) "public\_draft_probe.js"
 # Страница повторяет форму редактора задания: те же метки, тот же визуальный
 # редактор, те же имена полей. Отличия от боевой формы — в другом наборе полей:
 # здесь важно проверить все виды значений сразу, а не повторить задание целиком.
+#
+# Адрес черновика в атрибуте `data-draft-url`: с версии 0.2-beta черновик лежит
+# на сервере, а не в браузере, и модуль берёт адрес оттуда.
 $html = @'
 <!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>Проба черновика</title></head>
 <body>
-<div class="task-editor" data-editor-for="888" data-editor-body>
+<div class="task-editor" data-editor-for="888" data-draft-url="/tests/task/2/draft">
   <form data-ajax-save action="/tests/task/2" method="post" data-fixed-type="text">
     <input type="hidden" name="_token" value="одноразовый токен">
     <input type="hidden" name="action" value="save_task">
@@ -85,7 +93,6 @@ window.addEventListener('load', function () {
   }
 
   var form = document.querySelector('form[data-ajax-save]');
-  var KEY = 'myedu-task-draft:888';
 
   var quill = form.myEduPromptEditor;
 
@@ -94,6 +101,46 @@ window.addEventListener('load', function () {
   if (!quill) {
     return;
   }
+
+  /*
+   * Сервер черновика подменён: модуль ходит к нему сам, и проба смотрит, что
+   * именно ушло и что вернулось.
+   *
+   * Раньше черновик лежал в браузере, и проба читала sessionStorage. Сейчас он
+   * на сервере, читать его неоткуда — и подмена сервера к тому же проверяет
+   * больше: видно и запрос, и ответ.
+   */
+  var stored = null;
+  var dropped = false;
+
+  window.fetch = function (url, options) {
+    options = options || {};
+
+    if ((options.method || 'GET').toUpperCase() === 'POST') {
+      var action = options.body.get('action');
+
+      if (action === 'drop') {
+        dropped = true;
+        stored = null;
+      } else {
+        stored = JSON.parse(options.body.get('fields'));
+      }
+
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        redirected: false,
+        json: function () { return Promise.resolve({ ok: true }); }
+      });
+    }
+
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      redirected: false,
+      json: function () { return Promise.resolve({ ok: true, fields: stored || {} }); }
+    });
+  };
 
   window.MyEduTaskDraft.init(document);
 
@@ -122,10 +169,9 @@ window.addEventListener('load', function () {
    * изменения, и проверка сразу после ввода читала бы пустое хранилище.
    */
   window.setTimeout(function () {
-    var raw = window.sessionStorage.getItem(KEY);
-    var fields = raw ? JSON.parse(raw).fields : null;
+    var fields = stored;
 
-    say('DRAFT_WRITTEN=' + (raw ? 'yes' : 'no'));
+    say('DRAFT_WRITTEN=' + (fields ? 'yes' : 'no'));
 
     if (!fields) {
       return;
@@ -157,23 +203,29 @@ window.addEventListener('load', function () {
     options[0].value = 'первый с сервера';
     options[1].value = 'второй с сервера';
 
-    var said = window.MyEduTaskDraft.reopen(document);
-    var back = window.MyEduEditor.promptHtml(form) || '';
+    /*
+     * Восстановление идёт запросом к серверу, поэтому обещание: значения
+     * возвращаются не сразу, а когда сервер ответил. Раньше черновик лежал в
+     * браузере и возвращался мгновенно, и проверка читала его сразу.
+     */
+    window.MyEduTaskDraft.reopen(document).then(function (said) {
+      var back = window.MyEduEditor.promptHtml(form) || '';
 
-    say('RESTORED=' + (prompt.value === 'обычное поле изменено'
-      && description.value === 'описание из черновика'
-      && required.checked === true
-      && mode.value === 'range'
-      && options[0].value === 'первый изменённый'
-      && options[1].value === 'второй изменённый' ? 'yes' : 'no'));
-    say('PROMPT_BACK=' + (back.indexOf('ещё не сохранён') !== -1 ? 'yes' : 'no'));
-    say('RESTORE_SAID=' + (said === true ? 'yes' : 'no'));
+      say('RESTORED=' + (prompt.value === 'обычное поле изменено'
+        && description.value === 'описание из черновика'
+        && required.checked === true
+        && mode.value === 'range'
+        && options[0].value === 'первый изменённый'
+        && options[1].value === 'второй изменённый' ? 'yes' : 'no'));
+      say('PROMPT_BACK=' + (back.indexOf('ещё не сохранён') !== -1 ? 'yes' : 'no'));
+      say('RESTORE_SAID=' + (said === true ? 'yes' : 'no'));
 
-    /* Отмена значит отмену: черновик удаляется. */
-    window.MyEduTaskDraft.drop(form);
+      /* Отмена значит отмену: черновик удаляется. */
+      window.MyEduTaskDraft.drop(form);
 
-    say('CANCEL_DROPS=' + (window.sessionStorage.getItem(KEY) === null ? 'yes' : 'no'));
-    say('EMPTY_AFTER=' + (window.MyEduTaskDraft.exists(form) === false ? 'yes' : 'no'));
+      say('CANCEL_DROPS=' + (dropped === true ? 'yes' : 'no'));
+      say('EMPTY_AFTER=' + (window.MyEduTaskDraft.exists(form) === false ? 'yes' : 'no'));
+    });
   }, 900);
 });
 '@

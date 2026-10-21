@@ -56,26 +56,40 @@ $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
 # Работа ищется сама: берётся первая, чей редактор эта сессия может открыть.
 # Чужие работы видны в списке, но не редактируются, и такой номер не годится.
+#
+# Список берётся через временный вход, а не пустой сессией: без входа
+# приходит страница входа, и работа не находилась никогда. Вход тот же, что и
+# у вспомогательного файла пробы, — по адресу почты из параметра.
 if ($Work -eq 0) {
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $null = Invoke-WebRequest -Uri "$base/_shot_tmp.php?path=/panel/assignments" -WebSession $session -UseBasicParsing
+
     foreach ($state in @('drafts', 'published', 'archived')) {
         $listHtml = (Invoke-WebRequest -Uri "$base/panel/assignments?state=$state" -WebSession $session -UseBasicParsing).Content
-        $match = [regex]::Match($listHtml, 'href="/panel/assignments/(\d+)"')
 
-        if (-not $match.Success) {
-            continue
+        # Ссылка на работу идёт по-разному: у своей работы это адрес редактора,
+        # у чужой — адрес просмотра. Берём оба и отсеиваем по тому, что работа
+        # действительно открывается этой сессией.
+        $candidates = [regex]::Matches($listHtml, 'href="/panel/assignments/(\d+)')
+
+        foreach ($found in $candidates) {
+            $candidate = $found.Groups[1].Value
+
+            try {
+                # Вкладка заданий, а не прежний адрес: редактор открыт по вкладкам.
+                $opened = (Invoke-WebRequest -Uri "$base/panel/assignments/$candidate/edit?tab=items" -WebSession $session -UseBasicParsing).Content
+            } catch {
+                continue
+            }
+
+            if ($opened -match 'data-editor-open') {
+                $Work = [int] $candidate
+
+                break
+            }
         }
 
-        $candidate = $match.Groups[1].Value
-
-        try {
-            $opened = (Invoke-WebRequest -Uri "$base/panel/assignments/$candidate/edit/items" -WebSession $session -UseBasicParsing).Content
-        } catch {
-            continue
-        }
-
-        if ($opened -match 'data-editor-open') {
-            $Work = [int] $candidate
-
+        if ($Work -ne 0) {
             break
         }
     }
@@ -125,7 +139,7 @@ header('Content-Type: text/html; charset=utf-8');
 <head><meta charset="utf-8"><title>Проба оформления</title></head>
 <body>
 <pre id="probe">PROBE:waiting</pre>
-<iframe id="page" width="1500" height="620" src="/panel/assignments/<?= $work ?>/edit/items"></iframe>
+<iframe id="page" width="1500" height="620" src="/panel/assignments/<?= $work ?>/edit?tab=items"></iframe>
 <script>
 var log = [];
 var frame = document.getElementById('page');
