@@ -206,8 +206,9 @@ $variantCount = count($rows);
       action="<?= $view->e($view->url($itemsUrl . '/' . $itemId . '/delete')) ?>">
       <?= $view->raw($view->csrfField()) ?>
       <button type="submit" class="work-card__btn work-card__btn--danger"
-       data-confirm="Убрать задание из работы?"
-       data-confirm-body="Задание вернётся в список плагина. Оно останется там, но из этой работы его придётся класть заново."
+      data-confirm="Убрать задание из работы?"
+      data-confirm-body="Задание вернётся в список плагина. Оно останется там, но из этой работы его придётся класть заново."
+      data-confirm-yes="Убрать из работы"
        title="Убрать из работы" aria-label="Убрать задание из работы">
        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

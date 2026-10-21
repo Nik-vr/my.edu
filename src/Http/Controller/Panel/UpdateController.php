@@ -9,6 +9,7 @@ use MyEdu\Core\Request;
 use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\SystemUpdate;
+use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
 
 /**
@@ -29,7 +30,14 @@ final class UpdateController
     public function __construct(
         private readonly Csrf $csrf,
         private readonly Session $session,
-        private readonly SystemUpdate $update
+        private readonly SystemUpdate $update,
+        /*
+         * Вид нужен помощникам: без него `redirect()` обходит `$this->view` и
+         * падает с «Call to a member function url() on null» — уже после того,
+         * как обновление выполнено. То есть файлы заменены, а человек видит
+         * ошибку и решает, что ничего не произошло.
+         */
+        private readonly View $view
     ) {
     }
 

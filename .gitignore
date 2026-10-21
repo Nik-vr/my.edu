@@ -43,3 +43,9 @@ config/config.local.php
 # ОС
 Thumbs.db
 .DS_Store
+
+# Временный вход для снимков и проб.
+# Файл даёт вход в систему без пароля, поэтому в репозиторий ему нельзя.
+public/_shot_tmp.php
+public/_probe*.html
+public/_probe*.js

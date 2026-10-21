@@ -214,10 +214,94 @@ $t->is(is_file($target . '-tag/src/Core/Version.php'), 'файл лёг по с�
 $t->is(is_file($target . '-tag/templates/panel/settings.php'), 'вложенный каталог тоже без общей приставки');
 $t->is(!is_file($target . '-tag/config/config.local.php'), 'настройки с доступами к базе не записаны');
 
+/*
+ * Кнопка обновления и её подтверждение.
+ *
+ * Окно подтверждения без своей подписи показывает в кнопке слово «Удалить» —
+ * так оно и было: человек, собирающийся обновить систему, видел «Удалить» и
+ * вправе был не нажимать.
+ */
+$t->group('Кнопка обновления');
+
+$settingsTemplate = (string) @file_get_contents($rootDir . '/templates/panel/settings.php');
+
+$t->is(
+    str_contains($settingsTemplate, 'data-confirm-yes="Обновить систему"'),
+    'у кнопки обновления своя подпись в окне подтверждения'
+);
+
+$t->is(
+    str_contains($settingsTemplate, 'panel/settings/update'),
+    'форма обновления отправляется на свой адрес'
+);
+
+/*
+ * Ни одно подтверждение в шаблонах не остаётся без своей подписи.
+ *
+ * Подпись по умолчанию — «Удалить», и она годится только для удаления. Для
+ * остальных действий она врёт: «Убрать из работы» с кнопкой «Удалить» и
+ * «Обновить систему» с той же кнопкой — одно и то же слово на разных
+ * действиях.
+ */
+$withoutLabel = [];
+
+foreach ([$rootDir . '/templates', $rootDir . '/plugins'] as $directory) {
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory));
+
+    foreach ($files as $file) {
+        if (!$file->isFile() || !str_ends_with($file->getFilename(), '.php')) {
+            continue;
+        }
+
+        $source = (string) @file_get_contents($file->getPathname());
+
+        if (!str_contains($source, 'data-confirm=')) {
+            continue;
+        }
+
+        $positions = [];
+        $offset = 0;
+
+        while (($at = strpos($source, 'data-confirm=', $offset)) !== false) {
+            $positions[] = $at;
+            $offset = $at + 13;
+        }
+
+        foreach ($positions as $index => $at) {
+            $end = $positions[$index + 1] ?? strlen($source);
+            $window = substr($source, $at, min(600, $end - $at));
+
+            if (!str_contains($window, 'data-confirm-yes')) {
+                $withoutLabel[] = str_replace($rootDir . '/', '', $file->getPathname());
+            }
+        }
+    }
+}
+
+$t->equals([], $withoutLabel, 'у каждого подтверждения своя подпись: ' . implode(', ', $withoutLabel));
+
+/*
+ * Контроллер обновления умеет вернуть человека на страницу настроек.
+ *
+ * Помощники строят адрес возврата через вид, и без него страница после
+ * обновления падала с «Call to a member function url() on null» — уже после
+ * того, как файлы были заменены. Человек видел ошибку и думал, что обновление
+ * не прошло.
+ */
+$updateController = new ReflectionClass(MyEdu\Http\Controller\Panel\UpdateController::class);
+$updateParams = array_map(
+    static fn (ReflectionParameter $parameter): string => $parameter->getName(),
+    $updateController->getConstructor()->getParameters()
+);
+
+$t->is(
+    in_array('view', $updateParams, true),
+    'контроллер обновления получает вид для адреса возврата'
+);
+
 /**
  * Очистка.
- */
-foreach ([$target, $target . '-bad', $target . '-tag'] as $directory) {
+ */foreach ([$target, $target . '-bad', $target . '-tag'] as $directory) {
     if (!is_dir($directory)) {
         continue;
     }

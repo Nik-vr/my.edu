@@ -84,10 +84,11 @@ $view->crumbs([
  <form method="post" action="<?= $view->e($view->url('panel/settings/update')) ?>">
  <?= $view->raw($view->csrfField()) ?>
 
- <button type="submit" class="btn btn-primary"
- data-confirm="Файлы системы будут заменены на версию <?= $view->e($releaseVersion) ?>. Перед этим будет снята резервная копия базы. Продолжить?">
- Обновить систему до <?= $view->e($releaseVersion) ?>
- </button>
+  <button type="submit" class="btn btn-primary"
+  data-confirm="Файлы системы будут заменены на версию <?= $view->e($releaseVersion) ?>. Перед этим будет снята резервная копия базы. Продолжить?"
+  data-confirm-yes="Обновить систему">
+  Обновить систему до <?= $view->e($releaseVersion) ?>
+  </button>
 
  <span class="form-help">
  Перед обновлением снимается резервная копия базы, а новые файлы кладутся
