@@ -118,7 +118,17 @@ final class SystemUpdate
             return ['ok' => false, 'error' => 'В настройках не указан репозиторий с релизами.'];
         }
 
-        $url = 'https://api.github.com/repos/' . trim($repository, '/') . '/releases/latest';
+        /*
+         * Список релизов, а не «последний релиз».
+         *
+         * Адрес .../releases/latest отдаёт релиз без отметки «предрелиз»:
+         * предрелизы в него не попадают. А беты проекта — они и есть
+         * предрелизы, и с этой отметкой в GitHub их не видно вовсе: сайт с
+         * бетой на сервере показывал «установлена последняя версия», хотя на
+         * GitHub лежала версия новее, и обновление не предлагалось. Список
+         * берётся целиком, а нужный релиз выбирается по номеру версии.
+         */
+        $url = 'https://api.github.com/repos/' . trim($repository, '/') . '/releases?per_page=30';
         $answer = $this->fetch($url, 20);
 
         if (!is_string($answer) || $answer === '') {
@@ -127,14 +137,29 @@ final class SystemUpdate
             return ['ok' => false, 'error' => $error];
         }
 
-        $release = json_decode($answer, true);
+        $releases = json_decode($answer, true);
 
-        if (!is_array($release)) {
+        if (!is_array($releases)) {
             return ['ok' => false, 'error' => 'Ответ GitHub не разобран.'];
         }
 
-        if (isset($release['message']) && !isset($release['tag_name'])) {
-            return ['ok' => false, 'error' => 'GitHub: ' . (string) $release['message']];
+        if (isset($releases['message']) && !isset($releases[0])) {
+            return ['ok' => false, 'error' => 'GitHub: ' . (string) $releases['message']];
+        }
+
+        $release = self::pickLatest($releases);
+        $prerelease = self::newestPrerelease($releases);
+
+        if ($release === null) {
+            if ($prerelease !== null) {
+                return [
+                    'ok' => false,
+                    'error' => 'На GitHub есть только предрелиз ' . Version::display($prerelease)
+                        . '. Он не предлагается для установки: снимите с него отметку «предрелиз» в GitHub.',
+                ];
+            }
+
+            return ['ok' => false, 'error' => 'На GitHub нет ни одного релиза.'];
         }
 
         $tag = (string) ($release['tag_name'] ?? '');
@@ -166,11 +191,113 @@ final class SystemUpdate
             'url' => $url,
             'published' => (string) ($release['published_at'] ?? ''),
             'error' => '',
+            /*
+             * Предрелиз с GitHub, если он есть. Само обновление он не
+             * заменяет: отметка «предрелиз» означает «не предлагать». Но
+             * сказать о нём надо — иначе страница скажет «установлена
+             * последняя версия», а на GitHub лежит версия новее, и выглядит
+             * это как поломка проверки.
+             */
+            'prerelease' => $prerelease !== null ? Version::display($prerelease) : '',
         ];
 
         $this->cache($result);
 
         return $result;
+    }
+
+    /**
+     * Новейший релиз из списка на GitHub.
+     *
+     * Черновики пропускаются, предрелизы — тоже: отметка «предрелиз» означает
+     * «не предлагать для установки». Из остальных берётся наибольший номер
+     * версии, а не самый свежий по дате: вышедший позже старый номер не
+     * должен вытеснять новый.
+     *
+     * @param list<mixed> $releases список как его отдаёт GitHub
+     *
+     * @return array<string,mixed>|null
+     */
+    public static function pickLatest(array $releases): ?array
+    {
+        $best = null;
+        $bestTag = '';
+
+        foreach ($releases as $release) {
+            if (!is_array($release)) {
+                continue;
+            }
+
+            if (($release['draft'] ?? false) === true || ($release['prerelease'] ?? false) === true) {
+                continue;
+            }
+
+            $tag = trim((string) ($release['tag_name'] ?? ''));
+
+            if ($tag === '') {
+                continue;
+            }
+
+            if ($best === null) {
+                $best = $release;
+                $bestTag = $tag;
+
+                continue;
+            }
+
+            $comparison = Version::compare($tag, $bestTag);
+
+            if ($comparison > 0) {
+                $best = $release;
+                $bestTag = $tag;
+
+                continue;
+            }
+
+            /*
+             * Один и тот же номер — берём тот, что вышел позже: тот у него
+             * свежее приложенный архив.
+             */
+            if ($comparison === 0
+                && (string) ($release['published_at'] ?? '') > (string) ($best['published_at'] ?? '')) {
+                $best = $release;
+                $bestTag = $tag;
+            }
+        }
+
+        return $best;
+    }
+
+    /**
+     * Тег новейшего предрелиза — если он есть.
+     *
+     * @param list<mixed> $releases список как его отдаёт GitHub
+     */
+    public static function newestPrerelease(array $releases): ?string
+    {
+        $best = null;
+
+        foreach ($releases as $release) {
+            if (!is_array($release)) {
+                continue;
+            }
+
+            if (($release['draft'] ?? false) === true || ($release['prerelease'] ?? false) !== true) {
+                continue;
+            }
+
+            $tag = trim((string) ($release['tag_name'] ?? ''));
+
+            if ($tag === '') {
+                continue;
+            }
+
+            if ($best === null || Version::compare($tag, $best) > 0) {
+                $best = $tag;
+            }
+        }
+
+        return $best;
     }
 
     /**

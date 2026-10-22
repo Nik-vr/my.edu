@@ -953,12 +953,18 @@ return [$config, []];
 
  $options = [];
 
- foreach ($question['options'] as $option) {
- $options[(string) $option['kind']][] = [
- 'value' => (string) $option['value_key'],
- 'text' => (string) $option['text'],
- ];
- }
+    foreach ($question['options'] as $option) {
+    $options[(string) $option['kind']][] = [
+    'value' => (string) $option['value_key'],
+    'text' => (string) $option['text'],
+    /*
+     * Отметка «обязательно показывать» — часть варианта, а не отдельная
+     * настройка. Без неё форма открывалась бы с незамеченными флажками, и
+     * автор видел бы, что его отметка не сохранилась, хотя она сохранена.
+     */
+    'always' => (int) ($option['always_show'] ?? 0) === 1,
+    ];
+    }
 
  $correct = [];
 

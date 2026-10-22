@@ -347,6 +347,24 @@ window.addEventListener('load', function () {
 
         say('STATUS_2=' + (status2 ? status2.textContent.trim() : ''));
         say('ANSWER_2=' + (answers[answers.length - 1] || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+
+        /*
+         * Открываем задание заново: так автор и проверяет, сохранилась ли
+         * отметка. Смотрим на флажок в форме — он должен стоять.
+         */
+        var opener = document.querySelector('[data-editor-open][data-task-id="__TASK_ID__"]');
+
+        if (opener) {
+          opener.click();
+        }
+
+        window.setTimeout(function () {
+          var form2 = document.querySelector('form[data-fixed-type]');
+          var box = form2 ? form2.querySelector('input[name="option_always_show[]"]') : null;
+
+          say('REOPENED=' + (form2 ? 'yes' : 'no'));
+          say('ALWAYS_AFTER_SAVE=' + (box && box.checked ? 'yes' : 'no'));
+        }, 2500);
       }, 2500);
     }, 3000);
   }
@@ -355,6 +373,7 @@ window.addEventListener('load', function () {
 
 $html = $html.Replace('</body>', '<script src="/_probe.js"></script></body>')
 $html = $html.Replace('__TASK_ID__', $taskId)
+$probeJs = $probeJs.Replace('__TASK_ID__', $taskId)
 [System.IO.File]::WriteAllText($page, $html)
 [System.IO.File]::WriteAllText($script, $probeJs)
 
@@ -368,6 +387,8 @@ $expect = @{
     'ALWAYS_SENT'  = '1'
     'TOAST'        = 'Задание сохранено'
     'STATUS'       = ''
+    'ALWAYS_AFTER_SAVE' = 'yes'
+    'REOPENED'     = 'yes'
 }
 
 $edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"

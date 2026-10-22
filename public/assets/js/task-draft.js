@@ -391,6 +391,13 @@
      * бы откатом уже сделанной правки.
      */
     function drop(form) {
+        /*
+         * Отложенная запись отменяется первой: правка ставит таймер
+         * автосохранения, и сброс, сделанный раньше, чем таймер сработал,
+         * без этого черновик удалял, а через долю секунды записывал заново.
+         */
+        window.clearTimeout(form && form.myEduDraftTimer);
+
         var editor = editorOf(form);
 
         if (editor) {
@@ -425,11 +432,17 @@
 
             form.setAttribute('data-draft-ready', '');
 
-            var timer = null;
-
+            /*
+             * Таймер живёт на форме, а не в замыкании: сбросу черновика
+             * нужно уметь отменить его, а сброс зовётся из сохранения и
+             * до этого замыкания не дотягивается. Без отмены выходило так:
+             * правка ставила таймер, человек нажимал «Сохранить», черновик
+             * удалялся — а через долю секунды таймер записывал его заново,
+             * и reopen задания возвращал уже сохранённое как черновик.
+             */
             function schedule() {
-                window.clearTimeout(timer);
-                timer = window.setTimeout(function () {
+                window.clearTimeout(form.myEduDraftTimer);
+                form.myEduDraftTimer = window.setTimeout(function () {
                     save(form);
                 }, DEBOUNCE_MS);
             }

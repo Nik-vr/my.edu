@@ -127,6 +127,65 @@ $t->equals('0.3 beta', Version::display('0.3-beta'), 'версия показы�
 $t->equals('0.3', Version::display('0.3'), 'версия без слова о готовности остаётся как есть');
 
 /**
+ * Выбор релиза из списка GitHub.
+ *
+ * Список, а не «последний релиз»: адрес .../releases/latest отдаёт релиз без
+ * отметки «предрелиз», а беты проекта — они и есть предрелизы. С ними сайт
+ * показывал «установлена последняя версия», хотя на GitHub лежала версия
+ * новее, и обновление не предлагалось вовсе.
+ *
+ * Из списка берётся наибольший номер версии, а не первый: вышедший позже
+ * старый номер не должен вытеснять новый.
+ */
+$t->group('Выбор релиза из списка');
+
+$releases = [
+    ['tag_name' => '0.3.4-beta', 'prerelease' => false, 'draft' => false, 'published_at' => '2026-10-21T13:18:43Z'],
+    ['tag_name' => '0.3.6-beta', 'prerelease' => false, 'draft' => false, 'published_at' => '2026-10-22T10:40:00Z'],
+    ['tag_name' => '0.3.5-beta', 'prerelease' => false, 'draft' => false, 'published_at' => '2026-10-22T08:00:00Z'],
+];
+
+$picked = MyEdu\Core\SystemUpdate::pickLatest($releases);
+
+$t->equals('0.3.6-beta', (string) ($picked['tag_name'] ?? ''), 'берётся релиз с наибольшим номером');
+
+$withPrerelease = $releases;
+$withPrerelease[] = ['tag_name' => '0.4-beta', 'prerelease' => true, 'draft' => false, 'published_at' => '2026-10-23T10:00:00Z'];
+
+$t->equals(
+    '0.3.6-beta',
+    (string) (MyEdu\Core\SystemUpdate::pickLatest($withPrerelease)['tag_name'] ?? ''),
+    'предрелиз не выдаётся за обновление'
+);
+
+$t->equals(
+    '0.4-beta',
+    (string) (MyEdu\Core\SystemUpdate::newestPrerelease($withPrerelease) ?? ''),
+    'предрелиз виден отдельно'
+);
+
+$withDraft = $releases;
+$withDraft[] = ['tag_name' => '0.9-beta', 'prerelease' => false, 'draft' => true, 'published_at' => '2026-10-24T10:00:00Z'];
+
+$t->equals(
+    '0.3.6-beta',
+    (string) (MyEdu\Core\SystemUpdate::pickLatest($withDraft)['tag_name'] ?? ''),
+    'черновик не выдаётся за обновление'
+);
+
+$sameNumber = $releases;
+$sameNumber[] = ['tag_name' => '0.3.6-beta', 'prerelease' => false, 'draft' => false, 'published_at' => '2026-10-25T10:00:00Z'];
+
+$t->equals(
+    '2026-10-25T10:00:00Z',
+    (string) (MyEdu\Core\SystemUpdate::pickLatest($sameNumber)['published_at'] ?? ''),
+    'из двух релизов одного номера берётся вышедший позже'
+);
+
+$t->equals(null, MyEdu\Core\SystemUpdate::pickLatest([]), 'пустой список не даёт релиза');
+$t->equals(null, MyEdu\Core\SystemUpdate::newestPrerelease([]), 'в пустом списке нет предрелиза');
+
+/**
  * Куда нельзя класть файлы при обновлении.
  *
  * Здесь лежат данные школы: копия настроек с доступами к базе и загруженные

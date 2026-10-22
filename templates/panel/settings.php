@@ -17,6 +17,7 @@ declare(strict_types=1);
 $releaseOk = (bool) ($release['ok'] ?? false);
 $releaseVersion = (string) ($release['version'] ?? '');
 $releaseDate = (string) ($release['published'] ?? '');
+$releasePrerelease = (string) ($release['prerelease'] ?? '');
 
 $view->crumbs([
         ['label' => 'Панель управления', 'url' => 'panel'],
@@ -95,9 +96,26 @@ $view->crumbs([
  поверх прежних. Настройки сайта, картинки и журналы при этом не трогаются.
  </span>
  </form>
- <?php else: ?>
- <p class="muted">
- Установлена последняя версия: <?= $view->e($releaseVersion) ?>. Обновлений нет.
- </p>
- <?php endif; ?>
+  <?php else: ?>
+  <p class="muted">
+  Установлена последняя версия: <?= $view->e($releaseVersion) ?>. Обновлений нет.
+  </p>
+  <?php endif; ?>
+
+  <?php if ($releasePrerelease !== ''): ?>
+  <?php /*
+   Предрелиз на GitHub виден отдельной строкой.
+
+   Он не предлагается для установки — отметка «предрелиз» значит «не
+   предлагать». Но молчать о нём нельзя: иначе страница говорит «обновлений
+   нет», а на GitHub лежит версия новее, и выглядит это как поломка проверки.
+   Раньше выходило ровно так: беты проекта помечены как предрелизы, и сайт
+   с бетой на сервере не видел их вовсе.
+   */ ?>
+  <p class="muted">
+  На GitHub есть предрелиз <strong><?= $view->e($releasePrerelease) ?></strong>.
+  Он не предлагается для установки: снимите с него отметку «предрелиз» в GitHub,
+  если он предназначен для вашего сервера.
+  </p>
+  <?php endif; ?>
 </div>

@@ -6546,6 +6546,32 @@ if ($taskEditorUrl === '') {
         array_map(static fn (array $row): string => (string) $row['value_key'], $alwaysKeys),
         'отмечен ровно тот вариант, который автор отметил'
     );
+
+    /*
+     * Форма редактора обязана показать сохранённую отметку.
+     *
+     * Отметка в базе — и в форме флажка не отмечено: автор видит, что его
+     * отметка не сохранилась, хотя она сохранена, и отмечает заново — или
+     * решает, что правило не работает. Причина была в том, что форма
+     * собирала варианты без отметки, а разбор искал её в списке, где её нет.
+     */
+    $markedEditor = $openTaskEditor($teacher, $wizardId, $editorTaskId);
+
+    $t->is(
+        preg_match(
+            '#name="option_always_show\[\]" value="2" id="always-2-[0-9a-f]{8}" aria-label="[^"]*" checked#',
+            $markedEditor['body']
+        ) === 1,
+        'форма редактора показывает сохранённую отметку'
+    );
+
+    $t->is(
+        preg_match(
+            '#name="option_always_show\[\]" value="0" id="always-0-[0-9a-f]{8}" aria-label="[^"]*" checked#',
+            $markedEditor['body']
+        ) === 0,
+        'неотмеченные варианты остаются неотмеченными'
+    );
 }
 
 /*

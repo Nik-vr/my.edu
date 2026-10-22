@@ -107,14 +107,21 @@ $checkedIndexes = static function (array $keys, array $correct): array {
 /*
  * Номера строк, отмеченных как «обязательно показывать».
  *
- * Отметка хранится у варианта, а строки формы и варианты — одно и то же
- * в том же порядке, поэтому сопоставление идёт по номеру строки.
+ * Отметка хранится у варианта, а варианты в форме лежат по видам: варианты
+ * ответа отдельно, элементы порядка отдельно. Поэтому берутся варианты того
+ * вида, к которому относится вопрос, — иначе отметка искалась бы не там и
+ * не находилась бы вовсе, а форма открывалась бы с незамеченными флажками.
  */
 $alwaysIndexes = static function (array $form): array {
     $out = [];
 
-    foreach ((array) ($form['options'] ?? []) as $index => $option) {
-        if ((int) ($option['always_show'] ?? 0) === 1) {
+    $kind = match ((string) $form['type']) {
+        'ordering' => Question::KIND_ITEM,
+        default => Question::KIND_OPTION,
+    };
+
+    foreach ($form['options'][$kind] ?? [] as $index => $option) {
+        if (!empty($option['always'])) {
             $out[] = (int) $index;
         }
     }
