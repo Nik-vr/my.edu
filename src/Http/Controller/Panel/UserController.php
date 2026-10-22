@@ -70,13 +70,14 @@ final class UserController
         $release = $this->update->latest();
 
         return $this->render('panel/settings', [
-            'title'      => 'Настройки сайта',
-            'schoolName' => $this->settings->schoolName(),
-            'release'    => $release,
-            'version'    => $this->update->currentVersion(),
-            'hasUpdate'  => $this->update->hasUpdate($release),
-            'notice'     => $this->session->pull('flash_notice'),
-            'error'      => $this->session->pull('flash_error'),
+            'title'       => 'Настройки сайта',
+            'schoolName'  => $this->settings->schoolName(),
+            'release'     => $release,
+            'version'     => $this->update->currentVersion(),
+            'hasUpdate'   => $this->update->hasUpdate($release),
+            'releaseOlder' => $this->update->isReleaseOlder($release),
+            'notice'      => $this->session->pull('flash_notice'),
+            'error'       => $this->session->pull('flash_error'),
         ]);
     }
 

@@ -130,6 +130,22 @@ final class Version
     }
 
     /**
+     * Старше ли версия-кандидат текущей.
+     *
+     * Отдельный метод, а не сравнение с нулём: неразобранный номер не равен
+     * текущему, он с ним несравним. Сравнение через `compare` вернуло бы для
+     * такой версии «равны», и «старее» означало бы враньё.
+     */
+    public static function isOlder(string $candidate, string $current): bool
+    {
+        if (self::parse($candidate) === null || self::parse($current) === null) {
+            return false;
+        }
+
+        return self::compare($candidate, $current) < 0;
+    }
+
+    /**
      * Название версии в виде, в котором её показывают.
      *
      * «0.3-beta» → «0.3 beta»: то же самое, что пишется в настройках.

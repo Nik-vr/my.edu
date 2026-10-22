@@ -578,61 +578,61 @@ try {
      * @param list<array<string,mixed>> $options варианты вопроса
      * @param array<string,string>      $keyMap  номер строки формы → ключ варианта
      */
-    private function readRandomOptions(Request $request, array &$config, array &$options, array $keyMap): void
-    {
-    $always = 0;
+ private function readRandomOptions(Request $request, array &$config, array &$options, array $keyMap): void
+ {
+ $always = 0;
 
-    /*
-     * Отметка приходит значением флажка, а значением у него — номер строки
-     * формы. Нужен именно он: позиция отметки в списке (первая, вторая) и
-     * номер строки — разные вещи, и если отмечены, скажем, варианты 2 и 4,
-     * то по позиции отметки читался бы вариант 1.
-     */
-    foreach ($request->postArray('option_always_show') as $value) {
-        if (!is_scalar($value) || (string) $value === '') {
-            continue;
-        }
+ /*
+  * Отметка приходит значением флажка, а значением у него — номер строки
+  * формы. Нужен именно он: позиция отметки в списке (первая, вторая) и
+  * номер строки — разные вещи, и если отмечены, скажем, варианты 2 и 4,
+  * то по позиции отметки читался бы вариант 1.
+  */
+ foreach ($request->postArray('option_always_show') as $value) {
+  if (!is_scalar($value) || (string) $value === '') {
+  continue;
+  }
 
-        $key = $keyMap[(string) $value] ?? null;
+  $key = $keyMap[(string) $value] ?? null;
 
-        if ($key === null) {
-            continue;
-        }
+  if ($key === null) {
+  continue;
+  }
 
-        foreach ($options as $position => $option) {
-            if ((string) ($option['value_key'] ?? '') === $key) {
-                $options[$position]['always_show'] = 1;
-                $always++;
-            }
-        }
-    }
+  foreach ($options as $position => $option) {
+  if ((string) ($option['value_key'] ?? '') === $key) {
+  $options[$position]['always_show'] = 1;
+  $always++;
+  }
+  }
+ }
 
-    $limit = (int) ($request->postParam('random_options') ?? 0);
+ $limit = (int) ($request->postParam('random_options') ?? 0);
 
-    if ($limit < 0) {
-        $limit = 0;
-    }
+ if ($limit < 0) {
+  $limit = 0;
+ }
 
-    if ($limit > 0 && $always > $limit) {
-        throw new InvalidAnswerException(
-            'Отмечено ' . $always . ' вариантов как обязательные, а показывать можно '
-            . $limit . '. Увеличьте число или снимите лишние отметки «Обязательно показывать».',
-            'random_options'
-        );
-    }
+ if ($limit > 0 && $always > $limit) {
+  throw new InvalidAnswerException(
+  'Отмечено ' . $always . ' вариантов как обязательные, а показывать можно '
+  . $limit . '. Увеличьте число или снимите лишние отметки «Обязательно показывать».',
+  'random_options'
+  );
+ }
 
-    /*
-     * Ноль — это «показывать все», и в настройках его незачем хранить.
-     *
-     * Заодно снимается старое значение: автор поставил три, потом вернул
-     * «показывать все», и без этого в вопросе осталось бы три.
-     */
-    if ($limit > 0) {
-        $config['random_options'] = $limit;
-    } else {
-        unset($config['random_options']);
-    }
-    }
+ /*
+  * Ноль — это «показывать все», и в настройках его незачем хранить.
+  *
+  * Заодно снимается старое значение: автор поставил три, потом вернул
+  * «показывать все», и без этого в вопросе осталось бы три.
+  */
+ if ($limit > 0) {
+  $config['random_options'] = $limit;
+ } else {
+  unset($config['random_options']);
+ }
+ }
 
  /**
  * Порядок: автор задаёт верную последовательность.
@@ -953,18 +953,18 @@ return [$config, []];
 
  $options = [];
 
-    foreach ($question['options'] as $option) {
-    $options[(string) $option['kind']][] = [
-    'value' => (string) $option['value_key'],
-    'text' => (string) $option['text'],
-    /*
-     * Отметка «обязательно показывать» — часть варианта, а не отдельная
-     * настройка. Без неё форма открывалась бы с незамеченными флажками, и
-     * автор видел бы, что его отметка не сохранилась, хотя она сохранена.
-     */
-    'always' => (int) ($option['always_show'] ?? 0) === 1,
-    ];
-    }
+ foreach ($question['options'] as $option) {
+ $options[(string) $option['kind']][] = [
+ 'value' => (string) $option['value_key'],
+ 'text' => (string) $option['text'],
+ /*
+  * Отметка «обязательно показывать» — часть варианта, а не отдельная
+  * настройка. Без неё форма открывалась бы с незамеченными флажками, и
+  * автор видел бы, что его отметка не сохранилась, хотя она сохранена.
+  */
+ 'always' => (int) ($option['always_show'] ?? 0) === 1,
+ ];
+ }
 
  $correct = [];
 
