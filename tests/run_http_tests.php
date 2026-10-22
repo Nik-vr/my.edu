@@ -1266,9 +1266,9 @@ $table = $map->all();
  * вернулись два адреса, без которых работа не публикуется и не оценивается:
  * сохранение шкалы и сама публикация.
  */
-$t->equals(125, count($table), 'в карте 125 адресов ядра');
+$t->equals(126, count($table), 'в карте 126 адресов ядра');
 $t->equals(
-    ['AuthRoutes' => 19, 'PanelRoutes' => 71, 'PublicRoutes' => 3, 'SchoolRoutes' => 23, 'WorkRoutes' => 9],
+    ['AuthRoutes' => 19, 'PanelRoutes' => 72, 'PublicRoutes' => 3, 'SchoolRoutes' => 23, 'WorkRoutes' => 9],
     $perFile,
     'каждый файл карты даёт свою часть адресов'
 );
@@ -1369,7 +1369,7 @@ $t->equals('@guest', $rightOf('GET /login'), 'вход открыт гостю �
 $t->equals('@auth', $rightOf('GET /portal'), 'кабинет требует входа');
 $t->equals(Role::USERS_MANAGE, $rightOf('GET /panel/users'), 'список пользователей — дело администратора');
 $t->equals(Role::TESTS_TAKE, $rightOf('GET /works'), 'список работ открыт и ученику');
-$t->equals(Role::CLASS_STUDENTS, $rightOf('GET /panel/journal'), 'журнал открыт тому, кто видит состав класса');
+$t->equals(Role::REPORTS_VIEW, $rightOf('GET /panel/journal'), 'журнал открыт тому, кто видит результаты');
 $t->equals('без права', $rightOf('POST /logout'), 'выход не требует права: он у того, кто уже вошёл');
 $t->equals('без права', $rightOf('GET /health'), 'проверка состояния открыта всем');
 

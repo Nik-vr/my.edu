@@ -870,8 +870,8 @@ $runner->is(
 // ---------------------------------------------------------------------------
 // 13. Подписи состояний берут цвета приложения.
 //
-// «Активный», «Не активный», «Заблокирован» — первое, на что смотрит учитель в
-// списке сотрудников. В сборке их цвета заданы мимо токенов приложения:
+// «Активный», «Ожидает подтверждения», «Заблокирован» — первое, на что смотрит
+// учитель в списке сотрудников. В сборке их цвета заданы мимо токенов приложения:
 // проверить такой контраст нечем, и в тёмной теме он не выдерживается.
 $runner->group('Правила интерфейса: подписи состояний');
 
@@ -1493,6 +1493,51 @@ $runner->is(
     is_file($root . '/templates/_action_icon.php')
     && str_contains((string) file_get_contents($root . '/templates/_action_icon.php'), '_action_icons.php'),
     'значок рисуется через общий вызов, а не копируется в шаблон'
+);
+
+// ---------------------------------------------------------------------------
+// Выдвижное меню на узком экране.
+//
+// Открытие по CSS делает класс `open` на самом меню, а `body.sidebar-open`
+// блокирует прокрутку страницы под панелью и больше ничего. Раньше скрипт
+// ставил только второй класс: меню оставалось за экраном, а прокрутка
+// пропадала — после нажатия страница не открывалась и не прокручивалась.
+// Проверяются обе стороны соглашения: что скрипт ставит тот класс, который
+// открывает сборка, и что в разметке есть подложка, описанная в CSS.
+$runner->group('Правила интерфейса: выдвижное меню');
+
+$navJs = (string) file_get_contents($root . '/public/assets/js/panel-nav.js');
+$panelShell = (string) file_get_contents($root . '/templates/_shell_panel.php');
+$gentelellaCss = (string) file_get_contents($root . '/public/assets/vendor/gentelella/gentelella.css');
+
+$runner->is(
+    str_contains($navJs, "sidebar.classList.toggle('open', open)"),
+    'скрипт открывает меню классом `open` на самом меню'
+);
+
+$runner->is(
+    str_contains($navJs, "document.body.classList.toggle('sidebar-open', open)"),
+    'прокрутку блокирует `sidebar-open` на body'
+);
+
+$runner->is(
+    preg_match('#\.sidebar\.open\b#', $gentelellaCss) === 1,
+    'сборка открывает меню правилом `.sidebar.open` — тем же классом, который ставит скрипт'
+);
+
+$runner->is(
+    str_contains($navJs, 'backdrop.hidden = !open'),
+    'скрипт показывает и прячет подложку вместе с меню'
+);
+
+$runner->is(
+    preg_match('#<div class="sidebar-backdrop" hidden></div>#', $panelShell) === 1,
+    'в оболочке панели есть подложка выдвижного меню'
+);
+
+$runner->is(
+    preg_match('#<aside class="sidebar" id="sidebar" tabindex="-1"#', $panelShell) === 1,
+    'меню принимает фокус при открытии — по Escape он возвращается на кнопку'
 );
 
 exit($runner->report());

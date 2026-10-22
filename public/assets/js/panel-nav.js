@@ -46,6 +46,8 @@
     function bindSidebar() {
         var toggle = document.querySelector('.sidebar-toggle');
         var sidebar = document.getElementById('sidebar');
+        var backdrop = document.querySelector('.sidebar-backdrop');
+        var narrow = window.matchMedia('(max-width: 768px)');
 
         if (!toggle || !sidebar) {
             return;
@@ -70,9 +72,24 @@
             writeStore(RAIL_KEY, on ? '1' : '0');
         }
 
+        /*
+         * Выдвижная панель на узком экране. Открытие по CSS делает класс
+         * `open` на самом меню, и без него панель остаётся за экраном.
+         * Класс `sidebar-open` на body нужен отдельно: он блокирует прокрутку
+         * страницы под открытой панелью.
+         *
+         * Раньше скрипт ставил только `sidebar-open`: меню не открывалось вовсе,
+         * а прокрутка исчезала — страница на кнопку не реагировала, и после
+         * нажатия её нельзя было прокрутить.
+         */
         function setDrawer(open) {
+            sidebar.classList.toggle('open', open);
             document.body.classList.toggle('sidebar-open', open);
             toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+            if (backdrop) {
+                backdrop.hidden = !open;
+            }
         }
 
         toggle.addEventListener('click', function () {
@@ -83,15 +100,38 @@
              */
             if (isDesktop()) {
                 setRail(!document.body.classList.contains('sidebar-rail'));
-            } else {
-                setDrawer(!document.body.classList.contains('sidebar-open'));
+
+                return;
+            }
+
+            var open = !document.body.classList.contains('sidebar-open');
+
+            setDrawer(open);
+
+            // Фокус уходит в меню: с клавиатуры пункты достижимы сразу, и
+            // Escape возвращает его на кнопку, которая меню открыла.
+            if (open) {
+                sidebar.focus();
             }
         });
+
+        /*
+         * Поворот телефона: экран стал шире, панель перестала быть выдвижной,
+         * а состояние «открыто» осталось бы — прокрутка страницы была бы
+         * заблокирована уже там, где меню видно и так.
+         */
+        if (typeof narrow.addEventListener === 'function') {
+            narrow.addEventListener('change', function () {
+                if (!narrow.matches) {
+                    setDrawer(false);
+                }
+            });
+        }
 
         document.addEventListener('keydown', function (event) {
             if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
                 setDrawer(false);
-                sidebar.focus();
+                toggle.focus();
             }
         });
 

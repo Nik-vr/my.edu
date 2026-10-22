@@ -1361,17 +1361,27 @@ final class AssignmentRepository
      * выдано такого, что надо посмотреть». Попыток внутри одной выдачи может
      * быть несколько, и число попыток сбивало бы масштаб.
      *
-     * Без ограничения по учителю: пункт видят и завуч, и учитель, а у завуча
-     * выдачи могут быть чужие.
+     * Круг выдач зависит от того, кто смотрит: завуч и администратор видят все
+     * работы школы ($authorId = 0), учитель — только по своим работам. Счётчик
+     * стоит на пункте «Результаты» и на колокольчике в шапке, поэтому он обязан
+     * считать ровно то, что журнал покажет по нажатию: цифра на кнопке и
+     * раздел за ней считаются одним и тем же правилом, иначе учитель увидел бы
+     * чужие работы в счётчике — и не нашёл бы их в журнале.
+     *
+     * @param int $authorId автор работ или 0, если видны все
      */
-    public function countIssuesPendingReview(): int
+    public function countIssuesPendingReview(int $authorId = 0): int
     {
+        $where = $authorId > 0 ? ' AND a.author_id = :review_author' : '';
+
         return (int) $this->db->value(
             "SELECT COUNT(DISTINCT i.id)
                FROM assignment_issues i
                JOIN assignment_attempts t ON t.assignment_id = i.assignment_id
                JOIN assignment_issue_students s ON s.issue_id = i.id AND s.student_id = t.student_id
-              WHERE t.manual = 1 AND t.status = 'finished'"
+               JOIN assignments a ON a.id = i.assignment_id
+              WHERE t.manual = 1 AND t.status = 'finished'{$where}",
+            $authorId > 0 ? ['review_author' => $authorId] : []
         );
     }
 
@@ -1616,10 +1626,18 @@ final class AssignmentRepository
      * Класс берётся из `assignment_issue_students` — это класс на момент
      * выдачи, и он может отличаться от того, где ученик учится сейчас.
      *
+     * Круг работ зависит от того, кто смотрит. Завуч и администратор видят
+     * все работы школы ($authorId = 0), учитель — только свои: иначе раздел
+     * показал бы ему результаты чужих классов, к которым у него нет доступа.
+     * Та же граница действует на странице работы и на проверке попыток.
+     *
+     * @param int $authorId автор работ или 0, если видны все
      * @return list<array<string,mixed>> строки «класс + работа»
      */
-    public function journalIssuedWorks(): array
+    public function journalIssuedWorks(int $authorId = 0): array
     {
+        $where = $authorId > 0 ? ' WHERE a.author_id = :journal_author' : '';
+
         return $this->db->all(
             "SELECT DISTINCT c.id AS class_id, c.name AS class_name, c.title AS class_title,
                     a.id AS assignment_id, a.title AS assignment_title,
@@ -1642,7 +1660,9 @@ final class AssignmentRepository
                JOIN assignment_issues i ON i.id = s.issue_id
                JOIN assignments a ON a.id = i.assignment_id
                JOIN classes c ON c.id = s.class_id
-              ORDER BY c.name, a.title"
+               {$where}
+              ORDER BY c.name, a.title",
+            $authorId > 0 ? ['journal_author' => $authorId] : []
         );
     }
 

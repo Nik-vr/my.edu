@@ -27,18 +27,21 @@ $view->crumbs([
         ['label' => 'Пользователи'],
     ]);
 
-$recent = static fn (array $row): bool
-    => $row['last_login_at'] !== null
-    && strtotime((string) $row['last_login_at']) >= strtotime('-1 year');
-
 $plural = static fn (int $n, string $one, string $few, string $many): string
     => $view->e($view->plural($n, $one, $few, $many));
 
 /*
- * Статус в таблице и «активны сейчас» в блоках сверху — одно и то же, посчитанное
- * одним правилом: человек заходил за последний год. Если считать их по-разному,
- * блок и колонка покажут разные числа про одних и тех же людей, и никто не
- * сможет понять, кто из них прав.
+ * Статус в таблице — состояние записи: активна, ждёт подтверждения или
+ * заблокирована. Раньше здесь была «заходил за последний год», и ручная
+ * правка `status = active` в базе на странице не была видна: правка проходила,
+ * а колонка показывала другое измерение — давность захода.
+ *
+ * Давность никуда не делась: её печатает соседняя колонка «Последняя
+ * активность», и это её настоящее место — дата, а не состояние.
+ *
+ * Блоки сверху считают другое и так и должны: «заходили за последний год».
+ * Раньше там стояло «активны сейчас», и слово «активен» на одной странице
+ * означало два разных состояния — статус записи и недавний заход.
  */
 ?>
 
@@ -62,7 +65,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Всего пользователей</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['total'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= (int) $stats['total_active'] ?> активны сейчас
+                    <?= $plural((int) $stats['total_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год') ?>
                 </div>
             </div>
         </div>
@@ -79,7 +82,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Учителей</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['teachers'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= (int) $stats['teachers_active'] ?> активны сейчас
+                    <?= $plural((int) $stats['teachers_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год') ?>
                 </div>
             </div>
         </div>
@@ -96,7 +99,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Завучей</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['head_teachers'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= (int) $stats['head_teachers_active'] ?> активны сейчас
+                    <?= $plural((int) $stats['head_teachers_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год') ?>
                 </div>
             </div>
         </div>
@@ -149,7 +152,6 @@ require __DIR__ . '/_page_header.php';
                     $isOwner = (int) $row['is_owner'] === 1;
                     $isSelf = $userId === (int) $currentUser->id;
                     $status = (string) $row['status'];
-                    $wasActive = $recent($row);
                     ?>
                     <tr<?= $isOwner ? ' class="is-owner"' : '' ?>>
                         <td>
@@ -236,12 +238,17 @@ require __DIR__ . '/_page_header.php';
                         </td>
 
                         <td>
+                            <?php /*
+                             * Три состояния, и все из `users.status`. Неактивных
+                             * в этом смысле не бывает: человек либо активен,
+                             * либо ещё не подтвердил адрес, либо заблокирован.
+                             */ ?>
                             <?php if ($status === 'blocked'): ?>
                                 <span class="status status-red">Заблокирован</span>
-                            <?php elseif ($wasActive): ?>
-                                <span class="status status-green">Активный</span>
+                            <?php elseif ($status === 'pending'): ?>
+                                <span class="status status-yellow">Ожидает подтверждения</span>
                             <?php else: ?>
-                                <span class="status status-yellow">Не активный</span>
+                                <span class="status status-green">Активный</span>
                             <?php endif; ?>
                         </td>
 

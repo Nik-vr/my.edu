@@ -2857,12 +2857,15 @@ $db->run(
 $t->group('Результаты');
 
 /*
- * Журнал видят те, кому виден и состав класса. Учитель с правом вести тесты
- * (tests.manage) класс не ведёт, поэтому журнала у него нет — иначе он видел бы
- * результаты чужого класса.
+ * Журнал открыт учителю, завучу и администратору и закрыт остальным.
+ *
+ * Учитель получает раздел правом reports.view и видит в нём работы, которые
+ * выдал сам, — круг проверяется ниже, где есть и чужая работа. Раньше раздел
+ * был закрыт для учителя вовсе, а колокольчик в шапке вёл на него и давал 403.
  */
 $teacherJournal = $teacher->get('/panel/journal');
-$t->is($teacherJournal['status'] === 403, 'учителю без class.students журнал закрыт');
+$t->is($teacherJournal['status'] === 200, 'учитель открывает журнал');
+$t->contains($teacherJournal['body'], 'Результаты', 'журнал называется результатами');
 
 $studentJournal = $student->get('/panel/journal');
 $t->is($studentJournal['status'] === 403, 'ученику журнал закрыт');
@@ -2942,6 +2945,16 @@ $t->contains($journalIndex['body'], $className, 'в журнале есть со
 $t->contains($journalIndex['body'], 'Результаты', 'страница называется результатами');
 $t->contains($journalIndex['body'], 'Контрольная по биологии',
     'выданная работа видна в журнале');
+
+/*
+ * Учитель видит ту же работу в своём журнале: работа его, и раздел ему
+ * открыт. Дальше проверяется обратная сторона — чужую работу он не видит.
+ */
+$teacherJournalOwn = $teacher->get('/panel/journal');
+
+$t->is($teacherJournalOwn['status'] === 200, 'журнал у учителя открыт');
+$t->contains($teacherJournalOwn['body'], 'Контрольная по биологии',
+    'учитель видит в журнале свою работу');
 
 /*
  * Название работы — ссылка на её результаты.
@@ -3076,6 +3089,63 @@ $t->is(
 $t->is(
     $head->get('/panel/journal/work/999999')['status'] === 404,
     'несуществующая работа даёт 404'
+);
+
+/*
+ * Учитель видит только работы, которые выдал сам.
+ *
+ * Работу завуча заводит сам завуч и выдаёт тому же ученику — иначе проверка
+ * ниже прошла бы и при фильтре, который просто отбрасывает невыданные работы.
+ * Раньше такая работа была закрыта от учителя вместе с разделом, и проверка
+ * была бы про другое: важно, что раздел открыт, но круг работ не расширился.
+ */
+$head->post('/panel/assignments/new/start', [
+    '_token'     => $head->tokenFrom($head->get('/panel/assignments/new/start')) ?? '',
+    'title'      => 'Работа завуча',
+    'grade_mode' => 'weighted',
+]);
+
+$headAssignmentId = (int) $db->value("SELECT id FROM assignments WHERE title = 'Работа завуча' LIMIT 1");
+
+$t->is($headAssignmentId > 0, 'работа завуча создана');
+
+$db->run("UPDATE assignments SET status = 'published' WHERE id = :id", ['id' => $headAssignmentId]);
+
+$headIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id'   => $headAssignmentId,
+    'author_id'       => $headId,
+    'available_from'  => null,
+    'available_until' => null,
+    'created_at'      => date('Y-m-d H:i:s'),
+]);
+
+$db->run(
+    'INSERT INTO assignment_issue_students (issue_id, student_id, class_id, assigned_at)'
+    . ' VALUES (:i, :u, :c, :t)',
+    ['i' => $headIssueId, 'u' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
+);
+
+$t->contains(
+    $head->get('/panel/journal')['body'],
+    'Работа завуча',
+    'выданная работа завуча видна в журнале завуча'
+);
+
+$teacherJournalForeign = $teacher->get('/panel/journal');
+
+$t->is($teacherJournalForeign['status'] === 200, 'учитель открывает журнал, где есть чужая работа');
+$t->contains($teacherJournalForeign['body'], 'Работа соседнего класса',
+    'работа, выданная учителем, видна ему в журнале');
+$t->notContains($teacherJournalForeign['body'], 'Работа завуча',
+    'чужая работа не видна в журнале учителя');
+
+$t->is(
+    $teacher->get('/panel/journal/work/' . $foreignAssignmentId)['status'] === 200,
+    'своя работа учителю открыта'
+);
+$t->is(
+    $teacher->get('/panel/journal/work/' . $headAssignmentId)['status'] === 403,
+    'работа другого автора учителю закрыта'
 );
 
 
@@ -3237,6 +3307,15 @@ $db->run('DELETE FROM class_students WHERE student_id = :u', ['u' => $third]);
 $db->run('DELETE FROM users WHERE id = :id', ['id' => $third]);
 
 $db->run('DELETE FROM user_roles WHERE user_id = :u', ['u' => $headId]);
+
+/*
+ * Работа завуча создана ради проверки круга видимых работ и остаётся в базе
+ * ссылкой на удаляемого завуча. Внешний ключ не даёт удалить человека, пока
+ * работа его числится автором, — поэтому работа уходит первой, а её выдачи и
+ * попытки — вместе с ней по каскаду.
+ */
+$db->run('DELETE FROM assignments WHERE id = :id', ['id' => $headAssignmentId]);
+
 $db->run('DELETE FROM users WHERE id = :id', ['id' => $headId]);
 
 $t->is($db->value('SELECT COUNT(*) FROM users WHERE login IN (:a, :b)', ['a' => $headLogin, 'b' => 'tretyuchiy']) === 0,

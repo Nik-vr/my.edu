@@ -13,6 +13,7 @@ declare(strict_types=1);
  * @var string $version текущая версия системы
  * @var bool $hasUpdate есть ли более свежий релиз
  * @var bool $releaseOlder найденный на GitHub релиз старее установленной версии
+ * @var array{label:string,from:string,email:string,canSend:bool,warnings:list<string>} $mail
  */
 
 $releaseOk = (bool) ($release['ok'] ?? false);
@@ -49,6 +50,56 @@ $view->crumbs([
 
  <button type="submit" class="btn btn-primary btn-lg">Сохранить</button>
  </form>
+</div>
+
+<?php /*
+ Отправка писем.
+
+ Появился из-за жалобы владельца: письма с подтверждением адреса не доходят,
+ а на странице регистрации видно только «письмо отправлено». Здесь видно, чем
+ вообще отправляются письма, и проверить доставку можно прямо на странице —
+ не разбирая журнал хостинга.
+
+ Блок открыт только администратору вместе со всей страницей.
+*/ ?>
+<div class="card">
+ <h2 class="card-title">Отправка писем</h2>
+
+ <p class="muted">
+ Драйвер: <strong><?= $view->e($mail['label']) ?></strong>
+ <?php if ($mail['from'] !== ''): ?>
+ <br>Адрес отправителя: <strong><?= $view->e($mail['from']) ?></strong>
+ <?php endif; ?>
+ </p>
+
+ <?php foreach ($mail['warnings'] as $warning): ?>
+ <?= $view->raw($view->bannerWarning($warning)) ?>
+ <?php endforeach; ?>
+
+ <?php if ($mail['warnings'] === []): ?>
+ <p class="muted">
+ По настройкам предупреждений нет. Если письма всё равно не приходят —
+ отправьте тестовое письмо: оно покажет, доходит ли почта до получателя.
+ </p>
+ <?php endif; ?>
+
+ <?php if ($mail['canSend']): ?>
+ <form method="post" action="<?= $view->e($view->url('panel/settings/mail-test')) ?>">
+ <?= $view->raw($view->csrfField()) ?>
+
+  <button type="submit" class="btn btn-primary">Отправить тестовое письмо</button>
+
+ <span class="form-help">
+ Письмо уходит тем же драйвером и с теми же заголовками, что письмо
+ с подтверждением адреса новому пользователю. Если тестовое дошло, доходят
+ и они. Адрес получателя: <?= $view->e($mail['email']) ?>.
+ </span>
+ </form>
+ <?php else: ?>
+ <p class="muted">
+ Тестовое письмо отправить не удастся: у вашей учётной записи не задан адрес почты.
+ </p>
+ <?php endif; ?>
 </div>
 
 <?php /*

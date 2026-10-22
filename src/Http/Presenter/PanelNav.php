@@ -39,8 +39,14 @@ final class PanelNav
      */
     public function items(string $currentPath): array
     {
-        $pendingReview = $this->auth->can(Role::TESTS_MANAGE)
-            ? $this->assignments->countIssuesPendingReview()
+        /*
+         * Счётчик считается по тому же кругу работ, что и сам журнал: завуч и
+         * администратор видят все работы школы, учитель — только свои. Раньше
+         * учитель получал бейдж по чужим работам — и находил за ним 403, потому
+         * что журнал был ему закрыт вовсе.
+         */
+        $pendingReview = $this->auth->can(Role::REPORTS_VIEW)
+            ? $this->assignments->countIssuesPendingReview($this->auth->journalAuthorId())
             : 0;
 
         $pendingUsers = $this->auth->can(Role::USERS_MANAGE)
@@ -189,7 +195,10 @@ final class PanelNav
                     'url'        => 'panel/journal',
                     'icon'       => 'journal',
                     'badge'      => $pendingReview,
-                    'capability' => Role::CLASS_STUDENTS,
+                    // reports.view — у учителя, завуча и администратора. Учитель
+                    // видит в разделе работы, которые выдал сам; круг видимых
+                    // работ решает контроллер, а не пункт меню.
+                    'capability' => Role::REPORTS_VIEW,
                 ],
                 [
                     // Отдельный пункт, а не вкладка журнала: журнал отвечает
@@ -198,11 +207,11 @@ final class PanelNav
                     // таблицы отвечали бы на оба вопроса сразу и ни на один
                     // толком.
                     //
-                    // Право — то же, что у «Просмотра результатов»: учитель видит
-                    // средний по своим работам, администратор — по всем. Отдельного
-                    // права на отчёты (reports.view) в системе пока нет, и заводить
-                    // его ради одного экрана значило бы решить не как считать, а
-                    // кто туда вообще попадёт.
+                    // Право — tests.manage: средний балл считается по своим
+                    // работам и нужен тому, кто их ведёт. Пункт «Результаты»
+                    // при этом открыт правом reports.view, и у учителя, завуча
+                    // и администратора оно есть, так что набор людей не
+                    // разошёлся.
                     'label'      => 'Средний балл',
                     'url'        => 'panel/ratings',
                     'icon'       => 'rating',

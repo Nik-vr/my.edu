@@ -24,6 +24,8 @@ declare(strict_types=1);
  * @var list<array{title:string, items:list<array<string,mixed>>}> $panelNav
  */
 
+use MyEdu\Auth\Role;
+
 // Счётчик ждут проверки дублируется в шапке и в меню. Считается один раз
 // здесь: две цифры, разошедшиеся из-за двух запросов, выглядели бы как ошибка.
 $pendingReview = 0;
@@ -103,7 +105,12 @@ $hasMenu = $panelNav !== [];
 <body>
 
 <?php if ($hasMenu): ?>
-<aside class="sidebar" id="sidebar" aria-label="Разделы панели">
+<?php /*
+ * tabindex="-1" — не для перехода с клавиатуры по Tab (в меню он не нужен),
+ * а чтобы скрипт мог отдать фокус меню при открытии: пункт меню достижим
+ * сразу, а Escape возвращает фокус на кнопку.
+ */ ?>
+<aside class="sidebar" id="sidebar" tabindex="-1" aria-label="Разделы панели">
  <div class="sidebar-brand">
  <a class="brand-icon" href="<?= $view->e($view->url('portal')) ?>" title="На главную">
  <?= $view->e(mb_substr((string) $appName, 0, 1)) ?>
@@ -153,6 +160,13 @@ $hasMenu = $panelNav !== [];
  </div>
  </div>
 </aside>
+<?php /*
+ * Подложка выдвижного меню: затемняет страницу и закрывает панель по нажатию.
+ * Стиль для неё описан в сборке, элемента не было — и меню открывалось без
+ * подложки. Стоит сразу после меню, пока видна: на широком экране сборка её
+ * прячет (`display: none`), так что на десктопе её место не заметно.
+ */ ?>
+<div class="sidebar-backdrop" hidden></div>
 <?php endif; ?>
 
 <header class="topbar">
@@ -192,7 +206,14 @@ if ($crumbsHtml === '') {
 </div>
 
  <div class="topbar-right">
- <?php /* Ждут проверки — тот же счётчик, что и в меню. */ ?>
+ <?php /*
+ * Ждут проверки — тот же счётчик, что и в меню.
+ *
+ * Кнопка стоит только там, где журнал открыт: учителю, завучу и администратору
+ * он открыт правом reports.view, а у остальных кнопка вела бы на страницу,
+ * которая им не открыта, — как вела учителя, пока раздел был закрыт.
+ */ ?>
+  <?php if ($currentUser->hasCapability(Role::REPORTS_VIEW)): ?>
   <a class="tb-btn<?= $pendingReview > 0 ? ' tb-notifications' : '' ?>"
   href="<?= $view->e($view->url('panel/journal')) ?>"
   title="Результаты, которые ждут проверки" aria-label="Результаты: работы, ждущие проверки">
@@ -202,6 +223,7 @@ if ($crumbsHtml === '') {
  <span class="dot" aria-hidden="true"></span>
  <?php endif; ?>
  </a>
+ <?php endif; ?>
 
  <?php /*
  * Кнопка темы. Она переключает тёмную и светлую и помнит выбор: человек

@@ -36,6 +36,9 @@ final class PhpMailer implements MailerInterface
 
     private bool $useEnvelopeFrom;
 
+    /** @var string|null причина последнего отказа, null — отправка прошла */
+    private ?string $lastError = null;
+
     /**
      * @param array<string,string> $options  дополнительные заголовки письма
      * @param bool                 $useEnvelopeFrom передавать ли «-f» в mail()
@@ -55,24 +58,25 @@ final class PhpMailer implements MailerInterface
         return 'mail()';
     }
 
+    public function lastError(): ?string
+    {
+        return $this->lastError;
+    }
+
     public function send(MailMessage $message): bool
     {
-        if (!function_exists('mail')) {
-            error_log('[mail] функция mail() недоступна: она выключена настройками PHP');
+        $this->lastError = null;
 
-            return false;
+        if (!function_exists('mail')) {
+            return $this->fail('функция mail() недоступна: она выключена настройками PHP');
         }
 
         if (filter_var($message->to, FILTER_VALIDATE_EMAIL) === false) {
-            error_log('[mail] адрес получателя не похож на почтовый: ' . mb_substr($message->to, 0, 120));
-
-            return false;
+            return $this->fail('адрес получателя не похож на почтовый: ' . mb_substr($message->to, 0, 120));
         }
 
         if (filter_var($this->fromEmail, FILTER_VALIDATE_EMAIL) === false) {
-            error_log('[mail] не задан адрес отправителя mail.from_email');
-
-            return false;
+            return $this->fail('не задан адрес отправителя mail.from_email');
         }
 
         $headers = [
@@ -106,8 +110,8 @@ final class PhpMailer implements MailerInterface
         );
 
         if ($sent !== true) {
-            error_log(
-                '[mail] mail() вернула false для ' . $message->to
+            $this->fail(
+                'mail() вернула false для ' . $message->to
                 . ' (отправитель ' . $this->fromEmail . ')'
                 . ($this->useEnvelopeFrom ? ' с параметром -f' : '')
                 . '. Частая причина на шаред-хостинге: запрещён пятый параметр '
@@ -117,6 +121,21 @@ final class PhpMailer implements MailerInterface
         }
 
         return $sent === true;
+    }
+
+    /**
+     * Отказ: причина и в журнал PHP, и в lastError().
+     *
+     * В журнал — как раньше, это место читает тот, кто возится с сервером.
+     * В lastError() — для страницы настроек, где владелец хостинга не бывает.
+     */
+    private function fail(string $reason): bool
+    {
+        $this->lastError = $reason;
+
+        error_log('[mail] ' . $reason);
+
+        return false;
     }
 
     /**

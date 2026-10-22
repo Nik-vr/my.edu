@@ -41,9 +41,17 @@ final class LogMailer implements MailerInterface
     ) {
     }
 
+    /** @var string|null причина последнего отказа, null — запись прошла */
+    private ?string $lastError = null;
+
     public function name(): string
     {
         return 'журнал (отправка не выполняется)';
+    }
+
+    public function lastError(): ?string
+    {
+        return $this->lastError;
     }
 
     /**
@@ -87,14 +95,14 @@ private function redact(string $text): string
 
     public function send(MailMessage $message): bool
     {
+        $this->lastError = null;
+
         if (!is_dir($this->logDir)) {
             @mkdir($this->logDir, 0775, true);
         }
 
         if (!is_dir($this->logDir) || !is_writable($this->logDir)) {
-            error_log('[mail/log] нет доступа к каталогу ' . $this->logDir);
-
-            return false;
+            return $this->fail('нет доступа к каталогу ' . $this->logDir);
         }
 
         $text = sprintf(self::SEPARATOR, date('Y-m-d H:i:s'))
@@ -112,6 +120,22 @@ private function redact(string $text): string
 
         $file = $this->logDir . '/mail-' . date('Y-m-d') . '.log';
 
-        return @file_put_contents($file, $text . "\n\n", FILE_APPEND) !== false;
+        if (@file_put_contents($file, $text . "\n\n", FILE_APPEND) === false) {
+            return $this->fail('не удалось записать письмо в ' . $file);
+        }
+
+        return true;
+    }
+
+    /**
+     * Отказ: причина в журнал PHP и в lastError() для страницы настроек.
+     */
+    private function fail(string $reason): bool
+    {
+        $this->lastError = $reason;
+
+        error_log('[mail/log] ' . $reason);
+
+        return false;
     }
 }

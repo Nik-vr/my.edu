@@ -46,12 +46,15 @@ final class JournalController
 
     /**
      * Журнал: выданные работы, сгруппированные по классам.
+     *
+     * Круг видимых работ один и тот же везде в разделе: учителю — работы,
+     * которые выдал он сам, завучу и администратору — все работы школы.
      */
     public function index(Request $request): Response
     {
         $groups = [];
 
-        foreach ($this->assignments->journalIssuedWorks() as $row) {
+        foreach ($this->assignments->journalIssuedWorks($this->auth->journalAuthorId()) as $row) {
             $classId = (int) $row['class_id'];
 
             $groups[$classId] ??= [
@@ -87,6 +90,18 @@ final class JournalController
 
         if ($assignment === null) {
             throw new HttpException(404, 'Работа не найдена');
+        }
+
+        /*
+         * Раздел открыт правом reports.view, и у учителя оно есть — но только
+         * на работы, которые выдал он сам. Проверка та же, что на странице
+         * проверки попыток: чужая работа остаётся закрытой, как и раньше, когда
+         * журнал был доступен только завучу и администратору.
+         */
+        $authorId = $this->auth->journalAuthorId();
+
+        if ($authorId > 0 && (int) $assignment['author_id'] !== $authorId) {
+            throw new HttpException(403, 'Это работа другого автора');
         }
 
         $classes = $this->assignments->journalWorkClasses($assignmentId);

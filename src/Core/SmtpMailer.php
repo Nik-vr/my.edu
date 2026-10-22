@@ -20,6 +20,9 @@ final class SmtpMailer implements MailerInterface
 
     private int $step = 0;
 
+    /** @var string|null причина последнего отказа, null — отправка прошла */
+    private ?string $lastError = null;
+
     public function __construct(
         private readonly string $host,
         private readonly int $port,
@@ -37,17 +40,23 @@ final class SmtpMailer implements MailerInterface
         return 'SMTP ' . $this->host . ':' . $this->port;
     }
 
+    public function lastError(): ?string
+    {
+        return $this->lastError;
+    }
+
     public function send(MailMessage $message): bool
     {
+        $this->lastError = null;
+
         if (filter_var($message->to, FILTER_VALIDATE_EMAIL) === false) {
-            return false;
+            return $this->fail('адрес получателя не похож на почтовый: ' . mb_substr($message->to, 0, 120));
         }
 
         $this->socket = @fsockopen($this->host, $this->port, $errno, $errstr, $this->timeout);
 
         if (!is_resource($this->socket)) {
-            $this->log("Не удалось подключиться к {$this->host}:{$this->port}: {$errstr} ({$errno})");
-            return false;
+            return $this->fail("Не удалось подключиться к {$this->host}:{$this->port}: {$errstr} ({$errno})");
         }
 
         stream_set_timeout($this->socket, $this->timeout);
@@ -55,11 +64,22 @@ final class SmtpMailer implements MailerInterface
         try {
             return $this->deliver($message);
         } catch (\RuntimeException $e) {
-            $this->log($e->getMessage());
-            return false;
+            return $this->fail($e->getMessage());
         } finally {
             $this->close();
         }
+    }
+
+    /**
+     * Отказ: причина в журнал PHP и в lastError() для страницы настроек.
+     */
+    private function fail(string $reason): bool
+    {
+        $this->lastError = $reason;
+
+        $this->log($reason);
+
+        return false;
     }
 
     private function deliver(MailMessage $message): bool

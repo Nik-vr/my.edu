@@ -40,6 +40,7 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/users/{id}/avatar', [$c->users, 'saveAvatar'], Role::USERS_MANAGE);
     $router->get('/panel/settings', [$c->users, 'settings'], Role::USERS_MANAGE);
     $router->post('/panel/settings', [$c->users, 'saveSettings'], Role::USERS_MANAGE);
+    $router->post('/panel/settings/mail-test', [$c->users, 'mailTest'], Role::USERS_MANAGE);
     $router->post('/panel/settings/update', [$c->update, 'apply'], Role::USERS_MANAGE);
 
         // Каталог предметов. Порядок тот же, что у пользователей: литеральные
@@ -158,10 +159,12 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/issues/{id}/period', [$c->issues, 'period'], Role::TESTS_MANAGE);
         $router->get('/panel/issues/{id}', [$c->issues, 'show'], Role::TESTS_MANAGE);
 
-        // Результаты: кто что сдал. Право class.students — то же, что и на
-        // списки учеников: кто видит состав класса, видит и его результаты.
-    $router->get('/panel/journal', [$c->journal, 'index'], Role::CLASS_STUDENTS);
-    $router->get('/panel/journal/work/{id}', [$c->journal, 'work'], Role::CLASS_STUDENTS);
+        // Результаты: кто что сдал. Право reports.view — у учителя, завуча и
+        // администратора: учитель открывает раздел с работами, которые выдал сам,
+        // завуч и администратор — со всеми работами школы. Гейт открывает сам
+        // раздел; круг видимых работ решает контроллер.
+    $router->get('/panel/journal', [$c->journal, 'index'], Role::REPORTS_VIEW);
+    $router->get('/panel/journal/work/{id}', [$c->journal, 'work'], Role::REPORTS_VIEW);
         $router->get('/panel/ratings', [$c->ratings, 'index'], Role::TESTS_MANAGE);
     }
 }

@@ -15,10 +15,13 @@ use MyEdu\Core\Csrf;
 use MyEdu\Core\Database;
 use MyEdu\Core\HttpException;
     use MyEdu\Core\ImageUpload;
+    use MyEdu\Core\MailerFactory;
+    use MyEdu\Core\MailerInterface;
     use MyEdu\Core\Request;
 use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\Settings;
+use MyEdu\Core\SystemMailer;
 use MyEdu\Core\SystemUpdate;
 use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
@@ -76,9 +79,118 @@ final class UserController
             'version'     => $this->update->currentVersion(),
             'hasUpdate'   => $this->update->hasUpdate($release),
             'releaseOlder' => $this->update->isReleaseOlder($release),
+            'mail'        => $this->mailSetupReport(),
             'notice'      => $this->session->pull('flash_notice'),
             'error'       => $this->session->pull('flash_error'),
         ]);
+    }
+
+    /**
+     * Тестовое письмо на адрес администратора.
+     *
+     * Проверяет не настройку, а сам путь отправки: тот же драйвер и те же
+     * заголовки, что у письма подтверждения, которым на шаред-хостинге не
+     * доходят письма новым пользователям. Результат остаётся на странице —
+     * в отличие от причины отказа, которая раньше лежала только в журнале PHP.
+     */
+    public function mailTest(Request $request): Response
+    {
+        $this->requireToken($request, $this->csrf);
+
+        $user = $this->auth->user();
+        $email = (string) ($user?->email ?? '');
+
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            $this->session->set(
+                'flash_error',
+                'У вашей учётной записи не задан адрес почты — тестовое письмо некуда отправить.'
+            );
+
+            return $this->redirect('panel/settings');
+        }
+
+        $mailer = $this->app->get(MailerInterface::class);
+        $sent = (new SystemMailer($mailer))->sendTest($email, (string) ($user?->fullName ?? ''));
+
+        if ($sent) {
+            $this->session->set(
+                'flash_notice',
+                'Тестовое письмо принято к отправке на ' . $email . '. Если оно не пришло — '
+                . 'письмо ушло, но его отклонила почта: смотрите предупреждения в блоке «Отправка писем».'
+            );
+
+            return $this->redirect('panel/settings');
+        }
+
+        $this->session->set(
+            'flash_error',
+            'Тестовое письмо отправить не удалось: '
+            . (string) ($mailer->lastError() ?? 'причина неизвестна')
+            . '. Та же причина мешает письмам с подтверждением адреса.'
+        );
+
+        return $this->redirect('panel/settings');
+    }
+
+    /**
+     * Как настроена отправка писем — для блока на странице настроек.
+     *
+     * Предупреждения собраны по отказам, которые чаще всего случаются на
+     * шаред-хостинге. Все они означают одно и то же — письма не уходят, — но
+     * выглядят по-разному, и без этого владелец видит только «письма не
+     * приходят» без единой подсказки, куда смотреть.
+     *
+     * @return array{label:string,from:string,email:string,canSend:bool,warnings:list<string>}
+     */
+    private function mailSetupReport(): array
+    {
+        $setup = $this->app->get(MailerFactory::class)->setup();
+
+        $fromEmail = trim($this->config->string('mail.from_email', ''));
+        $siteHost = (string) (parse_url($this->baseUrl, PHP_URL_HOST) ?? '');
+        $warnings = [];
+
+        if ($setup->isLog()) {
+            $warnings[] = 'Драйвер «журнал»: письма не отправляются, а пишутся в var/log/mail-*.log. '
+                . 'Для реальной отправки укажите mail.driver = "mail" или "smtp".';
+        }
+
+        if ($setup->driver === 'mail' && !function_exists('mail')) {
+            $warnings[] = 'Функция mail() отключена на хостинге, письма отправить нельзя. '
+                . 'Переключите mail.driver на "smtp".';
+        }
+
+        if (filter_var($fromEmail, FILTER_VALIDATE_EMAIL) === false) {
+            $warnings[] = 'Адрес отправителя mail.from_email не задан: mail() без него письма не отправляет.';
+        } elseif ($siteHost !== '' && strcasecmp($this->domainOf($fromEmail), $siteHost) !== 0) {
+            $warnings[] = 'Адрес отправителя ' . $fromEmail . ' не на домене вашего сайта (' . $siteHost . '). '
+                . 'Почтовые серверы отклоняют такие письма, поэтому письмо уходит, но не доходит. '
+                . 'Укажите адрес на своём домене.';
+        }
+
+        if ($setup->driver === 'mail' && $this->config->bool('mail.envelope_from', false)) {
+            $warnings[] = 'Включён mail.envelope_from: mail() передаёт пятый параметр «-f», '
+                . 'который на многих хостингах запрещён — из-за него отправка возвращает отказ. '
+                . 'Выключите его, если адрес отправителя не нужно задавать явно.';
+        }
+
+        $email = (string) ($this->auth->user()?->email ?? '');
+
+        return [
+            'label'    => $setup->label,
+            'from'     => $fromEmail,
+            'email'    => $email,
+            'canSend'  => filter_var($email, FILTER_VALIDATE_EMAIL) !== false,
+            'warnings' => $warnings,
+        ];
+    }
+
+    /** Домен адреса почты, без «@» и без учёта регистра. */
+    private function domainOf(string $email): string
+    {
+        $at = strrpos($email, '@');
+
+        return $at === false ? '' : strtolower(substr($email, $at + 1));
     }
 
     public function saveSettings(Request $request): Response
