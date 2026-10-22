@@ -569,20 +569,31 @@ try {
      * пропускаются, и варианты считаются заново. Поэтому отметка переводится
      * через ключ варианта, а не берётся по номеру строки.
      *
+     * Список вариантов принимается по ссылке: отметки «обязательно показывать»
+     * принадлежат варианту, и без ссылки они остались бы в копии — вопрос
+     * сохранился бы без них, а человек видел бы отмеченные флажки, которые не
+     * сохранились.
+     *
      * @param array<string,mixed>       $config  настройки вопроса
      * @param list<array<string,mixed>> $options варианты вопроса
      * @param array<string,string>      $keyMap  номер строки формы → ключ варианта
      */
-    private function readRandomOptions(Request $request, array &$config, array $options, array $keyMap): void
+    private function readRandomOptions(Request $request, array &$config, array &$options, array $keyMap): void
     {
     $always = 0;
 
-    foreach ($request->postArray('option_always_show') as $index => $value) {
+    /*
+     * Отметка приходит значением флажка, а значением у него — номер строки
+     * формы. Нужен именно он: позиция отметки в списке (первая, вторая) и
+     * номер строки — разные вещи, и если отмечены, скажем, варианты 2 и 4,
+     * то по позиции отметки читался бы вариант 1.
+     */
+    foreach ($request->postArray('option_always_show') as $value) {
         if (!is_scalar($value) || (string) $value === '') {
             continue;
         }
 
-        $key = $keyMap[(string) $index] ?? null;
+        $key = $keyMap[(string) $value] ?? null;
 
         if ($key === null) {
             continue;

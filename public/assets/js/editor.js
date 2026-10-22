@@ -163,10 +163,7 @@ function myEduEditorInit(root) {
     form.myEduPromptEditor = quill;
 
     form.addEventListener('submit', function () {
-        var html = quill.root.innerHTML;
-        var text = quill.getText().trim();
-
-        field.value = text === '' ? '' : html;
+        window.MyEduEditor.syncPrompt(form);
     });
 
     /*
@@ -444,6 +441,43 @@ function myEduEditorInit(root) {
  */
 window.MyEduEditor = {
     init: myEduEditorInit,
+
+    /**
+     * Положить набранный текст в скрытое поле формы.
+     *
+     * В запрос уезжает скрытое поле, а не сам редактор, и до отправки в нём
+     * лежит сохранённый текст, а не набранный. Тот, кто собирает запрос,
+     * обязан позвать это ДО чтения формы: иначе текст уйдёт пустым, и сервер
+     * скажет «введите текст задания», хотя он стоит на экране.
+     *
+     * @param {HTMLFormElement} form
+     * @return {boolean} есть ли что класть
+     */
+    syncPrompt: function (form) {
+        var quill = form && form.myEduPromptEditor;
+
+        if (!quill) {
+            return false;
+        }
+
+        var host = form.querySelector('.ql-editor-host');
+
+        if (!host || !host.parentNode) {
+            return false;
+        }
+
+        var field = host.parentNode.querySelector('input[type="hidden"][name]');
+
+        if (!field) {
+            return false;
+        }
+
+        var text = quill.getText().trim();
+
+        field.value = text === '' ? '' : quill.root.innerHTML;
+
+        return true;
+    },
 
     /**
      * Текст вопроса как он есть в редакторе, без синхронизации с формой.

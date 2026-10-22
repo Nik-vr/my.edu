@@ -235,6 +235,22 @@
                     button.disabled = true;
                 }
 
+                /*
+                 * Текст вопроса лежит в визуальном редакторе, а в запрос уезжает
+                 * скрытое поле. Скрытое поле заполняется при отправке, но
+                 * порядок обработчиков не гарантирует, что оно окажется
+                 * заполненным к моменту, когда запрос собирается: собирает его
+                 * тот, кто отвечает за сохранение, а он может сработать раньше
+                 * синхронизации. Тогда текст ушёл бы пустым, и сервер сказал бы
+                 * «введите текст задания», хотя автор его набрал.
+                 *
+                 * Поэтому синхронизация здесь, до чтения формы, — а не только
+                 * на событии отправки.
+                 */
+                if (window.MyEduEditor && typeof window.MyEduEditor.syncPrompt === 'function') {
+                    window.MyEduEditor.syncPrompt(form);
+                }
+
                 fetch(formAction(form), {
                     method: 'POST',
                     body: new FormData(form),
@@ -438,6 +454,18 @@
      */
     function initEditorForms(root) {
         bindCancel(root);
+
+        /*
+         * Визуальный редактор настраивается до сохранения: его обработчик
+         * отправки кладёт набранный текст в скрытое поле, и он должен
+         * отработать раньше, чем запрос соберётся. Порядок обработчиков на
+         * одной форме — это порядок их подписки, и ничто его не гарантирует,
+         * кроме того, в каком порядке подписались.
+         */
+        if (window.MyEduEditor) {
+            window.MyEduEditor.init(root);
+        }
+
         bindAjaxSave(root);
 
         /*
@@ -447,11 +475,6 @@
          */
         if (window.MyEduTaskDraft) {
             window.MyEduTaskDraft.init(root);
-        }
-
-        // Чужие модули: визуальный редактор текста и проверка полей.
-        if (window.MyEduEditor) {
-            window.MyEduEditor.init(root);
         }
 
         if (window.MyEduValidate) {
@@ -561,6 +584,18 @@
                     }
 
                     body.setAttribute('data-editor-for', String(result.data.itemId || ''));
+
+                    /*
+                     * Адрес черновика — от сервера: в разметке окна он один на
+                     * все задания, и номер позиции в нём пустой, пока задание
+                     * не открыто. Скрипт адрес не собирает: правила адресов
+                     * живут на сервере, и копия их в браузере рано или поздно
+                     * разошлась бы с настоящей.
+                     */
+                    if (result.data.draftUrl) {
+                        body.setAttribute('data-draft-url', result.data.draftUrl);
+                    }
+
                     body.innerHTML = result.data.html;
                     title.textContent = 'Задание № ' + result.data.order;
 

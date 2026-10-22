@@ -6508,6 +6508,44 @@ if ($taskEditorUrl === '') {
     $errorPage = $openTaskEditor($teacher, $wizardId, $editorTaskId);
 
     $t->contains($errorPage['body'], 'варианта', 'автор видит, чего не хватило в вопросе');
+
+    /*
+     * Отметка «обязательно показывать».
+     *
+     * Значение флажка — номер строки формы, а не позиция отметки в списке.
+     * Здесь отмечен третий вариант из четырёх: он и должен сохраниться, а
+     * остальные — нет. Раньше отметка читалась по позиции (первая, вторая…),
+     * и при отметке не первого варианта сохранялся не тот.
+     *
+     * И сама отметка терялась: список вариантов передавался в разбор по
+     * значению, и пометки оставались в копии — вопрос сохранялся без них,
+     * хотя на экране флажки были отмечены.
+     */
+    $markedTask = $teacher->post('/tests/task/' . $editorTaskId, [
+        '_token'        => $taskToken,
+        'action'        => 'save_task',
+        'question_id'   => (string) ($questionRow['id'] ?? ''),
+        'title'         => 'Счёт до десяти',
+        'prompt'        => '<p>Сколько будет 2+2?</p>',
+        'option_text[]' => ['Три', 'Четыре', 'Пять', 'Шесть'],
+        'correct_single' => 'b',
+        'random_options' => '3',
+        'option_always_show[]' => ['2'],
+    ]);
+
+    $t->is($markedTask['status'] === 302, 'задание с отметкой «обязательно показывать» сохранено');
+
+    $alwaysKeys = $db->all(
+        'SELECT value_key FROM question_options
+         WHERE question_id = :q AND always_show = 1 ORDER BY position',
+        ['q' => (int) ($questionRow['id'] ?? 0)]
+    );
+
+    $t->equals(
+        ['c'],
+        array_map(static fn (array $row): string => (string) $row['value_key'], $alwaysKeys),
+        'отмечен ровно тот вариант, который автор отметил'
+    );
 }
 
 /*
