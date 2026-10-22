@@ -319,6 +319,25 @@ $users->setRole($teacherId, Role::TEACHER);
 
 $t->group('Классы');
 
+/*
+ * Причина отказа в создании класса.
+ *
+ * Отказ снаружи похож на успех: сервер отвечает 302 на форму с ошибкой, а
+ * адреса класса в ответе нет. Без пояснения следующие проверки (название,
+ * учебный год, карточка) падают все разом, и виноватым кажется год — а на
+ * деле отказало создание. Поэтому при отказе в проверку попадает причина,
+ * которую показал сервер.
+ */
+$classRefusalReason = static function (array $response): string {
+    $body = (string) ($response['body'] ?? '');
+
+    if (preg_match('#<div class="form-error"[^>]*>(.*?)</div>#s', $body, $match) !== 1) {
+        return '';
+    }
+
+    return trim(html_entity_decode(strip_tags($match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+};
+
 $classesPage = $owner->get('/classes');
 $t->is($classesPage['status'] === 200, 'страница классов открыта');
 
@@ -333,7 +352,15 @@ $t->is($created['status'] === 302, 'класс создан');
 
 preg_match('#/classes/(\d+)#', $created['location'], $classMatch);
 $classId = (int) ($classMatch[1] ?? 0);
-$t->is($classId > 0, 'адрес класса получен');
+
+if ($classId > 0) {
+    $t->is(true, 'адрес класса получен');
+} else {
+    $reason = $classRefusalReason($created);
+
+    $t->is(false, 'адрес класса получен: класс не создан'
+        . ($reason !== '' ? ' — ' . $reason : ''));
+}
 
 $classRow = $classes->find($classId);
 $t->equals((string) ($classRow['name'] ?? ''), '7 А', 'название класса сохранено');
@@ -1114,7 +1141,14 @@ $secondClass = $owner->post('/classes', [
 preg_match('#/classes/(\d+)#', (string) $secondClass['location'], $secondClassMatch);
 $secondClassId = (int) ($secondClassMatch[1] ?? 0);
 
-$t->is($secondClassId > 0, 'создан второй класс для проверки однофамильцев');
+if ($secondClassId > 0) {
+    $t->is(true, 'создан второй класс для проверки однофамильцев');
+} else {
+    $reason = $classRefusalReason($secondClass);
+
+    $t->is(false, 'создан второй класс для проверки однофамильцев: класс не создан'
+        . ($reason !== '' ? ' — ' . $reason : ''));
+}
 
 // Человек без работ: того же самого ученика в другой класс добавляем.
 $transferName = 'Никитин Алексей Петрович';
@@ -2476,7 +2510,14 @@ $t->is($doomed['status'] === 302, 'класс под удаление созда
 
 $doomedId = (int) ($db->value("SELECT id FROM classes WHERE name = '9 В' LIMIT 1") ?? 0);
 
-$t->is($doomedId > 0, 'класс под удаление найден');
+if ($doomedId > 0) {
+    $t->is(true, 'класс под удаление найден');
+} else {
+    $reason = $classRefusalReason($doomed);
+
+    $t->is(false, 'класс под удаление найден: класс не создан'
+        . ($reason !== '' ? ' — ' . $reason : ''));
+}
 
 $doomedStudent = $owner->post('/classes/' . $doomedId . '/students', [
     '_token'    => $owner->tokenFrom($owner->get('/classes/' . $doomedId)) ?? '',
@@ -2657,10 +2698,17 @@ $secondClass = $owner->post('/classes', [
 
 $secondClassId = (int) ($db->value("SELECT id FROM classes WHERE name = '8 Г' LIMIT 1") ?? 0);
 
-$db->run('INSERT IGNORE INTO class_students (class_id, student_id, joined_at) VALUES (:c, :u, NOW())', [
-    'c' => $secondClassId,
-    'u' => $sharedId,
-]);
+/*
+ * Вставка защищена: без класса, который не создался, в таблицу попал бы
+ * нулевой адрес, и проверка падала бы с ошибкой внешнего ключа вместо
+ * внятного объяснения. Проверка ниже скажет своё.
+ */
+if ($secondClassId > 0) {
+    $db->run('INSERT IGNORE INTO class_students (class_id, student_id, joined_at) VALUES (:c, :u, NOW())', [
+        'c' => $secondClassId,
+        'u' => $sharedId,
+    ]);
+}
 
 $t->equals(2, (int) $db->value('SELECT COUNT(*) FROM class_students WHERE student_id = :u', ['u' => $sharedId]),
     'ученик состоит в двух классах');

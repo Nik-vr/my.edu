@@ -314,13 +314,13 @@ final class Zip
             throw new TransferException('Файл переноса не похож на архив');
         }
 
-        $end = unpack(
+        $end = self::unpackStrict(
             'vdisk/vdirectoryDisk/ventriesOnDisk/ventries/VdirectorySize/VdirectoryOffset/vcommentLength',
-            substr($raw, $endOffset + 4, 18)
+            substr($raw, $endOffset + 4, 18),
+            'конец архива'
         );
 
-        if ($end === false
-            || (int) $end['disk'] !== 0
+        if ((int) $end['disk'] !== 0
             || (int) $end['directoryDisk'] !== 0
             || (int) $end['entriesOnDisk'] !== (int) $end['entries']
             || (int) $end['entries'] > self::MAX_ENTRIES
@@ -344,14 +344,12 @@ final class Zip
                 throw new TransferException('Запись в каталоге ZIP-архива повреждена');
             }
 
-            $header = unpack(
-                'vversion/vversionNeeded/vflags/vmethod/vtime/vdate/Vcrc/VcompressedSize/Vsize/vnameLength/vextraLength/vcommentLength/vdisk/vinternal/Vexternal/Voffset',
-                substr($raw, $cursor + 4, 42)
+            $header = self::unpackStrict(
+                'vversion/vversionNeeded/vflags/vmethod/vtime/vdate/Vcrc/VcompressedSize/Vsize'
+                    . '/vnameLength/vextraLength/vcommentLength/vdisk/vinternal/Vexternal/Voffset',
+                substr($raw, $cursor + 4, 42),
+                'запись каталога'
             );
-
-            if ($header === false) {
-                break;
-            }
 
             $recordEnd = $cursor + 46 + (int) $header['nameLength']
                 + (int) $header['extraLength'] + (int) $header['commentLength'];
@@ -385,7 +383,11 @@ final class Zip
                     throw new TransferException('Локальный заголовок файла «' . $name . '» повреждён');
                 }
 
-                $nameAtLocal = unpack('vnameLength/vextraLength', substr($raw, $local + 26, 4));
+                $nameAtLocal = self::unpackStrict(
+                    'vnameLength/vextraLength',
+                    substr($raw, $local + 26, 4),
+                    'локальный заголовок файла'
+                );
 
                 $start = $local + 30 + (int) ($nameAtLocal['nameLength'] ?? 0) + (int) ($nameAtLocal['extraLength'] ?? 0);
                 $compressedEnd = $start + $compressedSize;
@@ -462,7 +464,7 @@ final class Zip
             throw new TransferException('Файл переноса не распаковывается');
         }
 
-        $end = unpack(
+        $end = self::unpackStrict(
             /*
              * Размер центрального каталога — четыре байта. Объявить его двухбайтным
              * «по ошибке» не выдаёт себя: значение помещается в два байта и читается
@@ -471,12 +473,9 @@ final class Zip
              * повреждён» на любом файле, и диагностируется только сверкой сырых байт.
              */
             'vdisk/vstartDisk/ventriesOnDisk/ventries/VdirectorySize/VdirectoryOffset/vcommentLength',
-            substr($raw, $endOffset + 4, 18)
+            substr($raw, $endOffset + 4, 18),
+            'конец архива'
         );
-
-        if ($end === false) {
-            throw new TransferException('Файл переноса не распаковывается');
-        }
 
         $entries = (int) $end['entriesOnDisk'];
         $cursor = (int) $end['directoryOffset'];
@@ -500,15 +499,12 @@ final class Zip
              * и без них «смещение» приходит из атрибутов. Окно — все 26 байт от
              * третьего до конца заголовка, то есть ровно до начала имени.
              */
-            $header = unpack(
+            $header = self::unpackStrict(
                 'VcompressedSize/Vsize/vnameLength/vextraLength/vcommentLength'
                     . '/vdiskStart/vinternalAttributes/VexternalAttributes/Voffset',
-                substr($raw, $cursor + 20, 26)
+                substr($raw, $cursor + 20, 26),
+                'запись каталога'
             );
-
-            if ($header === false) {
-                throw new TransferException('Состав архива не читается');
-            }
 
             $cursor += 46 + (int) $header['nameLength']
                 + (int) $header['extraLength'] + (int) $header['commentLength'];
@@ -522,10 +518,13 @@ final class Zip
                 throw new TransferException('Локальный заголовок файла повреждён');
             }
 
-            $localSizes = unpack('VcompressedSize/Vsize', substr($raw, $local + 18, 8));
+            $localSizes = self::unpackStrict(
+                'VcompressedSize/Vsize',
+                substr($raw, $local + 18, 8),
+                'локальный заголовок файла'
+            );
 
-            if ($localSizes === false
-                || (int) $localSizes['size'] !== $size
+            if ((int) $localSizes['size'] !== $size
                 || (int) $localSizes['compressedSize'] !== (int) $header['compressedSize']) {
                 /*
                  * Расхождение — и есть признак бомбы: каталог обещает одно,
@@ -537,6 +536,47 @@ final class Zip
                 );
             }
         }
+    }
+
+    /**
+     * Разбор заголовка с проверкой длины.
+     *
+     * `unpack` не сверяет формат с длиной куска: поля читают соседние байты,
+     * и архив выглядит повреждённым, хотя он просто другой. Длина сверяется
+     * до разбора, и несовпадение называется своим сообщением, а не
+     * «архив повреждён».
+     */
+    private static function unpackStrict(string $format, string $data, string $what): array
+    {
+        $expected = 0;
+
+        foreach (explode('/', $format) as $part) {
+            if ($part === '') {
+                continue;
+            }
+
+            $expected += match ($part[0]) {
+                'v' => 2,
+                'V' => 4,
+                default => 0,
+            };
+        }
+
+        $given = strlen($data);
+
+        if ($expected !== $given) {
+            throw new TransferException(
+                "Заголовок архива ($what) прочитан не полностью: ждали $expected байт, получили $given"
+            );
+        }
+
+        $result = unpack($format, $data);
+
+        if ($result === false) {
+            throw new TransferException('Файл переноса не распаковывается');
+        }
+
+        return $result;
     }
 
     private static function addUncompressedSize(int $total, int $size): int

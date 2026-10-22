@@ -53,8 +53,11 @@ rem знает: искать надо в каталогах модулей, ка
 set "MARIADBD="
 set "MARIADB_INI="
 
-for /d %%D in ("D:\OpenServer\modules\database\MariaDB-*") do call :consider_db "%%~fD"
-for /d %%D in ("C:\OSPanel\modules\database\MariaDB-*") do call :consider_db "%%~fD"
+rem Шаблон в кавычках cmd не разворачивает: в цикле остаётся сам текст
+rem "MariaDB-*", и каталога с таким именем нет. Поэтому шаблон без кавычек,
+rem а кавычки стоят на подставляемое значение.
+for /d %%D in (D:\OpenServer\modules\database\MariaDB-*) do call :consider_db "%%~fD"
+for /d %%D in (C:\OSPanel\modules\database\MariaDB-*) do call :consider_db "%%~fD"
 
 if not defined MARIADBD goto :no_database
 
@@ -65,7 +68,9 @@ rem и первый же запрос упал бы с «MySQL server has gone a
 for /l %%I in (1,1,40) do (
     netstat -ano -p TCP | findstr /R /C:"LISTENING" | findstr /C:":3306 " > nul
     if not errorlevel 1 goto :database_ready
-    timeout /t 1 /nobreak > nul
+    rem Пауза без консоли: `timeout` требует её и сыплет ошибками, когда ввод
+    rem перенаправлен, а `ping` ждёт ту же секунду и молчит.
+    ping -n 2 127.0.0.1 > nul
 )
 
 :no_database

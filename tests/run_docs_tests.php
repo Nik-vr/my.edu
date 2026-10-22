@@ -172,6 +172,8 @@ $knownPaths = [
         => 'переименовано в tests/run_ui_rules_tests.php',
     'docs/план-устранения-по-ревью-2026-10-18.md → tools/check_docs.php'
         => 'переименовано в tests/run_docs_tests.php',
+    'ПРОДОЛЖИТЬ_РАБОТУ.md → public/_shot_tmp.php'
+        => 'цитата: временный вход без пароля; файл удалён 22.10.2026 и в сборку не попадает',
 ];
 
 $newMissing = array_values(array_diff($missingPaths, array_keys($knownPaths)));
