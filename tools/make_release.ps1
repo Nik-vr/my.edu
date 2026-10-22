@@ -144,6 +144,9 @@ $excludes = @(
     '-x!public\_*',
     '-x!public\check_login.php',
     '-xr!public\uploads',
+    '-x!docs\review-report-*',
+    '-x!docs\*review*',
+    '-x!docs\*ревью*',
     '-x!*.log'
 )
 
@@ -159,7 +162,9 @@ $forbidden = @(
     '\.log$',
     '^public/_',
     '^public/check_login\.php$',
-    '^public/uploads/(?!\.htaccess$)'
+    '^public/uploads/(?!\.htaccess$)',
+    '^docs/.*review',
+    '^docs/.*ревью'
 )
 
 # --------------------------------------------------------------------- сборка
