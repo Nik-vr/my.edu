@@ -7,11 +7,12 @@ namespace MyEdu\Auth;
 use MyEdu\Core\Database;
 
 /**
- * Ученики класса.
+ * Ученики: их собственная таблица `students`, а не `users` с ролью student.
  *
- * На этапе 1 ученик просто назывался при начале теста. Теперь учеников
- * заводит завуч или администратор, у каждого есть логин и пароль, поэтому
- * поиск по имени больше не создаёт записей: он только находит существующего.
+ * Учеников заводит завуч или администратор: у каждого есть логин и пароль,
+ * поиск по имени только находит существующего и никогда не создаёт записей.
+ * Класс у ученика один (`class_id`), NULL означает «вне класса»: ученика
+ * убрали из класса, а учётную запись сохранили.
  */
 final class StudentRepository
 {
@@ -22,13 +23,35 @@ final class StudentRepository
     {
     }
 
+    /** Строка ученика, кроме заблокированных. */
     /** @return array<string,mixed>|null */
     public function find(int $id): ?array
     {
-        return $this->db->one('SELECT * FROM users WHERE id = :id AND status <> :blocked', [
+        return $this->db->one('SELECT * FROM students WHERE id = :id AND status <> :blocked', [
             'id'      => $id,
             'blocked' => 'blocked',
         ]);
+    }
+
+    /**
+     * Поиск для входа: по логину, кроме заблокированных.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function findByLogin(string $login): ?array
+    {
+        return $this->db->one(
+            'SELECT * FROM students WHERE login = :login AND status <> :blocked LIMIT 1',
+            ['login' => $login, 'blocked' => 'blocked']
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    public function hydrate(array $row): Student
+    {
+        return Student::fromRow($row);
     }
 
     /** @return array<string,mixed>|null */
@@ -40,20 +63,11 @@ final class StudentRepository
             return null;
         }
 
-        $classSql = '';
-
-        if ($classId !== null) {
-            $classSql = ' AND EXISTS (SELECT 1 FROM class_students cs WHERE cs.student_id = u.id AND cs.class_id = :class)';
-        }
-
         return $this->db->one(
-            "SELECT u.* FROM users u
-               JOIN user_roles ur ON ur.user_id = u.id
-              WHERE ur.role_code = 'student'
-                AND LOWER(TRIM(REPLACE(REPLACE(u.full_name, '  ', ' '), 'ё', 'е'))) = :normalized"
-            . $classSql
-            . '
-           ORDER BY u.id
+            "SELECT s.* FROM students s
+              WHERE LOWER(TRIM(REPLACE(REPLACE(s.full_name, '  ', ' '), 'ё', 'е'))) = :normalized"
+            . ($classId === null ? '' : ' AND s.class_id = :class') . '
+           ORDER BY s.id
               LIMIT 1',
             $classId === null
                 ? ['normalized' => $this->lower($normalized)]
@@ -90,21 +104,20 @@ final class StudentRepository
     }
 
     /**
-     * В каких классах числится ученик.
+     * В каком классе числится ученик.
      *
      * @return list<string>
      */
     public function classNames(int $studentId): array
     {
-        $rows = $this->db->all(
-            'SELECT c.name FROM class_students cs
-               JOIN classes c ON c.id = cs.class_id
-              WHERE cs.student_id = :id
-           ORDER BY c.name',
+        $row = $this->db->one(
+            'SELECT c.name FROM students s
+               JOIN classes c ON c.id = s.class_id
+              WHERE s.id = :id',
             ['id' => $studentId]
         );
 
-        return array_map(static fn (array $row): string => (string) $row['name'], $rows);
+        return $row === null ? [] : [(string) $row['name']];
     }
 
     /**
@@ -115,11 +128,10 @@ final class StudentRepository
     public function listByClass(int $classId): array
     {
         return $this->db->all(
-            'SELECT u.id, u.full_name, u.login, u.status, cs.joined_at
-               FROM class_students cs
-               JOIN users u ON u.id = cs.student_id
-              WHERE cs.class_id = :class
-           ORDER BY u.full_name',
+            'SELECT id, full_name, login, status, created_at
+               FROM students
+              WHERE class_id = :class
+           ORDER BY full_name',
             ['class' => $classId]
         );
     }
@@ -127,23 +139,37 @@ final class StudentRepository
     public function isInClass(int $classId, int $studentId): bool
     {
         return $this->db->value(
-            'SELECT 1 FROM class_students WHERE class_id = :class AND student_id = :user LIMIT 1',
+            'SELECT 1 FROM students WHERE id = :user AND class_id = :class LIMIT 1',
             ['class' => $classId, 'user' => $studentId]
         ) !== null;
     }
 
+    /**
+     * Перевод в класс.
+     *
+     * Ученик в одном классе, поэтому «добавить в другой» — это перенос, а не
+     * второе членство: прежнее классное списание снимается тем же запросом.
+     */
     public function addToClass(int $classId, int $studentId): void
     {
         $this->db->run(
-            'INSERT IGNORE INTO class_students (class_id, student_id, joined_at) VALUES (:class, :user, NOW())',
+            'UPDATE students SET class_id = :class, updated_at = NOW() WHERE id = :user',
             ['class' => $classId, 'user' => $studentId]
         );
     }
 
+    /**
+     * Убрать из класса, сохранив учётную запись.
+     *
+     * Запрос скован и классом, и учеником: ученика чужого класса убрать из
+     * этого нельзя, и проверка isInClass() перед вызовом не единственный
+     * барьер.
+     */
     public function removeFromClass(int $classId, int $studentId): void
     {
         $this->db->run(
-            'DELETE FROM class_students WHERE class_id = :class AND student_id = :user',
+            'UPDATE students SET class_id = NULL, updated_at = NOW()
+              WHERE id = :user AND class_id = :class',
             ['class' => $classId, 'user' => $studentId]
         );
     }
@@ -155,38 +181,22 @@ final class StudentRepository
      */
     public function create(string $fullName, string $login, string $plainPassword, int $classId): array
     {
-        $userId = $this->db->transaction(function (Database $db) use ($fullName, $login, $plainPassword, $classId): int {
-            $id = $db->insert('users', [
-                'login'         => $login,
-                'email'         => null,
-                'password_hash' => password_hash($plainPassword, PASSWORD_DEFAULT),
-                'full_name'     => $fullName,
-                'is_owner'      => 0,
-                // Ученику пароль выдаёт завуч на бумаге, почты у него нет,
-                // поэтому подтверждение адреса не требуется.
-                'status'        => 'active',
-                'created_at'    => date('Y-m-d H:i:s'),
-                'updated_at'    => date('Y-m-d H:i:s'),
-            // Части имени заполняются здесь же, а не в UserRepository:
-            // заведение ученика идёт через Database напрямую, минуя
-            // репозиторий, и без этого у ученика были бы пустые фамилия и
-            // имя при заполненном ФИО.
-            ] + UserRepository::splitName($fullName));
+        $id = $this->db->insert('students', [
+            'login'         => $login,
+            'password_hash' => password_hash($plainPassword, PASSWORD_DEFAULT),
+            'full_name'     => $fullName,
+            // Ученику пароль выдаёт завуч на бумаге, почты у него нет,
+            // поэтому подтверждение адреса не требуется.
+            'status'        => 'active',
+            'class_id'      => $classId,
+            'created_at'    => date('Y-m-d H:i:s'),
+            'updated_at'    => date('Y-m-d H:i:s'),
+        // Части имени заполняются здесь же, а не в UserRepository: заведение
+        // ученика идёт через Database напрямую, и без этого у него были бы
+        // пустые фамилия и имя при заполненном ФИО.
+        ] + UserRepository::splitName($fullName));
 
-            $db->run(
-                'INSERT INTO user_roles (user_id, role_code, granted_at) VALUES (:user, :role, NOW())',
-                ['user' => $id, 'role' => Role::STUDENT]
-            );
-
-            $db->run(
-                'INSERT INTO class_students (class_id, student_id, joined_at) VALUES (:class, :user, NOW())',
-                ['class' => $classId, 'user' => $id]
-            );
-
-            return $id;
-        });
-
-        return ['id' => $userId, 'login' => $login, 'password' => $plainPassword];
+        return ['id' => $id, 'login' => $login, 'password' => $plainPassword];
     }
 
     /** Генерирует логин вида «И1234» и проверяет уникальность. */
@@ -221,9 +231,28 @@ final class StudentRepository
         return (string) random_int(10000000, 99999999);
     }
 
+    /**
+     * Занят ли логин.
+     *
+     * Проверяются обе таблицы, а не только ученики: логины сотрудников — это
+     * их адреса почты, и совпадение с ними запутало бы людей на страницах
+     * входа, где одна форма обслуживает учителей, а другая — учеников.
+     */
     public function loginTaken(string $login): bool
     {
-        return $this->db->value('SELECT 1 FROM users WHERE login = :login LIMIT 1', ['login' => $login]) !== null;
+        $inStudents = $this->db->value(
+            'SELECT 1 FROM students WHERE login = :login LIMIT 1',
+            ['login' => $login]
+        );
+
+        if ($inStudents !== null) {
+            return true;
+        }
+
+        return $this->db->value(
+            'SELECT 1 FROM users WHERE login = :login OR email = :email LIMIT 1',
+            ['login' => $login, 'email' => $login]
+        ) !== null;
     }
 
     /**
@@ -233,9 +262,9 @@ final class StudentRepository
      * лист пароль, который не подходит, и человек распечатал бы и раздал бы
      * бумагу, на которой ничего не работает.
      */
-public function changePassword(int $studentId, string $plainPassword): void
+    public function changePassword(int $studentId, string $plainPassword): void
     {
-        $changed = $this->db->update('users', [
+        $changed = $this->db->update('students', [
             'password_hash' => password_hash($plainPassword, PASSWORD_DEFAULT),
             'updated_at'    => date('Y-m-d H:i:s'),
         ], ['id' => $studentId]);
@@ -269,7 +298,7 @@ public function changePassword(int $studentId, string $plainPassword): void
             return false;
         }
 
-        $this->db->update('users', UserRepository::splitName($name) + [
+        $this->db->update('students', UserRepository::splitName($name) + [
             'full_name'  => $name,
             'updated_at' => date('Y-m-d H:i:s'),
         ], ['id' => $studentId]);
@@ -286,7 +315,7 @@ public function changePassword(int $studentId, string $plainPassword): void
      */
     public function setStatus(int $studentId, string $status): void
     {
-        $this->db->update('users', [
+        $this->db->update('students', [
             'status'     => $status === 'blocked' ? 'blocked' : 'active',
             'updated_at' => date('Y-m-d H:i:s'),
         ], ['id' => $studentId]);

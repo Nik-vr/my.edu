@@ -557,32 +557,31 @@ $demoIssueId = $db->insert('assignment_issues', [
 /*
  * Кому выдаём.
  *
- * Берётся по парам «ученик — класс», а первичный ключ у строки выдачи — пара
- * «выдача — ученик». Ученик, состоящий в двух классах, в списке пар встречается
- * дважды, и вторая вставка падает по ключу: засев обрывался на середине, и
- * повторить его было нельзя, пока строка-дубль не убрана руками.
+ * Берутся все активные ученики, по одной строке на каждого: класс у ученика
+ * теперь ровно один и лежит в самой строке (`students.class_id`), поэтому
+ * соединять «ученика с классом» через отдельную таблицу больше не с чем — её
+ * и не существует. Класс здесь — подпись, а не адресат: работа выдаётся
+ * человеку, а не классу, и у ученика вне класса подпись остаётся пустой.
  *
- * Поэтому ученик выдаётся один раз — в том классе, который попался первым.
- * Класс здесь — подпись, а не адресат: работа выдаётся человеку, а не классу.
+ * Раньше этот обход был нужен по другой причине: членство было множественным,
+ * один ученик попадал в выборку по разу на каждый класс, и вторая вставка
+ * падала по ключу — засев обрывался на середине и повторялся только после
+ * ручной уборки дубля. Состояние «в двух классах» ушло вместе с таблицей
+ * `class_students`, и дедупликация с ним ушла тоже.
  */
 $demoStudents = [];
-$seenStudents = [];
 
 foreach ($db->all(
-    'SELECT cs.student_id, cs.class_id
-       FROM class_students cs
-       JOIN users u ON u.id = cs.student_id
-      WHERE u.status = \'active\'
-      ORDER BY cs.student_id, cs.class_id'
-) as $pair) {
-    $studentId = (int) $pair['student_id'];
-
-    if (isset($seenStudents[$studentId])) {
-        continue;
-    }
-
-    $seenStudents[$studentId] = true;
-    $demoStudents[] = $pair;
+    'SELECT id, class_id
+       FROM students
+      WHERE status = \'active\'
+      ORDER BY id'
+) as $demoStudent) {
+    $demoStudents[] = [
+        'student_id' => (int) $demoStudent['id'],
+        // NULL, а не 0: класс на момент выдачи — либо настоящий, либо пусто.
+        'class_id'   => $demoStudent['class_id'] === null ? null : (int) $demoStudent['class_id'],
+    ];
 }
 
 $now = date('Y-m-d H:i:s');
@@ -594,7 +593,7 @@ foreach ($demoStudents as $demoStudent) {
         [
             'i' => $demoIssueId,
             's' => (int) $demoStudent['student_id'],
-            'c' => (int) $demoStudent['class_id'],
+            'c' => $demoStudent['class_id'],
             't' => $now,
         ]
     );

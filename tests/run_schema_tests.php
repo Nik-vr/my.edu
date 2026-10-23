@@ -95,11 +95,24 @@ $runner->is(count($tables) > 15, 'схема разобрана, таблиц н
 foreach ([
     'users', 'assignments', 'assignment_items', 'assignment_attempts',
     'assignment_issues', 'tests', 'questions', 'question_options',
-    'classes', 'class_students', 'subjects', 'plugins', 'user_plugins',
+    'classes', 'students', 'subjects', 'plugins', 'user_plugins',
     'auth_tokens', 'user_roles',
 ] as $required) {
     $runner->is(isset($byName[$required]), 'таблица ' . $required . ' описана в схеме');
 }
+
+/*
+ * Ученики живут в отдельной таблице, а прежнее членство в классах
+ * (`class_students`) упразднено: у ученика ровно один класс —
+ * `students.class_id`, NULL означает «вне класса». Возврат `class_students`
+ * в снимок означал бы два источника правды о классе ученика, и свежая
+ * установка собралась бы с рассинхроном, который поймают только живые
+ * данные.
+ */
+$runner->is(
+    !isset($byName['class_students']),
+    'таблицы class_students в схеме нет: класс у ученика один, через students.class_id'
+);
 
 // Таблицы создаются, если их нет, и не трогаются, если они уже есть. Раньше в
 // файле стояло `DROP TABLE IF EXISTS`, и импорт в базу с данными стирал её
@@ -142,6 +155,43 @@ $runner->equals(
     0,
     $plainInserts,
     'вставки данных в снимке повторяемые: обычного INSERT INTO не осталось'
+);
+
+$runner->group('Схема: ученики — отдельная таблица');
+
+/*
+ * Ученик — не сотрудник: у него свой логин, статус без «ожидает
+ * подтверждения адреса» и никаких ролей — справочник ролей относится только
+ * к сотрудникам. Возврат ученика в `users` или добавление ему `pending`
+ * означало бы, что вход ученика и панель класса написаны на иную схему, чем
+ * собрана свежая установка.
+ */
+$students = $byName['students']['body'] ?? '';
+
+$runner->is(
+    preg_match('/`login`\s+VARCHAR\(64\)\s+NOT\s+NULL/i', $students) === 1,
+    'логин ученика обязателен: лист с паролем печатают по нему'
+);
+$runner->is(
+    preg_match('/`status`\s+ENUM\(\s*[\'"]active[\'"]\s*,\s*[\'"]blocked[\'"]\s*\)/i', $students) === 1,
+    'у ученика только active и blocked: почты для подтверждения адреса нет'
+);
+$runner->is(
+    preg_match('/UNIQUE\s+KEY\s+`uq_students_login`\s*\(\s*`login`\s*\)/i', $students) === 1,
+    'логин ученика уникален'
+);
+
+/*
+ * Класс у ученика один, и удаление класса не должно уносить ученика вместе
+ * с его историей попыток: запись остаётся, только без класса.
+ */
+$runner->is(
+    preg_match(
+        '/CONSTRAINT\s+`fk_students_class`\s+FOREIGN\s+KEY\s*\(\s*`class_id`\s*\)\s*'
+        . 'REFERENCES\s+`classes`\s*\(\s*`id`\s*\)\s*ON\s+DELETE\s+SET\s+NULL/i',
+        $students
+    ) === 1,
+    'класс ученика ссылается на classes, и удаление класса не уносит ученика'
 );
 
 $runner->group('Схема: ссылочная целостность author_id');
@@ -204,6 +254,72 @@ foreach ($expectedRules as $table => $expected) {
         'у ' . $table . ' удаление автора объявлено как ' . $expected
     );
 }
+
+$runner->group('Схема: попытка работы принадлежит ученику или сотруднику');
+
+/*
+ * Попытка — всегда чья-то: ученика или сотрудника, начавшего работу сам,
+ * чтобы проверить её. Ровно одна из двух колонок заполнена, и ведут они в
+ * разные таблицы: номера учеников и сотрудников нумеруются независимо, и
+ * одна колонка на двоих отдала бы чужую работу при совпадении номера.
+ */
+$attempts = $byName['assignment_attempts']['body'] ?? '';
+
+$runner->is(
+    preg_match('/`student_id`\s+INT\s+UNSIGNED\s+NULL/i', $attempts) === 1,
+    'у попытки есть необязательная колонка student_id'
+);
+$runner->is(
+    preg_match('/`staff_id`\s+INT\s+UNSIGNED\s+NULL/i', $attempts) === 1,
+    'у попытки есть необязательная колонка staff_id'
+);
+$runner->is(
+    preg_match(
+        '/CONSTRAINT\s+`fk_attempts_student`\s+FOREIGN\s+KEY\s*\(\s*`student_id`\s*\)\s*'
+        . 'REFERENCES\s+`students`\s*\(\s*`id`\s*\)/i',
+        $attempts
+    ) === 1,
+    'ученик попытки берётся из students, а не из users'
+);
+$runner->is(
+    preg_match(
+        '/CONSTRAINT\s+`fk_attempts_staff`\s+FOREIGN\s+KEY\s*\(\s*`staff_id`\s*\)\s*'
+        . 'REFERENCES\s+`users`\s*\(\s*`id`\s*\)/i',
+        $attempts
+    ) === 1,
+    'сотрудник попытки берётся из users'
+);
+
+/*
+ * Номер попытки уникален по той колонке, которая заполнена. Без пары таких
+ * ключей два захода одного человека перезаписывали бы нумерацию друг друга:
+ * вторая попытка падала бы по первичному ключу или, хуже, считалась бы
+ * первой.
+ */
+$runner->is(
+    preg_match(
+        '/UNIQUE\s+KEY\s+`uq_attempt_number`\s*'
+        . '\(\s*`assignment_id`\s*,\s*`student_id`\s*,\s*`attempt_no`\s*\)/i',
+        $attempts
+    ) === 1,
+    'номер попытки ученика уникален по тройке работа-ученик-попытка'
+);
+$runner->is(
+    preg_match(
+        '/UNIQUE\s+KEY\s+`uq_attempt_number_staff`\s*'
+        . '\(\s*`assignment_id`\s*,\s*`staff_id`\s*,\s*`attempt_no`\s*\)/i',
+        $attempts
+    ) === 1,
+    'номер самопроверки сотрудника уникален по тройке работа-сотрудник-попытка'
+);
+$runner->is(
+    preg_match('/KEY\s+`idx_attempts_student`\s*\(\s*`student_id`\s*\)/i', $attempts) === 1,
+    'по ученику попытки есть индекс'
+);
+$runner->is(
+    preg_match('/KEY\s+`idx_attempts_staff`\s*\(\s*`staff_id`\s*\)/i', $attempts) === 1,
+    'по сотруднику попытки есть индекс'
+);
 
 $runner->group('Схема: личный набор плагинов');
 

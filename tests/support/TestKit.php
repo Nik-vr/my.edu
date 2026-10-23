@@ -297,6 +297,54 @@ private static function encode(array $fields): string
 }
 
 /**
+ * Ученик для теста: заводится в таблице `students`, а не в `users`.
+ *
+ * Ровно то, что делает панель класса: логин, хеш пароля, ФИО и класс. Возвращает
+ * номер ученика — по нему строятся выдачи и попытки. Хелпер идемпотентен: при
+ * повторном запуске ученик с тем же логином приводится к ожидаемому состоянию,
+ * а не дублируется и не падает на уникальном индексе.
+ */
+function makeStudent(Database $db, string $fullName, string $login, string $password, ?int $classId = null): int
+{
+    $existing = $db->one('SELECT id FROM students WHERE login = :login', ['login' => $login]);
+
+    if ($existing !== null) {
+        $id = (int) $existing['id'];
+
+        $db->run(
+            "UPDATE students SET password_hash = :hash, status = 'active', class_id = :class WHERE id = :id",
+            [
+                'hash'  => password_hash($password, PASSWORD_DEFAULT),
+                'class' => $classId,
+                'id'    => $id,
+            ]
+        );
+
+        return $id;
+    }
+
+    /*
+     * Части имени заполняются здесь же: они лежат отдельно от full_name и
+     * нужны шаблонам, которые рисуют обращение по имени. Без этого у ученика
+     * были бы пустые фамилия и имя при заполненном ФИО.
+     */
+    $parts = preg_split('/\s+/u', trim($fullName), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+    return $db->insert('students', [
+        'login'         => $login,
+        'password_hash' => password_hash($password, PASSWORD_DEFAULT),
+        'full_name'     => $fullName,
+        'status'        => 'active',
+        'class_id'      => $classId,
+        'created_at'    => date('Y-m-d H:i:s'),
+        'updated_at'    => date('Y-m-d H:i:s'),
+        'last_name'     => $parts[0] ?? null,
+        'first_name'    => $parts[1] ?? null,
+        'middle_name'   => count($parts) > 2 ? $parts[count($parts) - 1] : null,
+    ]);
+}
+
+/**
  * Проверка, что разрушительный тест запущен на отдельной базе.
  *
  * Наборы чистят пользователей и классы, перезаписывают пароли и переключают

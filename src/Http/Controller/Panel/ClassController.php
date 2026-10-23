@@ -239,13 +239,12 @@ private readonly SubjectRepository $subjects,
 
         $rows = $this->classes->exportForRemoval((int) $class['id']);
 
-        $csv = "\xEF\xBB\xBF" . 'Фамилия;Логин;Почта;Попыток;Сумма баллов' . "\r\n";
+        $csv = "\xEF\xBB\xBF" . 'Фамилия;Логин;Попыток;Сумма баллов' . "\r\n";
 
         foreach ($rows as $row) {
             $csv .= implode(';', [
                 (string) $row['full_name'],
                 (string) $row['login'],
-                (string) ($row['email'] ?? ''),
                 (string) $row['attempts'],
                 $row['score'] === null ? '' : rtrim(rtrim(number_format((float) $row['score'], 2, '.', ''), '0'), '.'),
             ]) . "\r\n";

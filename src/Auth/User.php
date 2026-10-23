@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace MyEdu\Auth;
 
 /**
- * Текущий пользователь: запись из users плюс его роли и права.
+ * Текущий сотрудник: запись из users плюс его роли и права.
+ *
+ * Ученик здесь не бывает: у него свой объект `Student` и своя таблица
+ * `students`. В шаблонах оба подставляются вместо переменной `$currentUser`,
+ * поэтому у Student есть те же `fullName` и `shortName()`.
  *
  * Объект неизменяемый и загружается один раз на запрос.
  */
@@ -20,7 +24,6 @@ final class User
         public readonly bool $isOwner,
         public readonly string $status,
         public readonly array $roles,
-        public readonly ?int $classId = null,
         public readonly ?string $emailVerifiedAt = null,
         public readonly ?string $birthDate = null,
         public readonly ?string $vkUrl = null,
@@ -47,7 +50,6 @@ final class User
             isOwner: (int) ($row['is_owner'] ?? 0) === 1,
             status: (string) $row['status'],
             roles: $roles,
-            classId: isset($row['class_id']) && $row['class_id'] !== null ? (int) $row['class_id'] : null,
             emailVerifiedAt: !empty($row['email_verified_at']) ? (string) $row['email_verified_at'] : null,
             birthDate: !empty($row['birth_date']) ? (string) $row['birth_date'] : null,
             vkUrl: !empty($row['vk_url']) ? (string) $row['vk_url'] : null,
@@ -94,11 +96,6 @@ final class User
     public function hasCapability(string $capability): bool
     {
         return in_array($capability, Role::capabilitiesFor($this->roles), true);
-    }
-
-    public function isStudent(): bool
-    {
-        return $this->hasRole(Role::STUDENT);
     }
 
     /**

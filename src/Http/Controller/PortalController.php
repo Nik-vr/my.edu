@@ -46,8 +46,6 @@ final class PortalController
 
     public function index(Request $request): Response
     {
-        $user = $this->auth->user();
-
         /*
          * Гость попадает на адрес сайта и сразу должен увидеть форму, которой
          * воспользуется.
@@ -59,8 +57,14 @@ final class PortalController
          * ученика: именно его логин и пароль напечатаны на листе, и именно он
          * приходит по этому адресу. Сотрудник переключается на свою вкладку в
          * шапке.
+         *
+         * Проверяется «вошёл ли кто-нибудь», а не «вошёл ли сотрудник»:
+         * `Auth::user()` у ученика — null, и прежняя проверка возвращала ему
+         * форму входа, которую он уже прошёл. Вошедший человек должен попадать
+         * на главную со своими работами, независимо от того, из какой таблицы
+         * он пришёл.
          */
-        if ($user === null) {
+        if (!$this->auth->check()) {
             return $this->render('auth/login_student', [
                 'title'  => 'Вход',
                 'error'  => $this->session->pull('flash_error'),
@@ -72,10 +76,10 @@ final class PortalController
         return $this->render('portal/home', [
             /*
              * Работы идут первыми: по решению владельца проекта все выдачи
-             * проходят через работу, и именно её ученик должен видеть на
+             * проходят через работу, и именно её человек должен видеть на
              * главной.
              */
-            'works' => $this->publishedWorks($user->id),
+            'works' => $this->publishedWorks(),
             /*
              * Сведения о школе — тем, кому положено их видеть. Ученику они
              * не достаются: сводка просто не считается, и на странице её нет.
@@ -87,26 +91,56 @@ final class PortalController
     }
 
     /**
-     * Опубликованные работы с прогрессом ученика.
+     * Опубликованные работы с прогрессом вошедшего.
      *
-* Учитываются выдачи: на главной ученик видит только то, что ему лично
- * выдали и что ещё не закрыто по сроку.
+     * Учитываются выдачи: на главной человек видит только то, что ему
+     * лично выдали и что ещё не закрыто по сроку.
      *
      * @return list<array<string,mixed>>
      */
-    private function publishedWorks(int $userId): array
+    private function publishedWorks(): array
     {
-        $rows = $this->assignments->allPublished(
-            $userId,
-            $this->auth->can(Role::TESTS_MANAGE)
-        );
+        $actor = $this->auth->actor();
+
+        if ($actor === null) {
+            return [];
+        }
+
+        /*
+         * Ученику достаётся выданное ему, сотруднику с правом ведения работ —
+         * всё опубликованное: он и выдаёт работу, и проверяет её, и не должен
+         * терять из виду выданное только потому, что класс ещё не заведён.
+         *
+         * Сотруднику без этого права (наблюдатель) — ничего. Выдача привязана
+         * к ученику, и собственных выдач у сотрудника не бывает, поэтому
+         * список его работ здесь пуст, а не «все работы школы»: последнее
+         * показало бы ему чужие классы. Раньше это скрывалось за тем, что
+         * номер сотрудника подставлялся в ученическую колонку и просто не
+         * находил выдач, — но совпадение номеров из разных таблиц гарантией
+         * не является.
+         */
+        if ($actor->isStudent()) {
+            $rows = $this->assignments->allPublished($actor->studentId, false);
+        } elseif ($this->can(Role::TESTS_MANAGE)) {
+            $rows = $this->assignments->allPublished(null, true);
+        } else {
+            $rows = [];
+        }
+
+        /*
+         * Прогресс берётся по той же колонке, в которую попытка записывается:
+         * ученик — student_id, сотрудник, прогоняющий работу сам, — staff_id.
+         * Общей колонки для них нет, и подставлять чужой номер значило бы
+         * показать человеку чужой прогресс.
+         */
+        $column = $actor->isStudent() ? 'student_id' : 'staff_id';
 
         $attempts = $this->db->all(
-            'SELECT assignment_id, status, percent, grade
+            "SELECT assignment_id, status, percent, grade
                FROM assignment_attempts
-              WHERE student_id = :user
-           ORDER BY id',
-            ['user' => $userId]
+              WHERE {$column} = :actor
+           ORDER BY id",
+            ['actor' => $actor->studentId ?? $actor->staffId]
         );
 
         $latest = [];
@@ -146,9 +180,15 @@ final class PortalController
     /** @return list<array<string,mixed>> */
     private function classSummary(): array
     {
+        /*
+         * Ученики считаются по их собственной таблице: класс принадлежит
+         * ученику (students.class_id), а не наоборот, поэтому счётчик — это
+         * просто число строк с этим классом. Таблица class_students упразднена:
+         * в ней хранилось членство, а теперь у ученика один класс.
+         */
         return $this->db->all(
             'SELECT c.id, c.name, c.title,
-                    (SELECT COUNT(*) FROM class_students cs WHERE cs.class_id = c.id) AS student_count
+                    (SELECT COUNT(*) FROM students cs WHERE cs.class_id = c.id) AS student_count
                FROM classes c
            ORDER BY c.name
            LIMIT 20'
@@ -159,27 +199,19 @@ final class PortalController
     private function userSummary(): array
     {
         /*
-         * Ученики в счёт пользователей не входят.
+         * Ученики считаются по своей таблице, а не по ролям.
          *
          * Ученик — отдельная сущность, заводится завучем в списке класса и
-         * живёт своей жизнью: у него нет ни почты, ни ролей сотрудника. Список
-         * пользователей его тоже не показывает (allWithRoles() отсекает по
-         * роли), так что «27 пользователей» рядом с «25 учеников» считало
-         * одних и тех же людей дважды.
+         * живёт своей жизнью: у него нет ни почты, ни ролей сотрудника. Роли
+         * «student» в базе больше не существует, и подсчёт по ней дал бы ноль
+         * при живых классах. Список пользователей учеников не показывает,
+         * поэтому «27 пользователей» рядом с «25 учеников» считает разных
+         * людей и не удваивает никого.
          */
         return [
-            'total'    => (int) $this->db->value(
-                "SELECT COUNT(*) FROM users u
-                  WHERE NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role_code = 'student')"
-            ),
-            'pending'  => (int) $this->db->value(
-                "SELECT COUNT(*) FROM users u
-                  WHERE u.status = 'pending'
-                    AND NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role_code = 'student')"
-            ),
-            'students' => (int) $this->db->value(
-                "SELECT COUNT(DISTINCT user_id) FROM user_roles WHERE role_code = 'student'"
-            ),
+            'total'    => (int) $this->db->value('SELECT COUNT(*) FROM users'),
+            'pending'  => (int) $this->db->value("SELECT COUNT(*) FROM users WHERE status = 'pending'"),
+            'students' => (int) $this->db->value('SELECT COUNT(*) FROM students'),
             'classes'  => (int) $this->db->value('SELECT COUNT(*) FROM classes'),
         ];
     }

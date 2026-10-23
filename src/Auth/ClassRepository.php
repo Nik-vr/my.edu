@@ -69,7 +69,7 @@ final class ClassRepository
     {
         return $this->db->all(
             'SELECT c.*,
-                    (SELECT COUNT(*) FROM class_students cs WHERE cs.class_id = c.id) AS student_count,
+                    (SELECT COUNT(*) FROM students cs WHERE cs.class_id = c.id) AS student_count,
                     (SELECT COUNT(*) FROM class_subjects sub WHERE sub.class_id = c.id) AS subject_count,
                     (SELECT COUNT(*) FROM class_teachers t WHERE t.class_id = c.id) AS teacher_count
                FROM classes c
@@ -126,7 +126,7 @@ final class ClassRepository
         });
     }
 
-/**
+    /**
      * Состав класса перед удалением.
      *
      * Считается заранее, потому что каскад снесёт класс вместе со связями, и
@@ -145,11 +145,11 @@ final class ClassRepository
          */
         $row = $this->db->one(
             'SELECT
-                (SELECT COUNT(*) FROM class_students WHERE class_id = :c1) AS students,
+                (SELECT COUNT(*) FROM students WHERE class_id = :c1) AS students,
                 (SELECT COUNT(*) FROM class_subjects  WHERE class_id = :c2) AS subjects,
                 (SELECT COUNT(*) FROM class_teachers  WHERE class_id = :c3) AS teachers,
                 (SELECT COUNT(*) FROM assignment_attempts t
-                   WHERE t.student_id IN (SELECT student_id FROM class_students WHERE class_id = :c4)
+                   WHERE t.student_id IN (SELECT id FROM students WHERE class_id = :c4)
                  ) AS attempts',
             ['c1' => $classId, 'c2' => $classId, 'c3' => $classId, 'c4' => $classId]
         );
@@ -166,17 +166,18 @@ final class ClassRepository
      * Удаление класса вместе с его учениками.
      *
      * Снос класса уносит его учеников, и оставить их было бы хуже, чем
-     * удалить: в списке пользователей их нет, в списке классов — тоже, а в
-     * базе они висели бы без единого адреса, куда их можно посмотреть.
-     * Владелец класса предупреждается об этом до удаления.
+     * удалить: в списке сотрудников их нет, в списке классов — тоже, а в базе
+     * они висели бы без единого адреса, куда их можно посмотреть. Владелец
+     * класса предупреждается об этом до удаления.
      *
-     * Ученик, который состоит ещё и в другом классе, не удаляется, а просто
-     * открепляется: он виден и нужен там. Модель допускает такое членство
-     * (заведённого ученика можно добавить в другой класс), поэтому считать,
-     * что класс всегда один, нельзя.
+     * Ученик состоит ровно в одном классе, поэтому откреплять некого: класс
+     * уносит всех своих. Раньше модель позволяла ученику числиться сразу в
+     * нескольких классах, и тогда часть состава оставалась — это состояние
+     * больше не существует.
      *
-     * Попытки удаляются явно: внешнего ключа на student_id в попытках нет,
-     * иначе они остались бы висеть на несуществующем ученике.
+     * Попытки удаляются явно, хотя внешний ключ на student_id уже сделал бы
+     * это каскадом: явное удаление видно прямо здесь и не зависит от того,
+     * какое ON DELETE стоит в схеме.
      *
      * @return array{deletedStudents:int,keptStudents:int,studentIds:list<int>}
      */
@@ -184,35 +185,17 @@ final class ClassRepository
     {
         return $this->db->transaction(function (Database $db) use ($classId): array {
             $members = array_map(
-                static fn (array $r): int => (int) $r['student_id'],
-                $db->all('SELECT student_id FROM class_students WHERE class_id = :c', ['c' => $classId])
+                static fn (array $r): int => (int) $r['id'],
+                $db->all('SELECT id FROM students WHERE class_id = :c', ['c' => $classId])
             );
 
-            $deleted = 0;
-            $kept = 0;
+            $deleted = count($members);
 
             if ($members !== []) {
                 $list = implode(',', $members);
 
-                // Попытки снимаем со всех классов сразу: ученик мог сдавать
-                // работы, выданные не только этому классу.
                 $db->run("DELETE FROM assignment_attempts WHERE student_id IN ({$list})");
-
-                $others = array_map(
-                    static fn (array $r): int => (int) $r['student_id'],
-                    $db->all("SELECT DISTINCT student_id FROM class_students WHERE class_id <> :c", ['c' => $classId])
-                );
-
-                $onlyHere = array_values(array_diff($members, $others));
-
-                if ($onlyHere !== []) {
-                    $deletedList = implode(',', $onlyHere);
-
-                    $db->run("DELETE FROM users WHERE id IN ({$deletedList})");
-                    $deleted = count($onlyHere);
-                }
-
-                $kept = count($members) - $deleted;
+                $db->run("DELETE FROM students WHERE id IN ({$list})");
             }
 
             // Связи с предметами, учителями и выдачей работ уходят каскадом.
@@ -224,7 +207,7 @@ final class ClassRepository
              * остались без класса. Список собирается ДО удаления — после него
              * класса нет, а вместе с ним и связей.
              */
-            return ['deletedStudents' => $deleted, 'keptStudents' => $kept, 'studentIds' => $members];
+            return ['deletedStudents' => $deleted, 'keptStudents' => 0, 'studentIds' => $members];
         });
     }
 
@@ -235,20 +218,22 @@ final class ClassRepository
      * страница подтверждения — HTML. Пересекаются они в одном месте — списке
      * учеников и их попытках.
      *
-     * @return list<array{student_id:int,full_name:string,login:string,email:?string,attempts:int,score:?string}>
+     * Колонки «Почта» больше нет: у ученика адреса не бывает, и она вела бы
+     * в файл пустую графу.
+     *
+     * @return list<array{student_id:int,full_name:string,login:string,attempts:int,score:?string}>
      */
     public function exportForRemoval(int $classId): array
     {
         return $this->db->all(
-            'SELECT u.id AS student_id, u.full_name, u.login, u.email,
+            'SELECT s.id AS student_id, s.full_name, s.login,
                     COUNT(a.id) AS attempts,
                     SUM(a.score) AS score
-               FROM class_students cs
-               JOIN users u ON u.id = cs.student_id
-               LEFT JOIN assignment_attempts a ON a.student_id = u.id
-              WHERE cs.class_id = :c
-           GROUP BY u.id, u.full_name, u.login, u.email
-           ORDER BY u.full_name',
+               FROM students s
+               LEFT JOIN assignment_attempts a ON a.student_id = s.id
+              WHERE s.class_id = :c
+           GROUP BY s.id, s.full_name, s.login
+           ORDER BY s.full_name',
             ['c' => $classId]
         );
     }

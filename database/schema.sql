@@ -118,9 +118,10 @@ CREATE TABLE IF NOT EXISTS `roles` (
   PRIMARY KEY (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Роли — только для сотрудников. Ученик в этот справочник не входит: у него
+-- своя таблица `students`, и ролей у него нет.
 INSERT IGNORE INTO `roles` (`code`, `title`, `description`, `position`) VALUES
   ('observer',     'Наблюдатель',   'Регистрация и просмотр своих данных',  10),
-  ('student',      'Ученик',        'Прохождение тестов',                   20),
   ('teacher',      'Учитель',       'Создание и проведение своих тестов',   30),
   ('head_teacher', 'Завуч',         'Классы, предметы, учители, ученики',  40),
   ('admin',        'Администратор', 'Управление пользователями и сайтом',   50);
@@ -190,15 +191,36 @@ CREATE TABLE IF NOT EXISTS `class_teachers` (
   CONSTRAINT `fk_class_teachers_user`  FOREIGN KEY (`user_id`)  REFERENCES `users` (`id`)    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `class_students` (
-  `class_id`  INT UNSIGNED NOT NULL,
-  `student_id` INT UNSIGNED NOT NULL,
-  `joined_at` DATETIME     NOT NULL,
-  PRIMARY KEY (`class_id`, `student_id`),
-  KEY `idx_class_students_student` (`student_id`),
-  CONSTRAINT `fk_class_students_class`  FOREIGN KEY (`class_id`)  REFERENCES `classes` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_class_students_student` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`)   ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Ученики. Отдельная таблица, а не строки `users` с ролью «ученик»: ученик
+-- не сотрудник — у него нет почты, подтверждения адреса и ролей, а записей
+-- его в разы больше, чем сотрудников. Вход у ученика свой (/student/login),
+-- сессия своя (_auth_student_id).
+-- class_id — один класс на ученика; NULL означает «вне класса»: ученика убрали
+--   из класса, а учётную запись сохранили.
+CREATE TABLE IF NOT EXISTS `students` (
+  `id`            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `login`         VARCHAR(64)  NOT NULL,
+  `password_hash` VARCHAR(255) NOT NULL,
+  -- full_name — составное ФИО одной строкой, как у сотрудников: по нему
+  --   сортируются журнал и списки класса.
+  `full_name`     VARCHAR(191) NOT NULL,
+  `last_name`     VARCHAR(191) NULL,
+  `first_name`    VARCHAR(191) NULL,
+  `middle_name`   VARCHAR(191) NULL,
+  -- status — только active/blocked: значения pending у ученика не бывает,
+  --   почты для подтверждения адреса у него нет.
+  `status`        ENUM('active','blocked') NOT NULL DEFAULT 'active',
+  `class_id`      INT UNSIGNED NULL COMMENT 'один класс на ученика; NULL — вне класса',
+  `created_at`    DATETIME     NOT NULL,
+  `updated_at`    DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_students_login` (`login`),
+  KEY `idx_students_full_name` (`full_name`),
+  KEY `idx_students_class` (`class_id`),
+  KEY `idx_students_status` (`status`),
+  CONSTRAINT `fk_students_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT 'ученики';
 
 -- ------------------------------------------------------------------ Предметы
 
@@ -465,6 +487,11 @@ CREATE TABLE IF NOT EXISTS `assignment_issues` (
 -- Кому выдана работа. Класс запоминается на момент выдачи — он нужен сводной
 -- таблице в «Просмотре результатов», где видно, кому работа досталась, а не
 -- где ученик учится сегодня. NULL, чтобы удаление класса не стирало выдачу.
+-- Кому выдана работа. Класс запоминается на момент выдачи — он нужен сводной
+-- таблице в «Просмотре результатов», где видно, кому работа досталась, а не
+-- где ученик учится сегодня. NULL, чтобы удаление класса не стирало выдачу.
+-- student_id ссылается на `students`, а не на `users`: ученик — отдельная
+--   таблица, сотрудник учеником не бывает.
 CREATE TABLE IF NOT EXISTS `assignment_issue_students` (
   `issue_id`    INT UNSIGNED NOT NULL,
   `student_id`  INT UNSIGNED NOT NULL,
@@ -476,7 +503,7 @@ CREATE TABLE IF NOT EXISTS `assignment_issue_students` (
   CONSTRAINT `fk_issue_students_issue` FOREIGN KEY (`issue_id`)
     REFERENCES `assignment_issues` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_issue_students_student` FOREIGN KEY (`student_id`)
-    REFERENCES `users` (`id`) ON DELETE CASCADE
+    REFERENCES `students` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT 'кому выдана работа';
 
@@ -532,12 +559,19 @@ CREATE TABLE IF NOT EXISTS `assignment_drafts` (
     FOREIGN KEY (`author_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Попытка ученика по работе. token — одноразовый ключ доступа, как у тестов:
--- по голой ссылке чужую работу не открыть. manual = 1 — ждёт проверки учителем.
+-- Попытка по работе: либо ученика, либо сотрудника, который начал работу сам,
+-- чтобы проверить её (без ограничения числа попыток). token — одноразовый ключ
+-- доступа, как у тестов: по голой ссылке чужую работу не открыть.
+-- manual = 1 — ждёт проверки учителем.
 CREATE TABLE IF NOT EXISTS `assignment_attempts` (
   `id`            INT UNSIGNED      NOT NULL AUTO_INCREMENT,
   `assignment_id` INT UNSIGNED      NOT NULL,
-  `student_id`    INT UNSIGNED      NOT NULL,
+  -- Ровно одна из двух колонок заполнена. Смешанной записи не бывает: это
+  --   держит репозиторий и проверяет набор work. Две колонки вместо одной
+  --   нужны затем, чтобы id ученика и id сотрудника из разных таблиц не могли
+  --   совпасть и отдать чужую работу.
+  `student_id`    INT UNSIGNED      NULL COMMENT 'ученик; NULL — начал сотрудник',
+  `staff_id`      INT UNSIGNED      NULL COMMENT 'сотрудник, начавший работу сам; NULL — ученик',
   `token`         CHAR(64)          NOT NULL,
   `status`        ENUM('in_progress','finished','expired') NOT NULL DEFAULT 'in_progress',
   `attempt_no`    SMALLINT UNSIGNED NOT NULL DEFAULT 1,
@@ -559,13 +593,21 @@ CREATE TABLE IF NOT EXISTS `assignment_attempts` (
   `checked_at`    DATETIME          NULL,
   `checked_by`    INT UNSIGNED      NULL,
   PRIMARY KEY (`id`),
+  -- Номер попытки уникален по той колонке, которая заполнена: у учеников по
+  --   student_id, у самопроверок учителя — по staff_id.
   UNIQUE KEY `uq_attempt_number` (`assignment_id`, `student_id`, `attempt_no`),
+  UNIQUE KEY `uq_attempt_number_staff` (`assignment_id`, `staff_id`, `attempt_no`),
   UNIQUE KEY `uq_attempt_token` (`token`),
   KEY `idx_attempts_assignment` (`assignment_id`),
   KEY `idx_attempts_student` (`student_id`),
+  KEY `idx_attempts_staff` (`staff_id`),
   KEY `idx_attempts_manual` (`manual`, `status`),
   CONSTRAINT `fk_attempts_assignment`
-    FOREIGN KEY (`assignment_id`) REFERENCES `assignments` (`id`) ON DELETE CASCADE
+    FOREIGN KEY (`assignment_id`) REFERENCES `assignments` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_attempts_student`
+    FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_attempts_staff`
+    FOREIGN KEY (`staff_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Проверка одной позиции работы. snapshot — JSON из ItemGrade::snapshot:

@@ -85,6 +85,7 @@ final class Wiring
         $app->define(Auth::class, static fn (App $a): Auth => new Auth(
             $a->get(\MyEdu\Core\Session::class),
             $a->get(UserRepository::class),
+            $a->get(StudentRepository::class),
             $a->config()
         ));
 
@@ -103,6 +104,7 @@ final class Wiring
         $app->define(AuthService::class, static fn (App $a): AuthService => new AuthService(
             $a->get(Database::class),
             $a->get(UserRepository::class),
+            $a->get(StudentRepository::class),
             $a->get(TokenRepository::class),
             $a->get(Auth::class),
             $a->get(AuthMailer::class),

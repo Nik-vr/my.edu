@@ -27,7 +27,7 @@ declare(strict_types=1);
  *
  * @var \MyEdu\Core\View $view
  * @var string $content
- * @var \MyEdu\Auth\User|null $currentUser
+ * @var \MyEdu\Auth\User|\MyEdu\Auth\Student|null $currentUser
  * @var string|null $appName
  * @var string $currentPath
  * @var list<array{title:string, items:list<array<string,mixed>>}> $panelNav

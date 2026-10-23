@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace MyEdu\Http\Controller;
 
+use MyEdu\Auth\Actor;
 use MyEdu\Auth\Auth;
 use MyEdu\Auth\Role;
-use MyEdu\Auth\User;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
 use MyEdu\Core\Database;
@@ -78,13 +78,13 @@ final class WorkController
      */
     public function index(Request $request): Response
     {
-        $user = $this->auth->user();
+        $actor = $this->auth->actor();
 
         return $this->render('work/index', [
             'title' => 'Работы',
             'rows'  => $this->withProgress(
-                $this->publishedWorks($user),
-                $user?->id
+                $this->publishedWorks($actor),
+                $actor
             ),
             'notice' => $this->session->pull('flash_notice'),
             'error'  => $this->session->pull('flash_error'),
@@ -92,16 +92,27 @@ final class WorkController
     }
 
     /**
-     * Опубликованные работы, доступные пользователю.
+     * Опубликованные работы, доступные вошедшему.
+     *
+     * Сотрудник видит всё опубликованное: он и выдаёт работу, и проверяет её,
+     * и не должен терять из виду выданное только потому, что класс ещё не
+     * заведён. Ученику идёт только то, что ему лично выдали.
      *
      * @return list<array<string,mixed>>
      */
-    private function publishedWorks(?User $user): array
+    private function publishedWorks(?Actor $actor): array
     {
-        return $this->assignments->allPublished(
-            $user?->id,
-            $user !== null && $this->auth->can(Role::TESTS_MANAGE)
-        );
+        if ($actor === null || $this->auth->can(Role::TESTS_MANAGE)) {
+            return $this->assignments->allPublished();
+        }
+
+        // У сотрудника без права управления список тоже полный — иначе учитель
+        // без выданных работ не увидел бы ничего, хотя адрес ему открыт.
+        if (!$actor->isStudent()) {
+            return $this->assignments->allPublished();
+        }
+
+        return $this->assignments->allPublished($actor->studentId);
     }
 
     /**
@@ -112,7 +123,7 @@ final class WorkController
         $id = $this->intParam($params, 'id');
         $assignment = $this->requirePublished($id);
 
-        $user = $this->auth->user();
+        $actor = $this->auth->actor();
 
         /*
          * Сотрудник видит всё, ученик — только то, что ему лично выдали и что
@@ -120,14 +131,15 @@ final class WorkController
          * защищает вход, а видность решается по выдаче, и правило должно быть
          * одно для показа и для начала попытки.
          */
-        if ($user !== null
+        if ($actor !== null
+            && $actor->isStudent()
             && !$this->auth->can(Role::TESTS_MANAGE)
-            && !$this->assignments->visibleTo($id, $user->id)
+            && !$this->assignments->visibleTo($id, (int) $actor->studentId)
         ) {
             throw new HttpException(404, 'Работа не найдена');
         }
 
-        $attempt = $user === null ? null : $this->assignments->findLastAttempt($id, $user->id);
+        $attempt = $actor === null ? null : $this->assignments->findLastAttempt($id, $actor);
         $rows = $this->positionRows($assignment, $attempt);
 
         return $this->render('work/show', [
@@ -137,7 +149,7 @@ final class WorkController
             'attempt'    => $attempt,
             'totalItems' => count($rows),
             'doneCount'  => count(array_filter($rows, static fn (array $r): bool => $r['done'])),
-            'attemptsLeft' => $this->attemptsLeft($id, $user),
+            'attemptsLeft' => $this->attemptsLeft($id, $actor),
             // Сотрудник проходит работу сколько угодно раз: он проверяет её
             // после правок, и ограничение мешало бы ему это делать.
             'mayRepeat'    => $this->auth->can(Role::TESTS_REPEAT),
@@ -147,29 +159,30 @@ final class WorkController
     }
 
     /**
-     * Сколько попыток у ученика осталось.
+     * Сколько попыток осталось.
      *
      * null означает «без ограничения». У сотрудников ограничение не действует,
      * поэтому им показывается то же самое, что и при лимите 1, — бесконечность.
      */
-private function attemptsLeft(int $assignmentId, ?User $user): ?int
-{
-    if ($user === null) {
-        return null;
-    }
+    private function attemptsLeft(int $assignmentId, ?Actor $actor): ?int
+    {
+        if ($actor === null) {
+            return null;
+        }
 
         /*
          * Лимит принадлежит выдаче, а не работе: одну и ту же работу можно
          * выдать двум классам с разным числом попыток, и спрашивать его надо
-         * у той выдачи, по которой ученик её получил.
+         * у той выдачи, по которой ученик её получил. Для сотрудника лимита
+         * нет вовсе — репозиторий это знает и не спрашивает выдачу.
          */
-        $limit = $this->assignments->attemptLimit($assignmentId, $user->id);
+        $limit = $this->assignments->attemptLimit($assignmentId, $actor);
 
         if ($limit === null || $this->auth->can(Role::TESTS_REPEAT)) {
             return null;
         }
 
-        return max(0, $limit - $this->assignments->countAttempts($assignmentId, $user->id));
+        return max(0, $limit - $this->assignments->countAttempts($assignmentId, $actor));
     }
 
     /**
@@ -185,9 +198,9 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
         $id = $this->intParam($params, 'id');
         $assignment = $this->requirePublished($id);
 
-        $user = $this->auth->user();
+        $actor = $this->auth->actor();
 
-        if ($user === null) {
+        if ($actor === null) {
             throw new HttpException(403, 'Войдите в систему, чтобы начать работу');
         }
 
@@ -197,8 +210,15 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
          * выдавали, получает 404 на /work/{id}, но прямым POST на
          * /work/{id}/start всё равно заводит попытку, то есть начинает работу,
          * которую видеть не должен. Правило одно и то же в обоих местах.
+         *
+         * Проверка относится только к ученику: выдача — это связь «работа —
+         * ученик — класс», и у сотрудника такой записи нет вовсе. Ему всё
+         * видно, иначе учитель не смог бы запустить свою же работу.
          */
-        if (!$this->auth->can(Role::TESTS_MANAGE) && !$this->assignments->visibleTo($id, $user->id)) {
+        if ($actor->isStudent()
+            && !$this->auth->can(Role::TESTS_MANAGE)
+            && !$this->assignments->visibleTo($id, (int) $actor->studentId)
+        ) {
             throw new HttpException(404, 'Работа не найдена');
         }
 
@@ -209,9 +229,9 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
          * ограничение тоже не нужно.
          */
         if (!$this->auth->can(Role::TESTS_REPEAT)) {
-            $limit = $this->assignments->attemptLimit($id, $user->id);
+            $limit = $this->assignments->attemptLimit($id, $actor);
 
-            if ($limit !== null && $this->assignments->countAttempts($id, $user->id) >= $limit) {
+            if ($limit !== null && $this->assignments->countAttempts($id, $actor) >= $limit) {
                 $this->session->set('flash_error', 'Вы уже выполнили эту работу максимальное число раз.');
 
                 return $this->redirect('work/' . $id);
@@ -220,7 +240,7 @@ private function attemptsLeft(int $assignmentId, ?User $user): ?int
 
         $started = $this->assignments->startAttempt(
             $id,
-            $user->id,
+            $actor,
             bin2hex(random_bytes(32)),
             $this->auth->can(Role::TESTS_REPEAT)
         );
@@ -442,10 +462,19 @@ if ($this->expired($attempt)) {
      * Штраф фиксируется один раз — в момент сдачи. Срок потом может быть
      * изменён, и опоздавшая работа не должна от этого вдруг стать вовремя.
      *
+     * Самопроверке учителя штраф не считается: у неё нет ни ученика, ни
+     * выдачи, а значит и срока. Раньше колонка была общей, и `(int) null`
+     * превращался в ноль — в выдаче №0 штраф не находился, но читалось это
+     * как везде отсутствующая выдача.
+     *
      * @param array<string,mixed> $attempt
      */
     private function applyLatePenalty(array $attempt): void
     {
+        if ($attempt['student_id'] === null) {
+            return;
+        }
+
         $assignmentId = (int) $attempt['assignment_id'];
         $assignment = $this->assignments->find($assignmentId);
         $penalty = max(0.0, (float) ($assignment['late_penalty'] ?? 0.0));
@@ -768,7 +797,6 @@ if ($this->expired($attempt)) {
                 (int) $item['position']
             ),
             $this->itemCount((int) $item['assignment_id']),
-            $this->auth->user(),
             $this->view,
             $this->csrf,
             $this->auth,
@@ -984,23 +1012,30 @@ if ($this->expired($attempt)) {
     }
 
     /**
-     * Список работ с прогрессом ученика.
+     * Список работ с прогрессом вошедшего.
      *
      * @param list<array<string,mixed>> $rows
      * @return list<array<string,mixed>>
      */
-    private function withProgress(array $rows, ?int $userId): array
+    private function withProgress(array $rows, ?Actor $actor): array
     {
-        if ($userId === null) {
+        if ($actor === null) {
             return array_map(static fn (array $row): array => $row + ['my_status' => null], $rows);
         }
 
+        /*
+         * Прогресс берётся по той же колонке, в которую попытка записывается:
+         * ученик — student_id, сотрудник, прогоняющий работу сам, — staff_id.
+         * Общей колонки для них нет, и подставлять чужой номер значило бы
+         * показать ученику чужой прогресс.
+         */
+        $column = $actor->isStudent() ? 'student_id' : 'staff_id';
         $attempts = $this->db->all(
-            'SELECT assignment_id, status, score, max_score, percent, grade, attempt_no
+            "SELECT assignment_id, status, score, max_score, percent, grade, attempt_no
                FROM assignment_attempts
-              WHERE student_id = :user
-           ORDER BY id',
-            ['user' => $userId]
+              WHERE {$column} = :actor
+           ORDER BY id",
+            ['actor' => $actor->studentId ?? $actor->staffId]
         );
 
         $latest = [];
@@ -1230,6 +1265,10 @@ if ($this->expired($attempt)) {
      * номеров попыток. Сотрудникам дополнительно разрешается смотреть чужую
      * попытку — им работа проверяют.
      *
+     * Своя попытка определяется по колонке, а не по одному числу: у ученика
+     * и у сотрудника номера независимы, и раньше «учитель №7» читал работу
+     * «ученика №7» — совпадение номеров из разных таблиц.
+     *
      * @return array<string,mixed>
      */
     private function requireOwnAttempt(int $attemptId, ?string $token): array
@@ -1244,13 +1283,15 @@ if ($this->expired($attempt)) {
             throw new HttpException(404, 'Попытка не найдена');
         }
 
-        $user = $this->auth->user();
+        $actor = $this->auth->actor();
 
-        if ($user === null) {
+        if ($actor === null) {
             throw new HttpException(403, 'Войдите в систему');
         }
 
-        $isOwner = (int) $attempt['student_id'] === $user->id;
+        $isOwner = $actor->isStudent()
+            ? $attempt['student_id'] !== null && (int) $attempt['student_id'] === $actor->studentId
+            : $attempt['staff_id'] !== null && (int) $attempt['staff_id'] === $actor->staffId;
 
         if (!$isOwner && !$this->auth->can(Role::TESTS_MANAGE)) {
             throw new HttpException(403, 'Это попытка другого ученика');

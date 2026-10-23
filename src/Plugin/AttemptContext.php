@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace MyEdu\Plugin;
 
 use MyEdu\Auth\Auth;
-use MyEdu\Auth\User;
 use MyEdu\Core\Csrf;
 use MyEdu\Core\View;
 use MyEdu\Ui\Ui;
@@ -34,7 +33,6 @@ final class AttemptContext
         public readonly int $position,
         /** Всего заданий в работе. */
         public readonly int $totalItems,
-        public readonly ?User $student,
         public readonly View $view,
         public readonly Csrf $csrf,
         public readonly Auth $auth,

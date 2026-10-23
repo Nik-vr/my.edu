@@ -58,60 +58,71 @@ $students = new StudentRepository($db);
 /*
  * Удаляются только классы и записи этого набора тестов.
  *
- * Учеников нельзя искать по «email IS NULL»: так заводит учеников сам
- * проект (StudentRepository::create), то есть на рабочей базе под нож попали
- * бы все зачисленные ученики разом. Поэтому их идентификаторы собираются
- * ДО сноса классов — пока ещё видна связь через class_students — и удаляются
- * уже по списку.
+ * Ученики живут в собственной таблице students, и их нельзя искать по
+ * «email IS NULL» или по ролям: так заводит учеников сам проект
+ * (StudentRepository::create), то есть на рабочей базе под нож попали бы все
+ * зачисленные ученики разом. Опора набора — признак «ученик зачислен в класс»
+ * (class_id заполнен): такие строки появляются только из наших проверок, и
+ * список собирается ДО сноса классов — пока ещё видно, кто где состоял.
  *
  * Само собой, набор остаётся разрушительным для всего остального (классы,
  * попытки, оценки), и защищает его assertTestDatabase(), а не этот список.
  */
 $studentIds = array_map(
-    static fn (array $row): int => (int) $row['student_id'],
-    $db->all('SELECT DISTINCT student_id FROM class_students')
+    static fn (array $row): int => (int) $row['id'],
+    $db->all('SELECT id FROM students WHERE class_id IS NOT NULL')
 );
 
+/*
+ * Коллег (users) отбираем по адресу из домена @school.test: раньше так метили
+ * и учеников, теперь ученики в users не заводятся вовсе, и список приходит
+ * ровно по регистрации и выдаче паролей сотрудникам.
+ */
 $testUserIds = array_map(
     static fn (array $row): int => (int) $row['id'],
     $db->all("SELECT id FROM users WHERE email LIKE '%@school.test'")
 );
 
-$usersToDelete = array_values(array_unique(array_merge(
-    array_map('intval', $studentIds),
-    array_map('intval', $testUserIds)
-)));
-
 $db->run('DELETE FROM class_subjects');
 $db->run('DELETE FROM class_teachers');
-$db->run('DELETE FROM class_students');
 $db->run('DELETE FROM classes');
 
 /*
- * Колонка привязки у таблиц своя: у попыток работы это student_id, а не
- * user_id. Помощник молча брал user_id везде, и очистка падала с «Unknown
- * column» каждый раз, когда список оказывался непустым — то есть на любом
- * запуске, где ученики в базе уже были.
+ * Владелец попытки теперь обозначается двумя независимыми ссылками: ученик
+ * пишется в student_id (students.id), самопроверка учителя — в staff_id
+ * (users.id). Одной чисткой по объединённому списку строки не закрыть: id в
+ * разных таблицах не пересекаются по смыслу, и запрос мог бы зацепить чужую
+ * работу. Удаляем каждую группу по своей колонке.
  */
-$deleteUsers = static function (string $table, string $column = 'user_id') use ($db, $usersToDelete): void {
-    if ($usersToDelete === []) {
+$deleteAttempts = static function (string $column, array $ids) use ($db): void {
+    if ($ids === []) {
         return;
     }
 
-    $list = implode(',', $usersToDelete);
+    $list = implode(',', $ids);
 
-    $db->run("DELETE FROM {$table} WHERE {$column} IN ({$list})");
+    $db->run("DELETE FROM assignment_attempts WHERE {$column} IN ({$list})");
 };
 
-$deleteUsers('assignment_attempts', 'student_id');
-$deleteUsers('auth_tokens');
-$deleteUsers('user_roles');
+$deleteAttempts('student_id', $studentIds);
+$deleteAttempts('staff_id', $testUserIds);
 
-if ($usersToDelete !== []) {
-    $list = implode(',', $usersToDelete);
+if ($testUserIds !== []) {
+    $list = implode(',', $testUserIds);
 
-    $db->run("DELETE FROM users WHERE id IN ({$list})");
+    /*
+     * Назначения со ссылкой на тестового автора блокируют удаление
+     * пользователей (foreign key restrict на author_id), поэтому гасим автора
+     * до users — иначе повторный запуск без синхронизации базы падает на
+     * этом DELETE уже на очистке.
+     */
+    $db->run("DELETE FROM assignments WHERE author_id IN ({$list})");
 }
+
+$db->run('DELETE FROM auth_tokens WHERE user_id IN (' . implode(',', $testUserIds ?: [0]) . ')');
+$db->run('DELETE FROM user_roles WHERE user_id IN (' . implode(',', $testUserIds ?: [0]) . ')');
+$db->run('DELETE FROM users WHERE id IN (' . implode(',', $testUserIds ?: [0]) . ')');
+$db->run('DELETE FROM students WHERE id IN (' . implode(',', $studentIds ?: [0]) . ')');
 
 $ownerId = 0;
 $teacherId = 0;
@@ -956,14 +967,20 @@ $manual = $owner->post('/classes/' . $classId . '/students', [
  */
 $t->is($manual['status'] === 200, 'добавление сразу отдаёт лист с паролем');
 
-$petrov = $users->findRowByEmail('petrov@example.edu')
-    ?: $db->one("SELECT * FROM users WHERE full_name = 'Петров Иван Ильич' LIMIT 1");
+/*
+ * Ученик — строка в собственной таблице: класс зафиксирован в class_id, а
+ * адреса для него в системе нет. Проверяем и то, что колонки email у таблицы
+ * нет вовсе: она осталась бы от старой схемы, где ученики жили в users.
+ */
+$petrov = $db->one("SELECT * FROM students WHERE full_name = 'Петров Иван Ильич' LIMIT 1");
 $petrovId = (int) ($petrov['id'] ?? 0);
 
 $t->is($petrovId > 0, 'ученик сохранён в базе');
-$t->equals((int) $db->value('SELECT COUNT(*) FROM class_students WHERE class_id = :id AND student_id = :u',
-    ['id' => $classId, 'u' => $petrovId]), 1, 'ученик добавлен в класс');
-$t->is(in_array(Role::STUDENT, $users->rolesOf($petrovId), true), 'ученику выдана роль student');
+$t->equals((int) ($petrov['class_id'] ?? 0), $classId, 'ученик добавлен в класс');
+$t->is(
+    count($db->all("SHOW COLUMNS FROM students LIKE 'email'")) === 0,
+    'у ученика нет адреса электронной почты'
+);
 
 preg_match('#<dd><code>\s*([А-ЯЁ]\d{4})\s*</code>#u', $manual['body'], $loginMatch);
 preg_match('#<dd><code>\s*(\d{8})\s*</code>#u', $manual['body'], $passMatch);
@@ -1002,9 +1019,9 @@ $studentLoginPage = $studentClient->get('/student/login');
  * Ученик входит своей формой: логин и пароль с листа и ничего больше.
  *
  * Общая форма предлагала ученику e-mail и кнопку регистрации — два способа,
- * которыми он не пользуется, и ни одного, которым пользуется. Вход по общей
- * форме продолжает работать (учитель мог отдать ссылку не туда), но адрес на
- * листе и в подсказке — тот, где спрашивают только логин.
+ * которыми он не пользуется, и ни одного, которым пользуется. С разделением
+ * таблиц разошлись и сами двери: `/login` спрашивает сотрудника и смотрит
+ * только в `users`, `/student/login` — ученика и только в `students`.
  */
 $t->is($studentLoginPage['status'] === 200, 'форма входа ученика открыта');
 $t->contains($studentLoginPage['body'], 'name="identifier"', 'в форме ученика есть логин');
@@ -1026,6 +1043,25 @@ $studentLogin = $studentClient->post('/student/login', [
 $t->is($studentLogin['status'] === 302 && !str_contains($studentLogin['location'], '/login'),
     'ученик вошёл по выданному логину и паролю');
 
+/*
+ * Обратная сторона тех же дверей: тот же ученик с тем же паролем через общую
+ * форму не проходит.
+ *
+ * Раньше он проходил — ученики жили в `users`, и общая форма была входом для
+ * всех. Сейчас `/login` смотрит только в сотрудников, и совпадение логина
+ * с ученическим ничего не даёт: это ровно то разграничение, ради которого
+ * таблицы и разделили.
+ */
+$wrongDoor = new TestClient($baseUrl);
+$wrongDoor->post('/login', [
+    '_token'     => $wrongDoor->tokenFrom($wrongDoor->get('/login')) ?? '',
+    'identifier' => $petrovLogin,
+    'password'   => $petrovPassword,
+]);
+
+$t->is($wrongDoor->get('/portal')['status'] === 302,
+    'через общую форму ученик не проходит — даже с верным паролем');
+
 // Повторная регистрация ученика в том же классе отклоняется.
 $duplicate = $owner->post('/classes/' . $classId . '/students', [
     '_token'    => $owner->tokenFrom($owner->get('/classes/' . $classId)) ?? '',
@@ -1033,7 +1069,7 @@ $duplicate = $owner->post('/classes/' . $classId . '/students', [
 ]);
 
 $t->is($duplicate['status'] === 302, 'повторная регистрация обработана');
-$t->equals((int) $db->value('SELECT COUNT(*) FROM users WHERE full_name = :n',
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE full_name = :n',
     ['n' => 'Петров Иван Ильич']), 1, 'дубль ученика не создан');
 $duplicatePage = $owner->get('/classes/' . $classId);
 $t->contains($duplicatePage['body'], 'value="Петров Иван Ильич"',
@@ -1103,16 +1139,20 @@ $t->contains($reportPage['body'], 'Из файла зарегистрирова�
 $t->contains($reportPage['body'], 'строка 5 — не указана фамилия', 'ошибка строки показана');
 $t->contains($reportPage['body'], 'уже состоит в этом классе', 'пропуск дубля показан');
 
-$t->equals((int) $db->value('SELECT COUNT(*) FROM users WHERE full_name LIKE :n',
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE full_name LIKE :n',
     ['n' => 'Сидорова Мария Алексеевна']), 1, 'ученик из файла создан');
-$t->equals((int) $db->value('SELECT COUNT(*) FROM users WHERE full_name LIKE :n',
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE full_name LIKE :n',
     ['n' => 'Кузнецов Пётр']), 1, 'ученик без отчества создан');
-$t->equals((int) $db->value('SELECT COUNT(*) FROM users WHERE full_name LIKE :n',
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE full_name LIKE :n',
     ['n' => 'Петров Иван Ильич']), 1, 'дубль из файла не создан');
-$t->equals((int) $db->value('SELECT COUNT(*) FROM users WHERE full_name LIKE :n',
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE full_name LIKE :n',
     ['n' => 'Безфамилия%']), 0, 'строка без фамилии не создана');
 
-$t->equals((int) $db->value('SELECT COUNT(*) FROM class_students WHERE class_id = :id', ['id' => $classId]),
+/*
+ * Членство в классе — колонка, а не отдельная таблица: ученик состоит ровно
+ * в одном классе, и счётчик это просто число строк с этим class_id.
+ */
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE class_id = :id', ['id' => $classId]),
     4, 'в классе четыре ученика');
 
 @unlink($csvPath);
@@ -1160,30 +1200,27 @@ $transfer = $owner->post('/classes/' . $secondClassId . '/students', [
 
 $t->is($transfer['status'] === 302, 'переход в другой класс обработан');
 $t->equals(1, (int) $db->value(
-    'SELECT COUNT(*) FROM users WHERE full_name = :n',
+    'SELECT COUNT(*) FROM students WHERE full_name = :n',
     ['n' => $transferName]
 ), 'человек без работ не размножен');
 $t->equals(1, (int) $db->value(
-    'SELECT COUNT(*) FROM class_students cs JOIN users u ON u.id = cs.student_id
-      WHERE u.full_name = :n AND cs.class_id = :c',
+    'SELECT COUNT(*) FROM students WHERE full_name = :n AND class_id = :c',
     ['n' => $transferName, 'c' => $secondClassId]
 ), 'он же состоит в новом классе');
 
 // Человек с работами: это уже другой человек, и склеивать нельзя.
 $otherName = 'Орлов Кирилл Олегович';
-$otherId = (int) $db->insert('users', [
+$otherId = (int) $db->insert('students', [
     'login'         => 'test-orlov-' . substr(md5($otherName), 0, 6),
-    'email'         => null,
     'password_hash' => password_hash('test-pass-2025', PASSWORD_DEFAULT),
     'full_name'     => $otherName,
-    'is_owner'      => 0,
+    // Класс проставляется сразу: он принадлежит ученику, и без него строка
+    // считалась бы «вне класса» и не попала бы в чистку перед прогоном.
+    'class_id'      => $classId,
     'status'        => 'active',
     'created_at'    => date('Y-m-d H:i:s'),
     'updated_at'    => date('Y-m-d H:i:s'),
 ]);
-
-$db->insert('user_roles', ['user_id' => $otherId, 'role_code' => \MyEdu\Auth\Role::STUDENT, 'granted_at' => date('Y-m-d H:i:s')]);
-$db->insert('class_students', ['class_id' => $classId, 'student_id' => $otherId, 'joined_at' => date('Y-m-d H:i:s')]);
 
 // Человек с работами: склеивать его нельзя, а для этого у него должна быть попытка.
 $clashWorkId = (int) $db->insert('assignments', [
@@ -1216,11 +1253,10 @@ $clash = $owner->post('/classes/' . $secondClassId . '/students', [
 ]);
 
 $t->is($clash['status'] === 302, 'заведение однофамильца не роняет страницу');
-$t->equals(1, (int) $db->value('SELECT COUNT(*) FROM users WHERE full_name = :n', ['n' => $otherName]),
+$t->equals(1, (int) $db->value('SELECT COUNT(*) FROM students WHERE full_name = :n', ['n' => $otherName]),
     'второй человек с тем же именем не создан и не съеден');
 $t->equals(0, (int) $db->value(
-    'SELECT COUNT(*) FROM class_students cs JOIN users u ON u.id = cs.student_id
-      WHERE u.full_name = :n AND cs.class_id = :c',
+    'SELECT COUNT(*) FROM students WHERE full_name = :n AND class_id = :c',
     ['n' => $otherName, 'c' => $secondClassId]
 ), 'в новый класс он не попал — это был бы чужой человек');
 $t->contains((string) $owner->get('/classes/' . $secondClassId)['body'], 'сдавал работы',
@@ -1255,7 +1291,7 @@ $win1251Import = $owner->upload(
 
 $t->is($win1251Import['status'] === 200, 'файл в Windows-1251 разобран');
 $t->equals(1, (int) $db->value(
-    'SELECT COUNT(*) FROM users WHERE full_name = :n',
+    'SELECT COUNT(*) FROM students WHERE full_name = :n',
     ['n' => 'Копылов Артём Игоревич']
 ), 'фамилия прочитана по-человечески, а не ромбиками');
 $t->notContains($win1251Import['body'], '�', 'в листе нет заменяющих символов');
@@ -1269,7 +1305,7 @@ $t->contains($win1251Report['body'], 'Windows-1251', 'сказано, в как�
 
 $t->group('Смена паролей учеников');
 
-$sidorovaId = (int) $db->value("SELECT id FROM users WHERE full_name LIKE 'Сидорова%' LIMIT 1");
+$sidorovaId = (int) $db->value("SELECT id FROM students WHERE full_name LIKE 'Сидорова%' LIMIT 1");
 
 $resetPage = $owner->get('/classes/' . $classId);
 $t->is($resetPage['status'] === 200, 'страница выбора учеников открыта');
@@ -1316,12 +1352,16 @@ $classAfterReveal = $owner->get('/classes/' . $classId);
 $t->contains($classAfterReveal['body'], $sidorovaPassword, 'в редакторе класса новый пароль виден');
 
 // Старый пароль больше не подходит, новый — подходит.
-$sidorovaRow = $users->findRow($sidorovaId);
+/*
+ * Смена пароля видна сразу в базе: карточка ученика читается из его
+ * собственной таблицы, а не из списка сотрудников.
+ */
+$sidorovaRow = $db->one('SELECT * FROM students WHERE id = :id', ['id' => $sidorovaId]);
 $sidorovaLogin = (string) $sidorovaRow['login'];
 
 $checkOld = new TestClient($baseUrl);
-$oldPage = $checkOld->get('/login');
-$checkOld->post('/login', [
+$oldPage = $checkOld->get('/student/login');
+$checkOld->post('/student/login', [
     '_token'     => $checkOld->tokenFrom($oldPage) ?? '',
     'identifier' => $sidorovaLogin,
     'password'   => '12345678',
@@ -1330,8 +1370,8 @@ $checkOld->post('/login', [
 $t->is($checkOld->get('/portal')['status'] === 302, 'старый пароль не подходит');
 
 $checkNew = new TestClient($baseUrl);
-$newPage = $checkNew->get('/login');
-$checkNew->post('/login', [
+$newPage = $checkNew->get('/student/login');
+$checkNew->post('/student/login', [
     '_token'     => $checkNew->tokenFrom($newPage) ?? '',
     'identifier' => $sidorovaLogin,
     'password'   => $sidorovaPassword,
@@ -1464,7 +1504,7 @@ $t->equals(
 );
 
 $t->equals((int) $db->value(
-    'SELECT COUNT(*) FROM class_students WHERE class_id = :class',
+    'SELECT COUNT(*) FROM students WHERE class_id = :class',
     ['class' => $classId]
 ), count($rowNumbers[1] ?? []), 'пронумерованы все ученики класса');
 $t->contains($editForm['body'], '<th scope="col" class="credential-table__num">№</th>',
@@ -1558,10 +1598,10 @@ $renamed = $owner->post('/classes/' . $classId . '/students/rename', [
 ]);
 
 $t->is($renamed['status'] === 302, 'правка имени обработана');
-$t->equals('Петров Иван Ильич', (string) $db->value('SELECT full_name FROM users WHERE id = :id', ['id' => $petrovId]),
+$t->equals('Петров Иван Ильич', (string) $db->value('SELECT full_name FROM students WHERE id = :id', ['id' => $petrovId]),
     'ФИО сохранено');
 
-$t->equals('Петров', (string) $db->value('SELECT last_name FROM users WHERE id = :id', ['id' => $petrovId]),
+$t->equals('Петров', (string) $db->value('SELECT last_name FROM students WHERE id = :id', ['id' => $petrovId]),
     'фамилия пересобрана вместе с ФИО');
 
 /*
@@ -1649,7 +1689,7 @@ $renameRetry = $owner->get($renameTaken['location']);
 $t->contains($renameRetry['body'], 'value="Сидорова Мария Алексеевна"',
     'после отказа по занятому имени форма остаётся открытой с введённым ФИО');
 
-$t->equals('Петров Иван Ильич', (string) $db->value('SELECT full_name FROM users WHERE id = :id', ['id' => $petrovId]),
+$t->equals('Петров Иван Ильич', (string) $db->value('SELECT full_name FROM students WHERE id = :id', ['id' => $petrovId]),
     'чужое имя не записало ученику');
 
 // ------------------------------------------------------------------ блокировка
@@ -1665,7 +1705,7 @@ $block = $owner->post('/classes/' . $classId . '/students/status', [
 ]);
 
 $t->is($block['status'] === 302, 'блокировка обработана');
-$t->equals('blocked', (string) $db->value('SELECT status FROM users WHERE id = :id', ['id' => $petrovId]),
+$t->equals('blocked', (string) $db->value('SELECT status FROM students WHERE id = :id', ['id' => $petrovId]),
     'ученик заблокирован');
 
 /*
@@ -1675,9 +1715,9 @@ $t->equals('blocked', (string) $db->value('SELECT status FROM users WHERE id = :
  * блокировки.
  */
 $blockedClient = new TestClient($baseUrl);
-$blockedLoginPage = $blockedClient->get('/login');
+$blockedLoginPage = $blockedClient->get('/student/login');
 
-$blockedClient->post('/login', [
+$blockedClient->post('/student/login', [
     '_token'     => $blockedClient->tokenFrom($blockedLoginPage) ?? '',
     'identifier' => $petrovLogin,
     'password'   => $petrovPassword,
@@ -1687,7 +1727,7 @@ $t->is($blockedClient->get('/portal')['status'] === 302,
     'заблокированный ученик не может войти даже с верным паролем');
 
 $t->is(
-    (int) $db->value('SELECT COUNT(*) FROM users WHERE id = :id', ['id' => $petrovId]) === 1,
+    (int) $db->value('SELECT COUNT(*) FROM students WHERE id = :id', ['id' => $petrovId]) === 1,
     'учётная запись заблокированного ученика осталась в базе'
 );
 
@@ -1698,7 +1738,7 @@ $unblock = $owner->post('/classes/' . $classId . '/students/status', [
 ]);
 
 $t->is($unblock['status'] === 302, 'разблокировка обработана');
-$t->equals('active', (string) $db->value('SELECT status FROM users WHERE id = :id', ['id' => $petrovId]),
+$t->equals('active', (string) $db->value('SELECT status FROM students WHERE id = :id', ['id' => $petrovId]),
     'ученик разблокирован');
 
 /*
@@ -1716,7 +1756,7 @@ if ($foreignClassId > 0) {
 
     $t->is($foreignBlock['status'] === 302, 'чужой класс отклонил запрос');
 
-    $t->equals('active', (string) $db->value('SELECT status FROM users WHERE id = :id', ['id' => $petrovId]),
+    $t->equals('active', (string) $db->value('SELECT status FROM students WHERE id = :id', ['id' => $petrovId]),
         'чужой класс не заблокировал ученика');
 }
 
@@ -1841,9 +1881,9 @@ $t->notContains($classAfterIssue['body'], 'class="credential"',
  * И сам пароль должен работать: иначе на бумаге окажется то, чем нельзя войти.
  */
 $checkIssued = new TestClient($baseUrl);
-$checkIssued->post('/login', [
-    '_token'     => $checkIssued->tokenFrom($checkIssued->get('/login')) ?? '',
-    'identifier' => (string) $db->value('SELECT login FROM users WHERE id = :i', ['i' => $sidorovaId]),
+$checkIssued->post('/student/login', [
+    '_token'     => $checkIssued->tokenFrom($checkIssued->get('/student/login')) ?? '',
+    'identifier' => (string) $db->value('SELECT login FROM students WHERE id = :i', ['i' => $sidorovaId]),
     'password'   => $issuedPassword,
 ]);
 
@@ -1878,7 +1918,7 @@ $t->notContains($multi['body'], 'entry--blank', 'при чётном числе 
 $t->contains($multi['body'], 'Сидорова', 'в лист попал отмеченный ученик');
 $t->contains($multi['body'], 'Петров', 'в лист попал и второй отмеченный');
 
-$third = (int) $db->value("SELECT id FROM users WHERE full_name LIKE 'Кузнец%' LIMIT 1");
+$third = (int) $db->value("SELECT id FROM students WHERE full_name LIKE 'Кузнец%' LIMIT 1");
 
 if ($third > 0) {
     $oneOnly = $owner->post('/classes/' . $classId . '/credentials/reveal', [
@@ -2041,9 +2081,18 @@ $remove = $owner->post('/classes/' . $classId . '/students/remove', [
 ]);
 
 $t->is($remove['status'] === 302, 'исключение обработано');
-$t->equals((int) $db->value('SELECT COUNT(*) FROM class_students WHERE class_id = :id AND student_id = :u',
+
+/*
+ * Ученик состоит ровно в одном классе, и уборка просто снимает его:
+ * class_id становится NULL — «вне класса». Именно NULL, а не отсутствие
+ * строки: раньше членство было отдельной записью, и её удаляли.
+ */
+$t->equals((int) $db->value('SELECT COUNT(*) FROM students WHERE id = :u AND class_id = :id',
     ['id' => $classId, 'u' => $petrovId]), 0, 'ученик больше не в классе');
-$t->is($users->findRow($petrovId) !== null, 'учётная запись ученика сохранена');
+$t->is($db->value('SELECT class_id FROM students WHERE id = :u', ['u' => $petrovId]) === null,
+    'класс снят, но не подменён другим');
+$t->is($db->one('SELECT id FROM students WHERE id = :u', ['u' => $petrovId]) !== null,
+    'учётная запись ученика сохранена');
 
 // ------------------------------------------------------------------ права
 
@@ -2172,26 +2221,22 @@ $t->is(
  * Форма ролей принимала любую назначаемую роль для любого человека, и роль
  * «Учитель» проходила проверку списка: одним нажатием ученик становился
  * учителем, а «Администратор» — человеком со всеми правами и списком
- * сотрудников. Ученики живут в своём классе, и правами такого человека
- * управляет не форма ролей.
+ * сотрудников.
+ *
+ * После разделения таблиц проверка стала жёстче: ученика в `users` нет вовсе,
+ * и его номер из `students` не должен порождать ни новой строки сотрудника, ни
+ * назначения. Пространства номеров разные, и перенос одного числа в другую
+ * форму — ровно тот способ, которым однажды и подняли ученика до админа.
  */
 $t->group('Роль ученика не меняется из панели');
 
-$studentForRoleId = (int) $db->insert('users', [
-    'login'         => 'ne-uchitel@example.edu',
-    'email'         => 'ne-uchitel@example.edu',
+$studentForRoleId = (int) $db->insert('students', [
+    'login'         => 'ne-uchitel-' . substr(md5($testSuffix), 0, 6),
     'password_hash' => password_hash('uchebnik-2026', PASSWORD_DEFAULT),
     'full_name'     => 'Роль Ученика',
-    'is_owner'      => 0,
     'status'        => 'active',
     'created_at'    => date('Y-m-d H:i:s'),
     'updated_at'    => date('Y-m-d H:i:s'),
-]);
-
-$db->insert('user_roles', [
-    'user_id'    => $studentForRoleId,
-    'role_code'  => \MyEdu\Auth\Role::STUDENT,
-    'granted_at' => date('Y-m-d H:i:s'),
 ]);
 
 $rolePage = $owner->get('/panel/users');
@@ -2203,13 +2248,17 @@ $promote = $owner->post('/panel/users/role', [
 
 $t->is($promote['status'] === 302, 'попытка выдать роль ученику не роняет страницу');
 $t->equals(
-    [\MyEdu\Auth\Role::STUDENT],
-    (new \MyEdu\Auth\UserRepository($db))->rolesOf($studentForRoleId),
+    0,
+    (int) $db->value('SELECT COUNT(*) FROM users WHERE id = :id', ['id' => $studentForRoleId]),
+    'строка сотрудника под номером ученика не появилась'
+);
+$t->equals(
+    0,
+    (int) $db->value('SELECT COUNT(*) FROM user_roles WHERE user_id = :id', ['id' => $studentForRoleId]),
     'ученик не стал администратором — форма ролей его не касается'
 );
 
-$db->run('DELETE FROM user_roles WHERE user_id = :id', ['id' => $studentForRoleId]);
-$db->run('DELETE FROM users WHERE id = :id', ['id' => $studentForRoleId]);
+$db->run('DELETE FROM students WHERE id = :id', ['id' => $studentForRoleId]);
 
 // ------------------------------------------------------------- единый стиль классов
 
@@ -2527,8 +2576,8 @@ $doomedStudent = $owner->post('/classes/' . $doomedId . '/students', [
 $t->is($doomedStudent['status'] === 200, 'в класс под удаление добавлен ученик, лист с паролем показан сразу');
 
 $doomedStudentId = (int) ($db->value(
-    "SELECT u.id FROM users u JOIN class_students cs ON cs.student_id = u.id
-      WHERE cs.class_id = :c AND u.full_name LIKE 'Кузнецов%' LIMIT 1",
+    "SELECT id FROM students
+      WHERE class_id = :c AND full_name LIKE 'Кузнецов%' LIMIT 1",
     ['c' => $doomedId]
 ) ?? 0);
 
@@ -2593,7 +2642,7 @@ $t->equals(0, (int) $db->value('SELECT COUNT(*) FROM classes WHERE id = :id', ['
  * пользователей его нет, в списке классов тоже, а в базе он висел бы без
  * единого адреса, куда его можно посмотреть.
  */
-$t->equals(0, (int) $db->value('SELECT COUNT(*) FROM users WHERE id = :id', ['id' => $doomedStudentId]),
+$t->equals(0, (int) $db->value('SELECT COUNT(*) FROM students WHERE id = :id', ['id' => $doomedStudentId]),
     'ученик удалён вместе с классом');
 
 /*
@@ -2657,84 +2706,89 @@ $t->contains($pluginNotice['body'], 'остались в списке без к�
     'в сообщении об удалении сказано, что плагин оставил сиротами');
 
 /*
- * Человек может состоять в двух классах: заведённого ученика можно добавить
- * в другой. Сносить его учётную запись вместе с одним из классов было бы
- * потерей чужого класса.
+ * Ученик состоит ровно в одном классе.
+ *
+ * Раньше членство было множественным: заведённого ученика можно было добавить
+ * в другой класс, не убирая из прежнего, и он числился сразу в двух. Список
+ * одного класса его показывал, списка другого — тоже, а удаление первого
+ * оставляло человека висеть у второго. Состояние «остался в другом классе»
+ * ушло вместе с таблицей `class_students`: класс принадлежит ученику, и
+ * добавление в другой класс — это переезд, а не второе членство.
+ *
+ * Проверяются оба следствия: прежний класс теряет ученика тем же движением, и
+ * класс под удалением уносит весь свой состав — частично «оставить» его нельзя
+ * в принципе.
  */
+$t->group('Ученик состоит в одном классе');
+
 $sharedLogin = 'uzin-dvuk';
 $sharedPassword = 'uzin-dvuk-2026';
 
-$users->create([
-    'login'            => $sharedLogin,
-    'email'            => null,
-    'password_hash'    => password_hash($sharedPassword, PASSWORD_DEFAULT),
-    'full_name'        => 'Двухклассов Ученик',
-    'is_owner'         => 0,
-    'status'           => 'active',
-    'email_verified_at' => date('Y-m-d H:i:s'),
-]);
+$sharedId = makeStudent($db, 'Двухклассов Ученик', $sharedLogin, $sharedPassword, $classId);
 
-$sharedId = (int) $db->one('SELECT id FROM users WHERE login = :l', ['l' => $sharedLogin])['id'];
-
-$db->run('INSERT IGNORE INTO user_roles (user_id, role_code, granted_at) VALUES (:u, :r, NOW())', [
-    'u' => $sharedId,
-    'r' => Role::STUDENT,
-]);
-
-$owner->post('/classes/' . $classId . '/students', [
-    '_token'    => $owner->tokenFrom($owner->get('/classes/' . $classId)) ?? '',
-    'full_name' => 'Двухклассов Ученик',
-]);
-
-$owner->post('/classes/' . $doomedId . '/students', [
-    '_token'    => $owner->tokenFrom($owner->get('/classes/' . $doomedId)) ?? '',
-    'full_name' => 'Двухклассов Ученик',
-]);
-
-$secondClass = $owner->post('/classes', [
-    '_token' => $owner->tokenFrom($owner->get('/classes/new')) ?? '',
-    'name'   => '8 Г',
-]);
-
-$secondClassId = (int) ($db->value("SELECT id FROM classes WHERE name = '8 Г' LIMIT 1") ?? 0);
+$t->equals($classId, (int) $db->value('SELECT class_id FROM students WHERE id = :u', ['u' => $sharedId]),
+    'ученик зачислен в первый класс');
 
 /*
- * Вставка защищена: без класса, который не создался, в таблицу попал бы
- * нулевой адрес, и проверка падала бы с ошибкой внешнего ключа вместо
- * внятного объяснения. Проверка ниже скажет своё.
+ * Класс для переезда заводится здесь, а не берётся один из уже удалённых выше.
+ *
+ * К этому месту класс «9 В» снесён вместе со своими учениками. Попытка
+ * добавить туда ученика упала бы на молчаливом 404, и все три проверки ниже
+ * увидели бы человека на прежнем месте: он обвинял бы отсутствие переезда,
+ * тогда как причина была бы в несуществующем адресе. Свой класс делает отказ
+ * различимым — либо ученик переехал, либо страница класса не открылась вовсе.
  */
-if ($secondClassId > 0) {
-    $db->run('INSERT IGNORE INTO class_students (class_id, student_id, joined_at) VALUES (:c, :u, NOW())', [
-        'c' => $secondClassId,
-        'u' => $sharedId,
-    ]);
+$moveClass = $owner->post('/classes', [
+    '_token' => $owner->tokenFrom($owner->get('/classes')) ?? '',
+    'name'   => '8 Г',
+    'title'  => 'Средняя школа № 1',
+    'year'   => '2026/2027',
+]);
+
+preg_match('#/classes/(\d+)#', (string) $moveClass['location'], $moveClassMatch);
+$moveClassId = (int) ($moveClassMatch[1] ?? 0);
+
+if ($moveClassId > 0) {
+    $t->is(true, 'создан класс для проверки переезда');
+} else {
+    $reason = $classRefusalReason($moveClass);
+
+    $t->is(false, 'создан класс для проверки переезда: класс не создан'
+        . ($reason !== '' ? ' — ' . $reason : ''));
 }
 
-$t->equals(2, (int) $db->value('SELECT COUNT(*) FROM class_students WHERE student_id = :u', ['u' => $sharedId]),
-    'ученик состоит в двух классах');
-
-$owner->get('/classes/' . $doomedId . '/delete');
-$owner->post('/classes/' . $doomedId . '/delete', [
-    '_token' => $owner->tokenFrom($owner->get('/classes/' . $doomedId . '/delete')) ?? '',
+$moveClassPage = $owner->get('/classes/' . $moveClassId);
+$owner->post('/classes/' . $moveClassId . '/students', [
+    '_token'    => $owner->tokenFrom($moveClassPage) ?? '',
+    'full_name' => 'Двухклассов Ученик',
 ]);
 
-$t->equals(0, (int) $db->value('SELECT COUNT(*) FROM classes WHERE id = :id', ['id' => $doomedId]),
-    'класс с общим учеником удалён');
+$t->equals($moveClassId, (int) $db->value('SELECT class_id FROM students WHERE id = :u', ['u' => $sharedId]),
+    'ученик переехал в новый класс');
+$t->equals(0, (int) $db->value(
+    'SELECT COUNT(*) FROM students WHERE id = :u AND class_id = :c',
+    ['u' => $sharedId, 'c' => $classId]
+), 'прежний класс потерял его сразу, а не позже');
 
-$t->equals(1, (int) $db->value('SELECT COUNT(*) FROM users WHERE id = :id', ['id' => $sharedId]),
-    'ученик, состоящий в другом классе, остался');
+$moveConfirm = $owner->get('/classes/' . $moveClassId . '/delete');
+
+$owner->post('/classes/' . $moveClassId . '/delete', [
+    '_token' => $owner->tokenFrom($moveConfirm) ?? '',
+]);
+
+$t->equals(0, (int) $db->value('SELECT COUNT(*) FROM classes WHERE id = :id', ['id' => $moveClassId]),
+    'класс с общим учеником удалён');
+$t->equals(0, (int) $db->value('SELECT COUNT(*) FROM students WHERE class_id = :c', ['c' => $moveClassId]),
+    'после удаления класса его учеников не осталось');
+$t->equals(0, (int) $db->value('SELECT COUNT(*) FROM students WHERE id = :u', ['u' => $sharedId]),
+    'класс унёс своего ученика — «оставленных в чужом классе» больше не бывает');
 
 /*
- * Связей было три: основной класс, удаляемый и второй. После сноса одного
- * класса остаётся ровно две — удалённый класс унёс свою связь каскадом, а
- * две чужие не тронул.
+ * Уборка. Ученик уходит каскадом вместе со своим классом, поэтому строка
+ * остаётся только если класс удалиться не удалось — тогда проверки выше уже
+ * упали, но база обязана остаться чистой для следующих наборов.
  */
-$t->equals(2, (int) $db->value('SELECT COUNT(*) FROM class_students WHERE student_id = :u', ['u' => $sharedId]),
-    'связи с оставшимися классами целы');
-
-// Уборка класса, созданного для проверки.
-$db->run('DELETE FROM classes WHERE id = :id', ['id' => $secondClassId]);
-$db->run('DELETE FROM users WHERE id = :id', ['id' => $sharedId]);
+$db->run('DELETE FROM students WHERE id = :id', ['id' => $sharedId]);
 
 /*
  * Проверка ввода в формах панели.

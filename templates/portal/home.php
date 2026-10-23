@@ -23,7 +23,7 @@ declare(strict_types=1);
  * @var list<array<string,mixed>> $classes
  * @var array<string,mixed>|null $users
  * @var string $schoolName
- * @var \MyEdu\Auth\User $currentUser
+ * @var \MyEdu\Auth\User|\MyEdu\Auth\Student $currentUser
  */
 ?>
 

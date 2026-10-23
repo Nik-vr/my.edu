@@ -284,22 +284,6 @@ final class UserController
             return $this->redirect('panel/users');
         }
 
-        /*
-         * Ученику роль не выдаётся и не снимается.
-         *
-         * Форма умела поставить ученику любую назначаемую роль: роль «Учитель»
-         * проходила проверку списка, и человек одной кнопкой делал из ученика
-         * администратора — со всеми правами и доступом к списку сотрудников.
-         *
-         * Отказ здесь тот же, что и в блокировке: ученики живут в своём классе,
-         * а правами человека, заведённого как ученик, управляет не форма ролей.
-         */
-        if ($this->isStudent($target)) {
-            $this->session->set('flash_error', 'Учениками управляют в списке класса');
-
-            return $this->redirect('panel/users');
-        }
-
         // Владельца нельзя оставить без роли администратора: иначе у сайта
         // останется человек с правами, но без входа в панель управления.
         if ((int) $target['is_owner'] === 1 && $role !== Role::ADMIN) {
@@ -335,10 +319,6 @@ final class UserController
             throw new HttpException(404, 'Пользователь не найден');
         }
 
-        if ($this->isStudent($target)) {
-            throw new HttpException(404, 'Пользователь не найден');
-        }
-
         $roles = $this->users->rolesOf($id);
 
         return $this->render('panel/user_edit', [
@@ -371,7 +351,7 @@ public function saveAvatar(Request $request, array $params): Response
     $id = $this->intParam($params, 'id');
     $target = $this->users->findRow($id);
 
-    if ($target === null || $this->isStudent($target)) {
+    if ($target === null) {
         throw new HttpException(404, 'Пользователь не найден');
     }
 
@@ -431,7 +411,7 @@ public function saveAvatar(Request $request, array $params): Response
         $id = $this->intParam($params, 'id');
         $target = $this->users->findRow($id);
 
-        if ($target === null || $this->isStudent($target)) {
+        if ($target === null) {
             $this->session->set('flash_error', 'Пользователь не найден');
 
             return $this->redirect('panel/users');
@@ -607,18 +587,6 @@ if ($email !== '') {
             return $this->redirect('panel/users');
         }
 
-        /*
-         * Учениками управляют в списках класса, а не здесь: edit() и
-         * saveProfile() ученикам отказывают, и список пользователей их не
-         * показывает. Этот один POST проверки не делал — и администратор мог
-         * заблокировать ученика по номеру, хотя нигде не мог его найти.
-         */
-        if ($this->isStudent($target)) {
-            $this->session->set('flash_error', 'Учениками управляют в списке класса');
-
-            return $this->redirect('panel/users');
-        }
-
         if ((int) $target['is_owner'] === 1 && $status === 'blocked') {
             $this->session->set('flash_error', 'Владельца сайта блокировать нельзя');
 
@@ -684,23 +652,5 @@ if ($email !== '') {
         }
 
         return $titles;
-    }
-
-    /**
-     * Ученик ли это.
-     *
-     * Признак — роль student, а не членство в классе: роль ставится при
-     * заведении и не слетает при переводе. Через findRow она уже загружена
-     * отдельным запросом, поэтому лишнего обращения к базе здесь нет.
-     *
-     * Ученики правятся в своём классе, и открывать им страницу сотрудника
-     * незачем: роль «Учитель» им всё равно не выдать, а форма с e-mail
-     * ввела бы в заблуждение — почты у ученика нет.
-     *
-     * @param array<string,mixed> $row
-     */
-    private function isStudent(array $row): bool
-    {
-        return in_array(Role::STUDENT, $this->users->rolesOf((int) $row['id']), true);
     }
 }

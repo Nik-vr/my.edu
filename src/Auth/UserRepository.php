@@ -32,8 +32,12 @@ final class UserRepository
     }
 
     /**
-     * Поиск по логину или e-mail: сотрудник входит тем же адресом,
-     * который указал при регистрации, ученик — выданным логином.
+     * Поиск сотрудника по логину или e-mail: сотрудник входит тем же адресом,
+     * который указал при регистрации.
+     *
+     * Ученик сюда не ищется: его логин живёт в таблице `students`, и вход
+     * у него отдельный. Общий поиск в обе таблицы делает невозможным
+     * различение того, чей id найден, — поэтому таблицы не смешиваются.
      *
      * Именованные параметры здесь разные, хотя значения одинаковые:
      * при ATTR_EMULATE_PREPARES = false один и тот же плейсхолдер
@@ -286,15 +290,12 @@ $this->db->transaction(function (Database $db) use ($userId, $role, $grantedBy):
     /**
      * Пользователи с их ролями — для страницы управления.
      *
-     * Учеников здесь нет: их заводят в классе, ими занимается завуч, у них
-     * своя страница и своя логика паролей. Показывать их рядом с сотрудниками
-     * значило бы смешать два разных списка в один, а администратору — решить,
-     * что он вправе выдать роль «Учитель» человеку из класса.
-     *
-     * Признак ученика — роль student, а не членство в классе: роль ставится
-     * при заведении и не слетает, если ученика перевели из класса в класс или
-     * выпустили. Членство в классе для этого не годится — вышедший из класса
-     * ученик вернулся бы в список сотрудников.
+     * Учеников здесь нет уже потому, что их в таблице `users` больше не
+     * осталось: они живут в своей таблице `students`, их заводят в классе,
+     * ими занимается завуч, у них своя страница и своя логика паролей.
+     * Показывать их рядом с сотрудниками значило бы смешать два разных
+     * списка в один, а администратору — решить, что он вправе выдать роль
+     * «Учитель» человеку из класса.
      *
      * @return list<array<string,mixed>>
      */
@@ -306,7 +307,6 @@ $this->db->transaction(function (Database $db) use ($userId, $role, $grantedBy):
           LEFT JOIN user_roles ur ON ur.user_id = u.id
           LEFT JOIN roles r ON r.code = ur.role_code
               GROUP BY u.id
-              HAVING SUM(ur.role_code = 'student') = 0
            ORDER BY u.full_name"
         );
 
@@ -349,16 +349,12 @@ $this->db->transaction(function (Database $db) use ($userId, $role, $grantedBy):
         $recent = 'u.last_login_at >= DATE_SUB(NOW(), INTERVAL 1 YEAR)';
 
         /*
-         * Ученики отсеиваются подзапросом, а не HAVING.
-         *
-         * Запрос сворачивает всё в одну строку, GROUP BY здесь нет, и HAVING
-         * применялся бы к сумме по всем пользователям сразу: достаточно было бы
-         * одного ученика, чтобы строка исчезла целиком и сводка показала нули
-         * везде.
-         *
          * COUNT(DISTINCT ...) защищает сводку от старых записей, где один
          * сотрудник был связан с несколькими ролями и иначе попал бы в счётчик
          * более одного раза.
+         *
+         * Учеников отсекать больше не нужно: они ушли в свою таблицу
+         * `students`, и `users` целиком состоит из сотрудников.
          */
         $row = $this->db->one(
             "SELECT
@@ -370,8 +366,7 @@ $this->db->transaction(function (Database $db) use ($userId, $role, $grantedBy):
                 COUNT(DISTINCT CASE WHEN ur.role_code = 'head_teacher' AND {$recent} THEN u.id END) AS head_teachers_active,
                 COUNT(DISTINCT CASE WHEN ur.role_code IS NULL THEN u.id END) AS without_role
                FROM users u
-          LEFT JOIN user_roles ur ON ur.user_id = u.id
-              WHERE u.id NOT IN (SELECT ur2.user_id FROM user_roles ur2 WHERE ur2.role_code = 'student')"
+          LEFT JOIN user_roles ur ON ur.user_id = u.id"
         ) ?? [];
 
         $int = static fn (string $key): int => (int) ($row[$key] ?? 0);
@@ -388,7 +383,7 @@ $this->db->transaction(function (Database $db) use ($userId, $role, $grantedBy):
     }
 
     /**
-     * Пользователи, которым можно назначить роль, кроме учеников.
+     * Сотрудники, которым можно назначить роль.
      *
      * @return list<array<string,mixed>>
      */

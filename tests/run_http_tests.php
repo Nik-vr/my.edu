@@ -37,7 +37,6 @@ $autoloader->register();
 require_once $rootDir . '/tests/support/TestKit.php';
 
 use MyEdu\Auth\Role;
-use MyEdu\Auth\UserRepository;
 use MyEdu\Core\App;
 use MyEdu\Core\Config;
 use MyEdu\Core\Database;
@@ -88,8 +87,14 @@ if (getenv('MYEDU_DB_NAME') === false || getenv('MYEDU_DB_NAME') === '') {
 
 $baseUrl = rtrim($argv[1] ?? 'http://127.0.0.1:8098', '/');
 
-/** Логин и пароль тестового ученика. */
-$studentEmail = 'uchebka@example.edu';
+/**
+ * Логин и пароль тестового ученика.
+ *
+ * Логин в той форме, в какой его выдаёт завуч: кириллическая буква плюс
+ * цифры. Почтового адреса у ученика нет — он живёт в таблице `students`,
+ * входит по логину через свою форму и адреса в записи не хранит.
+ */
+$studentLogin = 'П2025';
 $studentPassword = 'uchebka2025';
 
 /**
@@ -379,8 +384,10 @@ $client = new Client($baseUrl);
 // ------------------------------------------------------------------ ученик
 
 /*
- * Прохождение теста доступно только вошедшему ученику, поэтому создаём
- * собственного ученика с ролью student и входим под ним.
+ * Прохождение работы доступно только вошедшему ученику, поэтому заводим
+ * собственного ученика и входим под ним. Ученик живёт в отдельной таблице
+ * `students`: у него нет ни почты, ни ролей, а вход у него свой —
+ * `/student/login`.
  */
 $t->group('Вход ученика');
 
@@ -389,38 +396,19 @@ $app = App::boot($rootDir);
 $db = $app->get(Database::class);
 
 /*
- * Набор перезаписывает пароль существующего пользователя (ниже) и правит
- * состояние плагина, поэтому ему нужна та же страховка, что и чистящим
- * наборам. Раньше проверки здесь не было, и ручной запуск этого файла без
- * MYEDU_DB_NAME переписал бы пароль в рабочей базе.
+ * Набор перезаписывает пароль существующего ученика (makeStudent ниже
+ * идемпотентен) и правит состояние плагина, поэтому ему нужна та же
+ * страховка, что и чистящим наборам. Раньше проверки здесь не было, и ручной
+ * запуск этого файла без MYEDU_DB_NAME переписал бы пароль в рабочей базе.
  */
 assertTestDatabase($db);
 
-$users = new UserRepository($db);
-
-$studentRow = $users->findRowByIdentifier($studentEmail);
-
-if ($studentRow === null) {
-    $users->create([
-        'login'          => $studentEmail,
-        'email'          => $studentEmail,
-        'password_hash'  => password_hash($studentPassword, PASSWORD_DEFAULT),
-        'full_name'      => 'Петров Иван',
-        'is_owner'       => 0,
-        'status'         => 'active',
-        'email_verified_at' => date('Y-m-d H:i:s'),
-    ]);
-
-    $studentRow = $users->findRowByIdentifier($studentEmail);
-    $users->setRole((int) $studentRow['id'], Role::STUDENT);
-} else {
-    $db->run(
-        "UPDATE users SET password_hash = :hash, status = 'active', email_verified_at = NOW() WHERE id = :id",
-        ['hash' => password_hash($studentPassword, PASSWORD_DEFAULT), 'id' => (int) $studentRow['id']]
-    );
-
-    $users->setRole((int) $studentRow['id'], Role::STUDENT);
-}
+/*
+ * Хелпер заводит ученика ровно так, как это делает панель класса: логин,
+ * хеш пароля, ФИО и класс. Класс не задан — ученик вне класса, и работа
+ * выдаётся ему ниже лично, а не через класс.
+ */
+$studentId = makeStudent($db, 'Петров Иван', $studentLogin, $studentPassword);
 
 /*
  * Демо-работа выдаётся ученику лично.
@@ -436,8 +424,6 @@ $demoWorkId = (int) ($db->value('SELECT id FROM assignments WHERE title = :t', [
 $t->is($demoWorkId > 0, 'демо-работа создана');
 
 if ($demoWorkId > 0) {
-    $studentId = (int) $studentRow['id'];
-
     $alreadyIssued = (int) $db->value(
         'SELECT COUNT(*)
            FROM assignment_issue_students s
@@ -476,15 +462,21 @@ $guestTestPage = $guestClient->get('/tests/1');
 $t->is($guestTestPage['status'] === 302 && str_contains($guestTestPage['location'], '/login'),
     'гость не может открыть тест');
 
-$loginPage = $client->get('/login');
-$login = $client->post('/login', [
+/*
+ * Вход ученика — его собственная форма `/student/login`, а не общий `/login`:
+ * общий вход ищет только сотрудников, и ученик с верным паролем получал бы
+ * оттуда «неверный логин или пароль». Поля формы те же, что у сотрудников:
+ * `identifier` и `password`.
+ */
+$loginPage = $client->get('/student/login');
+$login = $client->post('/student/login', [
     '_token'     => $field($loginPage['body'], '_token') ?? '',
-    'identifier' => $studentEmail,
+    'identifier' => $studentLogin,
     'password'   => $studentPassword,
 ]);
 
 $t->is($login['status'] === 302, 'ученик вошёл в систему');
-$t->is($client->get('/portal')['status'] === 200, 'личный кабинет ученика открыт');
+$t->is($client->get('/portal')['status'] === 200, 'адрес /portal открыт вошедшему ученику');
 
 // ------------------------------------------------------------------ доступность
 
@@ -1064,7 +1056,9 @@ $t->group('Разметка не разъезжается');
  * тега и слипшийся с закрывающей кавычкой другого атрибута.
  */
 $sheets = [
-    '/portal'         => 'личный кабинет ученика',
+    // Ученику /portal отдаёт страницу входа ученика: панель и кабинет
+    // сотрудника для него закрыты, и контроллер рисует входную форму.
+    '/portal'         => 'страница /portal для ученика',
     '/work/' . (int) $attemptId . '/result?t=' . $attemptToken => 'результат работы',
 ];
 

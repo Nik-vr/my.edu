@@ -351,7 +351,6 @@ final class AttemptReviewController
             $taskData,
             (int) $item['position'],
             $this->itemCount((int) $item['assignment_id']),
-            $this->auth->user(),
             $this->view,
             $this->csrf,
             $this->auth

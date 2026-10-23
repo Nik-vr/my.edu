@@ -109,6 +109,10 @@ final class RatingRepository
     /**
      * Средние по ученикам одного класса.
      *
+     * ФИО берётся из `students`: попытка ссылается на ученика по student_id,
+     * а самопроверка учителя эту колонку оставляет пустой и в выборку не
+     * попадает — в рейтинге её нет по построению, а не по совпадению состава.
+     *
      * @return list<array{student_id:int,full_name:string,works:int,percent:?float,grade:?float}>
      */
     public function studentsOfClass(int $classId, RatingPeriod $period, int $authorId = 0): array
@@ -121,7 +125,7 @@ final class RatingRepository
                        AVG(at.percent) AS avg_percent,
                        AVG(at.grade) AS avg_grade
                 ' . $this->from()
-                . ' JOIN users u ON u.id = at.student_id
+                . ' JOIN students u ON u.id = at.student_id
                 ' . $where . '
                 GROUP BY at.student_id, u.full_name
                 ORDER BY avg_percent DESC, u.full_name';

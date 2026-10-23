@@ -14,8 +14,9 @@ use MyEdu\Auth\VkUrl;
 use MyEdu\Core\App;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
-    use MyEdu\Core\ImageUpload;
-    use MyEdu\Core\Request;
+use MyEdu\Core\HttpException;
+use MyEdu\Core\ImageUpload;
+use MyEdu\Core\Request;
 use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\View;
@@ -253,14 +254,20 @@ public function showLogin(Request $request): Response
     /**
      * Вход ученика.
      *
-     * Отличается от общего только формой, куда возвращается при ошибке, и
-     * тем, что счётчик перебора адресуется самой этой форме.
+     * Отдельный метод сервиса, а не общий login(): ученик живёт в своей
+     * таблице `students`, у него нет ни почты, ни подтверждения адреса, ни
+     * ролей. Общий вход искал бы его среди сотрудников и молча не находил,
+     * и человек читал бы «неверный логин или пароль» при верном пароле.
+     *
+     * Имя поля осталось `identifier`, чтобы не менять шаблон: у формы одна
+     * строка ввода, и называть её «логином» в разметке значило бы подсказывать
+     * формат логина постороннему.
      */
     public function studentLogin(Request $request): Response
     {
         $this->requireToken($request, $this->csrf);
 
-        $result = $this->service->login(
+        $result = $this->service->loginStudent(
             (string) $request->postParam('identifier', ''),
             (string) $request->postParam('password', ''),
             $request->ip()
@@ -434,8 +441,46 @@ public function showReset(Request $request): Response
         return $this->redirect('auth/reset');
     }
 
+    /**
+     * Правка своих данных — только для сотрудника.
+     *
+     * Ученик живёт в своей таблице, и формы здесь писали бы в `users`, где его
+     * строки больше нет. Без проверки молчаливый обновилось бы ноль строк, а
+     * человек прочитал бы «Данные сохранённые» — сообщение о том, чего не
+     * произошло. Отказ честнее: страница ученика это знает и форм не показывает.
+     */
+    private function requireStaffProfile(): void
+    {
+        if ($this->auth->student() !== null) {
+            throw new HttpException(403, 'Эта страница для сотрудников');
+        }
+    }
+
     public function profile(Request $request): Response
     {
+        /*
+         * Ученик — не сотрудник, и сотрудническая карточка ему не годится.
+         *
+         * Раньше он был строкой `users`, и страница читала у него дату
+         * рождения, подтверждение адреса и аватар. После разделения таблиц этих
+         * сведений у него нет вовсе, и обращение к ним падало бы 500. Формы
+         * здесь же писали бы в `users` — таблицу, где его строки больше нет.
+         *
+         * Поэтому ученику показывается его собственная карточка. Ссылка «Мои
+         * данные» стоит на главной безусловно, и отвечать ей отказом значило
+         * бы вести человека на сломанную страницу.
+         */
+        $student = $this->auth->student();
+
+        if ($student !== null) {
+            return $this->render('auth/profile_student', [
+                'title'   => 'Мои данные',
+                'error'   => $this->session->pull('flash_error'),
+                'notice'  => $this->session->pull('flash_notice'),
+                'student' => $student,
+            ]);
+        }
+
         $row = $this->users->findRow((int) $this->auth->id());
 
         return $this->render('auth/profile', [
@@ -461,6 +506,7 @@ public function showReset(Request $request): Response
      */
     public function saveProfile(Request $request): Response
     {
+        $this->requireStaffProfile();
         $this->requireToken($request, $this->csrf);
 
         $last = trim((string) $request->postParam('last_name', ''));
@@ -571,6 +617,7 @@ public function showReset(Request $request): Response
      */
     public function saveAvatar(Request $request): Response
     {
+        $this->requireStaffProfile();
         $this->requireToken($request, $this->csrf);
 
         $userId = (int) $this->auth->id();
@@ -617,8 +664,8 @@ public function showReset(Request $request): Response
     }
 
     public function changePassword(Request $request): Response
-
     {
+        $this->requireStaffProfile();
         $this->requireToken($request, $this->csrf);
 
         $result = $this->service->changeOwnPassword(

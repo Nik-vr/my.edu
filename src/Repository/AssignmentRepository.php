@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MyEdu\Repository;
 
+use MyEdu\Auth\Actor;
 use MyEdu\Core\Database;
 use MyEdu\Plugin\TaskRef;
 
@@ -474,7 +475,7 @@ final class AssignmentRepository
                     t.started_at, t.finished_at, t.manual
                FROM assignment_issue_students s
                JOIN assignment_issues i ON i.id = s.issue_id
-               JOIN users u             ON u.id = s.student_id
+               JOIN students u          ON u.id = s.student_id
            LEFT JOIN classes c          ON c.id = s.class_id
            LEFT JOIN assignment_attempts t
                   ON t.id = (
@@ -1295,37 +1296,55 @@ final class AssignmentRepository
         );
     }
 
-    /** Текущая незавершённая попытка ученика по работе. */
-    public function findActiveAttempt(int $assignmentId, int $studentId): ?array
+    /**
+     * Текущая незавершённая попытка — по действующему лицу.
+     *
+     * Условие собирается по колонке, заполняемой этим лицом: ученик пишется в
+     * student_id, сотрудник, начавший работу сам, — в staff_id. Общей колонки
+     * для них нет: номера в двух таблицах независимы.
+     */
+    public function findActiveAttempt(int $assignmentId, Actor $actor): ?array
     {
+        [$where, $params] = $this->actorCondition('t', $actor);
+
         return $this->db->one(
-            "SELECT * FROM assignment_attempts
-              WHERE assignment_id = :id AND student_id = :user AND status = 'in_progress'
-           ORDER BY id DESC
+            "SELECT * FROM assignment_attempts t
+              WHERE t.assignment_id = :id AND {$where} AND t.status = 'in_progress'
+           ORDER BY t.id DESC
               LIMIT 1",
-            ['id' => $assignmentId, 'user' => $studentId]
+            ['id' => $assignmentId] + $params
         );
     }
 
-    /** Последняя попытка ученика по работе — чтобы не плодить их. */
-    public function findLastAttempt(int $assignmentId, int $studentId): ?array
+    /** Последняя попытка — чтобы не плодить их. */
+    public function findLastAttempt(int $assignmentId, Actor $actor): ?array
     {
+        [$where, $params] = $this->actorCondition('t', $actor);
+
         return $this->db->one(
-            'SELECT * FROM assignment_attempts
-              WHERE assignment_id = :id AND student_id = :user
-           ORDER BY attempt_no DESC
-              LIMIT 1',
-            ['id' => $assignmentId, 'user' => $studentId]
+            "SELECT * FROM assignment_attempts t
+              WHERE t.assignment_id = :id AND {$where}
+           ORDER BY t.attempt_no DESC
+              LIMIT 1",
+            ['id' => $assignmentId] + $params
         );
     }
 
-    /** @return list<array<string,mixed>> */
+    /**
+     * Все попытки по работе — для автора.
+     *
+     * Соединение идёт со `students`, а не с `users`: попытки учеников живут в
+     * своей таблице. Самопроверки учителей в этот список не попадают — они не
+     * результат ученика, и автору работы показывать их незачем.
+     *
+     * @return list<array<string,mixed>>
+     */
     public function attemptsForAssignment(int $assignmentId): array
     {
         return $this->db->all(
             'SELECT t.*, u.full_name
                FROM assignment_attempts t
-               JOIN users u ON u.id = t.student_id
+               JOIN students u ON u.id = t.student_id
               WHERE t.assignment_id = :id
            ORDER BY t.attempt_no DESC, u.full_name',
             ['id' => $assignmentId]
@@ -1341,6 +1360,10 @@ final class AssignmentRepository
      *
      * manual = 1 ставится, когда хотя бы одна позиция вернула needsReview:
      * автопроверки у плагина нет, и итог без учителя посчитать нельзя.
+     *
+     * Считаются только ученические попытки: самопроверка учителя на своей же
+     * работе — не чужая работа, ждать проверки она не может, и в счётчик
+     * попадать не должна.
      */
     public function countPendingReview(int $teacherId): int
     {
@@ -1348,7 +1371,9 @@ final class AssignmentRepository
             "SELECT COUNT(*)
                FROM assignment_attempts t
                JOIN assignments a ON a.id = t.assignment_id
-              WHERE t.manual = 1 AND t.status = 'finished' AND a.author_id = :teacher",
+              WHERE t.manual = 1 AND t.status = 'finished'
+                AND t.student_id IS NOT NULL
+                AND a.author_id = :teacher",
             ['teacher' => $teacherId]
         );
     }
@@ -1374,6 +1399,13 @@ final class AssignmentRepository
     {
         $where = $authorId > 0 ? ' AND a.author_id = :review_author' : '';
 
+        /*
+         * Соединение идёт по student_id, и у самопроверки учителя эта колонка
+         * пуста: его попытка — не результат ученика, и в счётчик проверки она
+         * попадать не должна. Ровно того же результата можно было бы добиться
+         * добавлением t.student_id IS NOT NULL, но при JOIN это избыточно: при
+         * NULL условие сопоставления не выполнится.
+         */
         return (int) $this->db->value(
             "SELECT COUNT(DISTINCT i.id)
                FROM assignment_issues i
@@ -1398,19 +1430,19 @@ final class AssignmentRepository
      *
      * @return array{ok:bool,message:string,attempt:array<string,mixed>|null}
      */
-    public function startAttempt(int $assignmentId, int $studentId, string $token, bool $mayRepeat = false): array
+    public function startAttempt(int $assignmentId, Actor $actor, string $token, bool $mayRepeat = false): array
     {
-        return $this->db->transaction(function () use ($assignmentId, $studentId, $token, $mayRepeat): array {
-            $active = $this->findActiveAttempt($assignmentId, $studentId);
+        return $this->db->transaction(function () use ($assignmentId, $actor, $token, $mayRepeat): array {
+            $active = $this->findActiveAttempt($assignmentId, $actor);
 
             if ($active !== null) {
                 return ['ok' => false, 'message' => 'Попытка уже начата', 'attempt' => $active];
             }
 
-            $last = $this->findLastAttempt($assignmentId, $studentId);
+            $last = $this->findLastAttempt($assignmentId, $actor);
             $attemptNo = $last === null ? 1 : ((int) $last['attempt_no'] + 1);
 
-            $limit = $this->attemptLimit($assignmentId, $studentId);
+            $limit = $this->attemptLimit($assignmentId, $actor);
 
             if (!$mayRepeat && $limit !== null && $attemptNo > $limit) {
                 return [
@@ -1421,9 +1453,16 @@ final class AssignmentRepository
             }
 
             try {
+                /*
+                 * Заполняется ровно одна колонка: ученик пишется в student_id,
+                 * сотрудник — в staff_id. Это держит репозиторий, а не база —
+                 * CHECK-ограничение здесь не годится, потому что снимок схемы
+                 * его не разбирает и свежая установка разошлась бы с файлом.
+                 */
                 $id = $this->db->insert('assignment_attempts', [
                     'assignment_id' => $assignmentId,
-                    'student_id'    => $studentId,
+                    'student_id'    => $actor->studentId,
+                    'staff_id'      => $actor->staffId,
                     'token'         => $token,
                     'attempt_no'    => $attemptNo,
                     'status'        => self::ATTEMPT_IN_PROGRESS,
@@ -1432,11 +1471,9 @@ final class AssignmentRepository
             } catch (\PDOException $e) {
                 /*
                  * Гонка двух одновременных POST: оба успели прочитать один и тот
-                 * же последний номер попытки. Уникальный индекс
-                 * uq_attempt_number (assignment_id, student_id, attempt_no)
-                 * не даёт записать лишнее, но нарушение приходит исключением,
-                 * и без перехвата ученик увидел бы 500 вместо понятного
-                 * «уже начато».
+                 * же последний номер попытки. Уникальный индекс не даёт записать
+                 * лишнее, но нарушение приходит исключением, и без перехвата
+                 * человек увидел бы 500 вместо понятного «уже начато».
                  *
                  * Важно: откатывается вся транзакция, поэтому уже вставленная
                  * первым запросом попытка остаётся в силе — её и показываем.
@@ -1448,7 +1485,7 @@ final class AssignmentRepository
                 return [
                     'ok'      => false,
                     'message' => 'Попытка уже начата',
-                    'attempt' => $this->findActiveAttempt($assignmentId, $studentId) ?? $last,
+                    'attempt' => $this->findActiveAttempt($assignmentId, $actor) ?? $last,
                 ];
             }
 
@@ -1458,6 +1495,22 @@ final class AssignmentRepository
                 'attempt' => $this->findAttempt($id),
             ];
         });
+    }
+
+    /**
+     * Условие выборки попыток по действующему лицу.
+     *
+     * Возвращает фрагмент WHERE и его параметры. Ученик сопоставляется с
+     * student_id, сотрудник — с staff_id: в каждой попытке заполнена ровно
+     * одна из колонок, и сверх неё сопоставлять нечего.
+     *
+     * @return array{0:string,1:array<string,mixed>}
+     */
+    private function actorCondition(string $alias, Actor $actor): array
+    {
+        return $actor->isStudent()
+            ? ["{$alias}.student_id = :actor_student", ['actor_student' => $actor->studentId]]
+            : ["{$alias}.staff_id = :actor_staff", ['actor_staff' => $actor->staffId]];
     }
 
     /**
@@ -1478,37 +1531,42 @@ final class AssignmentRepository
     }
 
     /**
-     * Сколько попыток разрешено этой работе.
+     * Сколько попыток разрешено по этой работе.
      *
-     * null означает «без ограничения»: в таблице это 0, а возвращать 0
-     * заставило бы вызывающего сравнивать с нулём в двух местах.
+     * null — без ограничения. Лимит берётся из выдачи: работа может быть выдана
+     * двум классам по-разному, и ограничение у неё своей быть не может.
+     *
+     * Сотрудник лимитом не ограничен вовсе: он начинает работу сам, чтобы её
+     * проверить, и ограничивать его числом, придуманным для учеников, нельзя —
+     * иначе завуч не смог бы перепроверить работу после правки. Поэтому для
+     * сотрудника здесь всегда null, и выдача даже не спрашивается.
      */
-    /**
- * Сколько попыток разрешено ученику по этой работе.
- *
- * null — без ограничения. Лимит берётся из выдачи: работа может быть выдана
- * двум классам по-разному, и ограничение у неё своей быть не может.
- */
-    public function attemptLimit(int $assignmentId, int $studentId): ?int
+    public function attemptLimit(int $assignmentId, Actor $actor): ?int
     {
-    $issue = $this->findIssueForStudent($assignmentId, $studentId);
-    $value = (int) ($issue['max_attempts'] ?? 0);
+        if (!$actor->isStudent()) {
+            return null;
+        }
 
-    return $value > 0 ? $value : null;
+        $issue = $this->findIssueForStudent($assignmentId, (int) $actor->studentId);
+        $value = (int) ($issue['max_attempts'] ?? 0);
+
+        return $value > 0 ? $value : null;
     }
 
     /**
- * Выдача, по которой ученик получил работу.
- *
- * Именно она решает, сколько попыток разрешено: лимит живёт в выдаче, а не в
- * работе. Одна работа может быть выдана дважды и с разными числами попыток,
- * поэтому берётся последняя подходящая выдача — та, что действует сейчас.
- * Если выдач несколько, ученик видит условия самой свежей: она и есть его
- * текущая договорённость с учителем.
- *
- * null — выдачи нет. В этом случае попыток не ограничено, а проверка видимости
- * работы всё равно не пустит ученика к попытке.
- */
+     * Выдача, по которой ученик получил работу.
+     *
+     * Именно она решает, сколько попыток разрешено: лимит живёт в выдаче, а не в
+     * работе. Одна работа может быть выдана дважды и с разными числами попыток,
+     * поэтому берётся последняя подходящая выдача — та, что действует сейчас.
+     * Если выдач несколько, ученик видит условия самой свежей: она и есть его
+     * текущая договорённость с учителем.
+     *
+     * Ссылка идёт на students: выдача всегда ученическая, у сотрудника её нет.
+     *
+     * null — выдачи нет. В этом случае попыток не ограничено, а проверка видимости
+     * работы всё равно не пустит ученика к попытке.
+     */
     public function findIssueForStudent(int $assignmentId, int $studentId): ?array
     {
     return $this->db->one(
@@ -1524,12 +1582,19 @@ final class AssignmentRepository
     );
     }
 
-    /** Сколько попыток у ученика осталось. */
-    public function countAttempts(int $assignmentId, int $studentId): int
+    /**
+     * Сколько попыток уже сделано — по действующему лицу.
+     *
+     * Считается по той же колонке, в которую попытка записывается, поэтому
+     * самопроверки учителя не смешиваются с работами учеников.
+     */
+    public function countAttempts(int $assignmentId, Actor $actor): int
     {
+        [$where, $params] = $this->actorCondition('t', $actor);
+
         return (int) $this->db->value(
-            'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :id AND student_id = :user',
-            ['id' => $assignmentId, 'user' => $studentId]
+            "SELECT COUNT(*) FROM assignment_attempts t WHERE t.assignment_id = :id AND {$where}",
+            ['id' => $assignmentId] + $params
         );
     }
 
@@ -1631,6 +1696,11 @@ final class AssignmentRepository
      * показал бы ему результаты чужих классов, к которым у него нет доступа.
      * Та же граница действует на странице работы и на проверке попыток.
      *
+     * Счётчики «сдано» и «ждут проверки» считают только ученические попытки
+     * (student_id заполнен): рядом с ними стоит «выдано», которое считает
+     * учеников, и самопроверка учителя завышала бы первое число, делая его
+     * больше второго.
+     *
      * @param int $authorId автор работ или 0, если видны все
      * @return list<array<string,mixed>> строки «класс + работа»
      */
@@ -1650,12 +1720,14 @@ final class AssignmentRepository
                     (SELECT COUNT(*)
                        FROM assignment_attempts t
                       WHERE t.assignment_id = a.id
-                        AND t.status = 'finished') AS finished_count,
+                        AND t.status = 'finished'
+                        AND t.student_id IS NOT NULL) AS finished_count,
                     (SELECT COUNT(*)
                        FROM assignment_attempts t
                       WHERE t.assignment_id = a.id
                         AND t.manual = 1
-                        AND t.status = 'finished') AS review_count
+                        AND t.status = 'finished'
+                        AND t.student_id IS NOT NULL) AS review_count
                FROM assignment_issue_students s
                JOIN assignment_issues i ON i.id = s.issue_id
                JOIN assignments a ON a.id = i.assignment_id
@@ -1695,6 +1767,10 @@ final class AssignmentRepository
      * Срок выдачи нужен для отметки опоздания: работа, сданная после срока,
      * помечается в таблице отдельно.
      *
+     * Список идёт по `students`: соединение по ученической колонке попыток,
+     * поэтому самопроверка учителя в журнал не попадает — его попытка пишется
+     * в другую колонку и здесь просто не сопоставляется.
+     *
      * @return list<array<string,mixed>>
      */
     public function journalWorkStudents(int $assignmentId, int $classId): array
@@ -1706,7 +1782,7 @@ final class AssignmentRepository
                     t.penalty_comment, t.started_at, t.finished_at, t.manual
                FROM assignment_issue_students s
                JOIN assignment_issues i ON i.id = s.issue_id
-               JOIN users u ON u.id = s.student_id
+               JOIN students u ON u.id = s.student_id
           LEFT JOIN assignment_attempts t
                  ON t.student_id = u.id
                 AND t.assignment_id = :assignment

@@ -45,6 +45,7 @@ final class AuthService
     public function __construct(
         private readonly Database $db,
         private readonly UserRepository $users,
+        private readonly StudentRepository $students,
         private readonly TokenRepository $tokens,
         private readonly Auth $auth,
         private readonly AuthMailer $mailer,
@@ -202,7 +203,11 @@ final class AuthService
 }
 
     /**
-     * Вход по логину или e-mail.
+     * Вход сотрудника по логину или e-mail.
+     *
+     * Ученик сюда не входит: у него своя таблица, свои ключи сессии и свой
+     * метод loginStudent(). Общего входа для них не было и не будет — иначе
+     * снова понадобилось бы различать, чей id лежит в сессии.
      *
      * @return array{ok:bool,error?:string,user?:User,needs_confirmation?:bool}
      */
@@ -294,6 +299,71 @@ if ((string) $row['status'] === 'pending') {
         $this->throttle?->registerSuccess($identifier, $ip);
 
         return ['ok' => true, 'user' => $user];
+    }
+
+    /**
+     * Вход ученика по выданному логину.
+     *
+     * Отдельный метод, а не ветка внутри login(): ученик живёт в своей
+     * таблице, у него нет почты, подтверждения адреса и ролей, а его логин —
+     * выданная завучем комбинация «буква и цифры», а не адрес.
+     *
+     * Ограничение перебора, одинаковое сообщение об ошибке и подменное
+     * хеширование сохраняются ровно те же, что у сотрудника: страница входа
+     * учителя и страница входа ученика — одинаково уязвимые места, и защита
+     * у них одна и та же, только на разных таблицах.
+     *
+     * @return array{ok:bool,error?:string,student?:Student}
+     */
+    public function loginStudent(string $login, string $password, string $ip = ''): array
+    {
+        $login = trim($login);
+        $ip = $ip === '' ? 'local' : $ip;
+
+        if ($this->throttle !== null) {
+            $wait = $this->throttle->waitSeconds($login, $ip);
+
+            if ($wait > 0) {
+                return [
+                    'ok'    => false,
+                    'error' => 'Слишком много попыток входа. Повторите через '
+                        . $this->formatWait($wait),
+                ];
+            }
+        }
+
+        $genericError = 'Неверный логин или пароль';
+        $row = $this->students->findByLogin($login);
+
+        if ($row === null) {
+            /*
+             * Считаем настоящий хеш, которого в базе нет: время ответа на
+             * несуществующий логин должно совпадать с временем ответа на
+             * существующий, иначе перебор логинов идёт по часам.
+             */
+            password_verify($password, self::TIMING_HASH);
+
+            $this->throttle?->registerFailure($login, $ip);
+
+            return ['ok' => false, 'error' => $genericError];
+        }
+
+        if (!$this->auth->checkPassword($password, (string) $row['password_hash'])) {
+            $this->throttle?->registerFailure($login, $ip);
+
+            return ['ok' => false, 'error' => $genericError];
+        }
+
+        /*
+         * findByLogin исключает заблокированных, поэтому отдельная проверка
+         * статуса здесь не нужна: заблокированный ученик не попадает в выборку
+         * и получает тот же ответ, что и человек с неверным логином.
+         */
+        $student = $this->students->hydrate($row);
+        $this->auth->loginStudent($student);
+        $this->throttle?->registerSuccess($login, $ip);
+
+        return ['ok' => true, 'student' => $student];
     }
 
     /**

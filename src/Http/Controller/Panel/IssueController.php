@@ -538,7 +538,15 @@ final class IssueController
         return $date !== false && $date->format('Y-m-d') === $value;
     }
 
-    /** @return list<array{student_id:int,full_name:string,class_id:int,class_name:string}> */
+    /**
+     * Ученики выбранных классов — для формы выдачи.
+     *
+     * Список идёт по таблице `students`: класс принадлежит ученику, поэтому
+     * отбор — это отбор по s.class_id. Таблица class_students упразднена.
+     *
+     * @param list<int> $classIds
+     * @return list<array{student_id:int,full_name:string,class_id:int,class_name:string}>
+     */
     private function studentsOfClasses(array $classIds): array
     {
         if ($classIds === []) {
@@ -552,13 +560,12 @@ final class IssueController
         }
 
         return $this->db->all(
-            'SELECT cs.student_id, u.full_name, cs.class_id, c.name AS class_name
-               FROM class_students cs
-               JOIN users u   ON u.id = cs.student_id
-               JOIN classes c ON c.id = cs.class_id
-              WHERE cs.class_id IN (:' . implode(', :', array_keys($placeholders)) . ')
-                AND u.status = \'active\'
-           ORDER BY c.name, u.full_name',
+            'SELECT s.id AS student_id, s.full_name, s.class_id, c.name AS class_name
+               FROM students s
+               JOIN classes c ON c.id = s.class_id
+              WHERE s.class_id IN (:' . implode(', :', array_keys($placeholders)) . ')
+                AND s.status = \'active\'
+           ORDER BY c.name, s.full_name',
             $placeholders
         );
     }

@@ -121,11 +121,21 @@ $existing = $this->students->findByName($fullName);
                 return $this->redirect('classes/' . $classId);
             }
 
+            /*
+             * Ученик состоит ровно в одном классе, поэтому «добавить» сюда
+             * означает перевести: прежнее классное списание снимается тем же
+             * запросом. Об этом и говорит замечание — иначе человек читал бы
+             * «добавлен», а его прежний класс потерял бы ученика молча.
+             */
+            $wasIn = $this->students->classNames((int) $existing['id']);
             $this->students->addToClass($classId, (int) $existing['id']);
 
             $this->session->set(
                 'flash_notice',
-                $fullName . ' уже был зарегистрирован — добавлен в класс ' . $class['name']
+                $wasIn === []
+                    ? $fullName . ' уже был зарегистрирован — добавлен в класс ' . $class['name']
+                    : $fullName . ' уже учился в классе ' . implode(', ', $wasIn)
+                        . ' — переведён в класс ' . $class['name']
             );
 
             return $this->redirect('classes/' . $classId);
@@ -400,10 +410,21 @@ $existing = $this->students->findByName($fullName);
             $mergeable = $this->students->findMergeableByName($fullName);
 
             if ($mergeable !== null) {
+                /*
+                 * Ученик состоит ровно в одном классе, поэтому «добавить в
+                 * этот» — это перевести из прежнего. Замечание называет класс,
+                 * из которого человек ушёл: импорт и раньше сообщал о пропуске,
+                 * и молчать о переводе значило бы потерять из виду, куда делся
+                 * прежний класс.
+                 */
+                $wasIn = $this->students->classNames((int) $mergeable['id']);
                 $this->students->addToClass($classId, (int) $mergeable['id']);
                 $skipped[] = [
                     'line'    => $row['line'],
-                    'message' => $fullName . ' — уже был заведён, добавлен в этот класс',
+                    'message' => $wasIn === []
+                        ? $fullName . ' — уже был заведён, добавлен в этот класс'
+                        : $fullName . ' — уже учился в классе ' . implode(', ', $wasIn)
+                            . ', переведён в этот',
                 ];
 
                 continue;

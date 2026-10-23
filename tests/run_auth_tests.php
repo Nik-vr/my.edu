@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 /**
- * Тесты регистрации, подтверждения адреса, ролей и разграничения прав.
+ * Тесты регистрации, подтверждения адреса, ролей, входа сотрудников и учеников.
  *
  * Запуск:
  *   powershell -File tools\dev-server.ps1 -ForTests
  *   php tests/run_auth_tests.php http://127.0.0.1:8098
  *
- * ВНИМАНИЕ: скрипт очищает пользователей, роли, классы и попытки —
+ * ВНИМАНИЕ: скрипт очищает сотрудников, учеников, роли, классы и попытки —
  * это база разработки, не рабочие данные.
  */
 
@@ -23,7 +23,9 @@ $autoloader = new MyEdu\Core\Autoloader();
 $autoloader->addNamespace('MyEdu\\', $rootDir . '/src');
 $autoloader->register();
 
+use MyEdu\Auth\Actor;
 use MyEdu\Auth\Role;
+use MyEdu\Auth\StudentRepository;
 use MyEdu\Auth\TokenRepository;
 use MyEdu\Auth\UserRepository;
 use MyEdu\Core\App;
@@ -48,13 +50,16 @@ assertTestDatabase($db);
 $t = new TestRunner();
 
 echo "База: " . $db->value('SELECT DATABASE()') . "\n";
-echo "\033[33mСкрипт очищает пользователей, роли, классы и попытки.\033[0m\n\n";
+echo "\033[33mСкрипт очищает сотрудников, учеников, роли, классы и попытки.\033[0m\n\n";
 
 // --------------------------------------------------------------- очистка
 
 /*
  * Очищаются таблицы регистрации, классов и попыток: они ссылаются на
- * пользователей, которых набор пересоздаёт с теми же идентификаторами.
+ * записи людей, которых набор пересоздаёт с теми же идентификаторами.
+ * Ученики живут в отдельной таблице `students`, и она чистится вместе
+ * с ними: попытки и выдачи ссылаются на учеников по внешнему ключу,
+ * и без очистки повторный запуск падал бы на каскадных связях.
  * Определения тестов, работ и их заданий остаются нетронутыми.
  *
  * Таблицы самостоятельных тестов (answers, attempts, grades) из списка убраны
@@ -64,8 +69,8 @@ echo "\033[33mСкрипт очищает пользователей, роли, 
  */
 foreach ([
     'assignment_item_results', 'assignment_attempts',
-    'class_students', 'class_teachers', 'class_subjects', 'auth_tokens',
-    'user_roles', 'classes', 'users',
+    'class_teachers', 'class_subjects', 'auth_tokens',
+    'user_roles', 'students', 'classes', 'users',
 ] as $table) {
     $db->run('DELETE FROM `' . $table . '`');
 }
@@ -73,6 +78,7 @@ foreach ([
 $db->run('ALTER TABLE users AUTO_INCREMENT = 1');
 
 $users = new UserRepository($db);
+$students = new StudentRepository($db);
 $tokens = new TokenRepository($db);
 
 // Права проверяются на опубликованной работе с опубликованным тестом.
@@ -897,7 +903,14 @@ $usersPage = $owner->get('/panel/users');
 $owner->post('/panel/users/role', [
     '_token'  => $owner->tokenFrom($usersPage) ?? '',
     'user_id' => (string) $secondId,
-    'role'    => Role::STUDENT,
+    /*
+     * Код кладётся строкой, а не через константу: роли «Ученик» в системе больше
+     * нет вовсе (ученики живут в своей таблице и ролей не имеют), и ссылка на
+     * неё стала бы ошибкой исполнения. Предмет проверки — ровно то, что форма
+     * не примет и такой код: если бы он остался в списке назначаемых, ученика
+     * можно было бы сделать администратором одним нажатием.
+     */
+    'role'    => 'student',
 ]);
 
 $t->is($users->rolesOf($secondId) === [Role::ADMIN], 'роль «Ученик» через форму не назначается');
@@ -1156,6 +1169,182 @@ $t->contains($tryLogin('nepravilno'), 'Неверный логин или пар
 
 $db->run('DELETE FROM login_throttle');
 
+// ------------------------------------------------------------------ раздельные двери
+
+/*
+ * Ученик и сотрудник живут в разных таблицах, и у каждого свой вход.
+ *
+ * Раньше это держалось на роли внутри общей таблицы: один и тот же метод
+ * входа искал человека по логину, а потом смотрел, кем он оказался. Сейчас
+ * дверей две — `/login` читает только `users`, `/student/login` — только
+ * `students`, — и проверяется именно это, а не разный адрес: с одним и тем же
+ * логином, записанным в обеих таблицах, по каждой двери должен проходить ровно
+ * тот, кто там записан. Иначе разделение было бы косметическим, а номер из
+ * одной таблицы продолжил бы работать в другой.
+ */
+$t->group('Вход ученика и сотрудника — раздельные двери');
+
+$db->run('DELETE FROM login_throttle');
+
+$doorStudentId = makeStudent($db, 'Дверей Ученик Ученикович', 'dveri-uch', 'uchenik-parol-2026');
+
+/*
+ * Сотрудник с тем же логином заводится прямой вставкой через репозиторий:
+ * проверка занятости (StudentRepository::loginTaken) смотрит обе таблицы и
+ * не пропустила бы дубль. Здесь же дубль — предмет проверки: так логин и
+ * оказывается записан в обеих таблицах сразу.
+ */
+$doorStaffId = $users->create([
+    'login'         => 'dveri-uch',
+    'email'         => null,
+    'password_hash' => $app->get(\MyEdu\Auth\Auth::class)->hashPassword('sotrudnik-parol-2026'),
+    'full_name'     => 'Дверей Сотрудник Сотрудникович',
+    'is_owner'      => 0,
+    'status'        => 'active',
+]);
+
+/**
+ * Одна попытка входа на своей двери и страница, на которой виден её итог.
+ *
+ * Тот же приём, что и в проверке общего сообщения выше: клиент по редиректу
+ * не идёт, а отказ живёт во флеше и показывается следующей отрисовкой.
+ */
+$throughDoor = static function (string $path, string $identifier, string $password) use ($baseUrl): string {
+    $client = new TestClient($baseUrl);
+
+    $client->post($path, [
+        '_token'     => $client->tokenFrom($client->get($path)) ?? '',
+        'identifier' => $identifier,
+        'password'   => $password,
+    ]);
+
+    return (string) $client->get($path)['body'];
+};
+
+// Ученик не проходит через общую дверь — ни по адресу, ни в самом сервисе.
+$staffDoor = new TestClient($baseUrl);
+$staffDoor->post('/login', [
+    '_token'     => $staffDoor->tokenFrom($staffDoor->get('/login')) ?? '',
+    'identifier' => 'dveri-uch',
+    'password'   => 'uchenik-parol-2026',
+]);
+
+$t->is($staffDoor->get('/portal')['status'] === 302,
+    'ученик не входит через общую форму — даже с верным паролем');
+
+$doorService = $app->get(\MyEdu\Auth\AuthService::class);
+$staffSide = $doorService->login('dveri-uch', 'uchenik-parol-2026');
+
+$t->is(($staffSide['ok'] ?? false) === false,
+    'AuthService::login() ученика не пускает: он смотрит только в сотрудников');
+$t->equals('Неверный логин или пароль', (string) ($staffSide['error'] ?? ''),
+    'и отвечает тем же отказом, что и на несуществующий логин');
+
+/*
+ * Своя дверь пускает, и после неё в сессии ровно ученик.
+ *
+ * Раздельность проверяется с обеих сторон сразу: сотрудником вошедший
+ * ученик получил бы доступ к чужим разделам, а сотруднический id в
+ * ученической сессии сломал бы и журнал, и начало работы.
+ */
+$doorAuth = $app->get(\MyEdu\Auth\Auth::class);
+$studentSide = $doorService->loginStudent('dveri-uch', 'uchenik-parol-2026');
+
+$t->is(($studentSide['ok'] ?? false) === true,
+    'свой вход проходит: AuthService::loginStudent() нашёл ученика в students');
+$t->is($doorAuth->user() === null,
+    'после входа ученика Auth::user() пуст — сотрудником он не стал');
+$t->equals($doorStudentId, $doorAuth->studentId(),
+    'а Auth::studentId() отдаёт ровно его номер');
+
+$doorAuth->logout();
+
+/*
+ * Обратная сторона той же двери: сотрудник, чей логин совпал с ученическим,
+ * на ученической двери не проходит. Если бы та читала общую таблицу, чужой
+ * пароль здесь сработал бы.
+ */
+$t->contains(
+    $throughDoor('/student/login', 'dveri-uch', 'sotrudnik-parol-2026'),
+    'Неверный логин или пароль',
+    'на ученической двери сотрудник со своим паролем не проходит'
+);
+
+$sharedLoginStaff = new TestClient($baseUrl);
+$sharedLoginStaff->post('/login', [
+    '_token'     => $sharedLoginStaff->tokenFrom($sharedLoginStaff->get('/login')) ?? '',
+    'identifier' => 'dveri-uch',
+    'password'   => 'sotrudnik-parol-2026',
+]);
+
+$t->is($sharedLoginStaff->get('/portal')['status'] === 200,
+    'а через свою дверь тот же логин проходит — каждая дверь читает свою таблицу');
+
+/*
+ * Заблокированный ученик обязан получить тот же отказ, что и любой
+ * неверный вход. Сообщение про блокировку здесь было бы подсказкой перебору:
+ * оно подтверждало бы, что логин настоящий, и оставалось бы подбирать пароль.
+ *
+ * Ограничение перебора между попытками гасится: иначе накопленные неудачи
+ * подменили бы отказ своим текстом, и проверялось бы уже не сообщение.
+ */
+$db->run('DELETE FROM login_throttle');
+
+$students->setStatus($doorStudentId, 'blocked');
+
+$t->contains(
+    $throughDoor('/student/login', 'dveri-uch', 'uchenik-parol-2026'),
+    'Неверный логин или пароль',
+    'заблокированный ученик видит обычный отказ, а не свою блокировку'
+);
+
+$students->setStatus($doorStudentId, 'active');
+
+$t->contains(
+    $throughDoor('/student/login', 'dveri-uch', 'ochen-ne-tot-parol'),
+    'Неверный логин или пароль',
+    'неверный пароль при снятом запрете отвечает тем же текстом'
+);
+$t->contains(
+    $throughDoor('/student/login', 'net-takogo-uch', 'ochen-ne-tot-parol'),
+    'Неверный логин или пароль',
+    'несуществующий логин отвечает тем же текстом — сообщение ни на что не указывает'
+);
+
+/*
+ * Смена пароля видна сразу: старый перестаёт пускать, новый начинает.
+ *
+ * Ученик меняет пароль не сам (у него нет страницы профиля для этого), а
+ * получает выданный завучем, — и важна ровно эта граница: до неё лист со
+ * старым паролем ещё действует, после неё становится недействительным.
+ */
+$db->run('DELETE FROM login_throttle');
+
+$students->changePassword($doorStudentId, 'novyj-parol-2026');
+
+$t->contains(
+    $throughDoor('/student/login', 'dveri-uch', 'uchenik-parol-2026'),
+    'Неверный логин или пароль',
+    'старый пароль после смены не пускает'
+);
+
+$doorAfterChange = new TestClient($baseUrl);
+$doorAfterChange->post('/student/login', [
+    '_token'     => $doorAfterChange->tokenFrom($doorAfterChange->get('/student/login')) ?? '',
+    'identifier' => 'dveri-uch',
+    'password'   => 'novyj-parol-2026',
+]);
+
+$t->is($doorAfterChange->get('/portal')['status'] === 200,
+    'новый пароль пускает');
+
+// Уборка: обе записи заведены только ради этой проверки.
+$db->run('DELETE FROM students WHERE id = :id', ['id' => $doorStudentId]);
+$db->run('DELETE FROM auth_tokens WHERE user_id = :id', ['id' => $doorStaffId]);
+$db->run('DELETE FROM user_roles WHERE user_id = :id', ['id' => $doorStaffId]);
+$db->run('DELETE FROM users WHERE id = :id', ['id' => $doorStaffId]);
+$db->run('DELETE FROM login_throttle');
+
 /*
  * Перебор, размазанный по чужим адресам.
  *
@@ -1354,18 +1543,13 @@ $db->run('DELETE FROM rate_limits');
 
 $t->group('Сколько раз можно пройти работу');
 
-$users->create([
-    'login'             => 'uchenik@example.edu',
-    'email'             => 'uchenik@example.edu',
-    'password_hash'     => password_hash('uchenik2025', PASSWORD_DEFAULT),
-    'full_name'         => 'Учеников Тест Тестович',
-    'is_owner'          => 0,
-    'status'            => 'active',
-    'email_verified_at' => date('Y-m-d H:i:s'),
-]);
-$studentRow = $users->findRowByIdentifier('uchenik@example.edu');
-$studentId = (int) $studentRow['id'];
-$users->setRole($studentId, Role::STUDENT);
+/*
+ * Ученик заводится в таблице `students`, а не в `users`: попытка сдачи
+ * привязывается к ученику по `student_id`, а у сотрудников — по `staff_id`.
+ * Раньше здесь создавался пользователь с ролью student; теперь это был бы
+ * сотрудник по модельному схему, и проверка лимита не имела бы ученика.
+ */
+$studentId = makeStudent($db, 'Учеников Тест Тестович', 'uchenik@example.edu', 'uchenik2025');
 
 if ($publishedWorkId === null) {
     $t->is(true, 'опубликованной работы с тестом нет — проверка числа попыток пропущена');
@@ -1385,33 +1569,52 @@ if ($publishedWorkId === null) {
     try {
         $db->run('UPDATE assignment_issues SET max_attempts = 1 WHERE assignment_id = :id', ['id' => $publishedWorkId]);
 
-        $logIn = static function (string $email, string $password): TestClient {
+        /*
+         * Форма входа своя у каждого: сотрудник входит на /login, ученик — на
+         * /student/login. Общая обёртка отличается только адресом, поля те же.
+         */
+        $logInThrough = static function (string $path, string $identifier, string $password): TestClient {
             $client = new TestClient($GLOBALS['baseUrl']);
 
-            $page = $client->get('/login');
-            $client->post('/login', [
+            $page = $client->get($path);
+            $client->post($path, [
                 '_token'     => $client->tokenFrom($page) ?? '',
-                'identifier' => $email,
+                'identifier' => $identifier,
                 'password'   => $password,
             ]);
 
             return $client;
         };
 
-        // Предыдущие попытки создаются как записи работы: именно они участвуют в её лимите.
-        $addFinishedAttempt = static function (int $assignmentId, int $userId) use ($db): void {
+        $logIn = static fn (string $email, string $password): TestClient
+            => $logInThrough('/login', $email, $password);
+        $logInStudent = static fn (string $login, string $password): TestClient
+            => $logInThrough('/student/login', $login, $password);
+
+        /*
+         * Предыдущие попытки создаются как записи работы: именно они участвуют
+         * в её лимите. Попытка принадлежит либо ученику (student_id), либо
+         * сотруднику (staff_id) — заполнена ровно одна колонка, как это делает
+         * репозиторий при начале работы.
+         */
+        $addFinishedAttempt = static function (int $assignmentId, Actor $actor) use ($db): void {
+            $studentId = $actor->isStudent() ? $actor->studentId : null;
+            $staffId = $actor->isStudent() ? null : $actor->staffId;
+
             $attemptNo = (int) $db->value(
                 'SELECT COALESCE(MAX(attempt_no), 0) + 1 FROM assignment_attempts
-                  WHERE assignment_id = :assignment AND student_id = :student',
-                ['assignment' => $assignmentId, 'student' => $userId]
+                  WHERE assignment_id = :assignment
+                    AND student_id <=> :student AND staff_id <=> :staff',
+                ['assignment' => $assignmentId, 'student' => $studentId, 'staff' => $staffId]
             );
             $db->run(
                 "INSERT INTO assignment_attempts
-                    (assignment_id, student_id, token, status, attempt_no, started_at, finished_at)
-                 VALUES (:assignment, :student, :token, 'finished', :number, NOW(), NOW())",
+                    (assignment_id, student_id, staff_id, token, status, attempt_no, started_at, finished_at)
+                 VALUES (:assignment, :student, :staff, :token, 'finished', :number, NOW(), NOW())",
                 [
                     'assignment' => $assignmentId,
-                    'student'    => $userId,
+                    'student'    => $studentId,
+                    'staff'      => $staffId,
                     'token'      => bin2hex(random_bytes(32)),
                     'number'     => $attemptNo,
                 ]
@@ -1428,7 +1631,7 @@ if ($publishedWorkId === null) {
             ]);
         };
 
-        $addFinishedAttempt($publishedWorkId, $ownerId);
+        $addFinishedAttempt($publishedWorkId, Actor::ofStaff($ownerId));
         $retry = $logIn('owner@example.edu', 'parol12345');
         $startAgain = $startWork($retry, $workPath);
 
@@ -1438,14 +1641,14 @@ if ($publishedWorkId === null) {
         );
         $db->run(
             "UPDATE assignment_attempts SET status = 'finished', finished_at = NOW()
-              WHERE assignment_id = :assignment AND student_id = :student AND status = 'in_progress'",
-            ['assignment' => $publishedWorkId, 'student' => $ownerId]
+              WHERE assignment_id = :assignment AND staff_id = :staff AND status = 'in_progress'",
+            ['assignment' => $publishedWorkId, 'staff' => $ownerId]
         );
 
         // У этого пользователя ранее был назначен пароль novyparol99.
         $users->setRole($secondId, Role::HEAD_TEACHER);
         $headAgain = $logIn('teacher@example.edu', 'novyparol99');
-        $addFinishedAttempt($publishedWorkId, $secondId);
+        $addFinishedAttempt($publishedWorkId, Actor::ofStaff($secondId));
         $headStart = $startWork($headAgain, $workPath);
 
         $t->is(
@@ -1454,8 +1657,8 @@ if ($publishedWorkId === null) {
         );
         $db->run(
             "UPDATE assignment_attempts SET status = 'finished', finished_at = NOW()
-              WHERE assignment_id = :assignment AND student_id = :student AND status = 'in_progress'",
-            ['assignment' => $publishedWorkId, 'student' => $secondId]
+              WHERE assignment_id = :assignment AND staff_id = :staff AND status = 'in_progress'",
+            ['assignment' => $publishedWorkId, 'staff' => $secondId]
         );
 
         $users->setRole($secondId, Role::TEACHER);
@@ -1467,8 +1670,8 @@ if ($publishedWorkId === null) {
             'учитель проходит работу повторно'
         );
 
-        $addFinishedAttempt($publishedWorkId, $studentId);
-        $studentClient = $logIn('uchenik@example.edu', 'uchenik2025');
+        $addFinishedAttempt($publishedWorkId, Actor::ofStudent($studentId));
+        $studentClient = $logInStudent('uchenik@example.edu', 'uchenik2025');
         $studentPage = $studentClient->get($workPath);
         $blocked = $studentClient->post($workPath . '/start', [
             '_token' => $studentClient->tokenFrom($studentPage) ?? '',
@@ -1964,7 +2167,15 @@ $t->equals($beforeEmail, (string) $users->findRow($secondId)['email'],
 $t->is($owner->get('/panel/users/' . $studentId)['status'] === 404,
     'страница ученика в списке пользователей не открывается');
 
-$t->is($users->rolesOf($studentId) === [Role::STUDENT], 'проверяемый — ученик, а не сотрудник');
+/*
+ * 404 выше обязан значить «учеников здесь не водят», а не «такого номера нет
+ * вовсе»: запись существует — просто в своей таблице, и в списке сотрудников
+ * её нет ровно поэтому.
+ */
+$t->is($db->one('SELECT id FROM students WHERE id = :id', ['id' => $studentId]) !== null,
+    'проверяемый — живой ученик, а не выдуманный номер');
+$t->is($users->findRow($studentId) === null,
+    'проверяемый — ученик, а не сотрудник: его нет в списке сотрудников');
 
 // ------------------------------------------------------------------ смена адреса
 
@@ -2143,20 +2354,23 @@ $t->group('Ученики не считаются пользователями')
  * нет ни почты, ни ролей сотрудника, и список пользователей его не
  * показывает. Считать его ещё и в «пользователях» значило показать одних и
  * тех же людей дважды — «27 пользователей» рядом с «25 учеников».
+ *
+ * Раньше это держалось на подзапросе по роли прямо в условии выборки. С
+ * разделением таблиц ученик в `users` не заводится вовсе, и подзапрос стал бы
+ * пустым фильтром — считать можно напрямую. Существенной остаётся вторая
+ * сторона: один и тот же человек не должен числиться в обоих списках. Держится
+ * она на раздельности логинов — при заведении проверяются обе таблицы
+ * (StudentRepository::loginTaken), и пересечение обязано быть пустым.
  */
-$staffUsers = (int) $db->value(
-    "SELECT COUNT(*) FROM users u
-      WHERE NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role_code = 'student')"
-);
+$staffUsers = (int) $db->value('SELECT COUNT(*) FROM users');
 
-$allUsers = (int) $db->value('SELECT COUNT(*) FROM users');
+$studentUsers = (int) $db->value('SELECT COUNT(*) FROM students');
 
-$studentUsers = (int) $db->value(
-    "SELECT COUNT(*) FROM users u WHERE EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role_code = 'student')"
-);
-
-$t->is($allUsers === $staffUsers + $studentUsers,
-    'все учётные записи делятся на сотрудников и учеников');
+$t->is($staffUsers > 0, 'сотрудники в списке есть');
+$t->is($studentUsers > 0, 'ученики в своём списке есть');
+$t->equals(0, (int) $db->value(
+    'SELECT COUNT(*) FROM students s JOIN users u ON u.login = s.login'
+), 'один логин не живёт в двух списках — это был бы один человек дважды');
 
 /*
  * Показатели консоли названы metric, а не stat: прежние .stat отошли
@@ -2308,8 +2522,15 @@ foreach (['/portal', '/classes'] as $staffPath) {
  * выйти, потому что выход был только в меню.
  */
 $studentHome = new TestClient($baseUrl);
-$studentLoginPage = $studentHome->get('/login');
-$studentHome->post('/login', [
+
+/*
+ * Вход по ученической двери. Общая вела бы на отказ: ученика в `users` больше
+ * нет, страница стала бы страницей неудачного входа, и все четыре проверки
+ * ниже падали бы на ней — с причиной, которая к шапке и кнопке выхода
+ * отношения не имеет.
+ */
+$studentLoginPage = $studentHome->get('/student/login');
+$studentHome->post('/student/login', [
     '_token'     => $studentHome->tokenFrom($studentLoginPage) ?? '',
     'identifier' => 'uchenik@example.edu',
     'password'   => 'uchenik2025',
@@ -2343,10 +2564,7 @@ $t->notContains($guest->get('/register')['body'], 'class="sidebar"', 'на ст�
  */
 $t->group('Страница пользователей по образцу gentelella');
 
-$staffCount = (int) $db->value(
-    'SELECT COUNT(*) FROM users
-      WHERE id NOT IN (SELECT user_id FROM user_roles WHERE role_code = \'student\')'
-);
+$staffCount = (int) $db->value('SELECT COUNT(*) FROM users');
 
 $t->is((int) $db->value(
     "SELECT COUNT(*) FROM information_schema.COLUMNS
@@ -2367,18 +2585,19 @@ foreach (['Всего пользователей', 'Учителей', 'Заву
 
 $t->equals(4, substr_count($body, 'class="stat-value"'), 'показателей ровно четыре, как в образце');
 
-$staffTotal = (int) $db->value(
-    "SELECT COUNT(DISTINCT u.id) FROM users u
-      WHERE u.id NOT IN (SELECT ur2.user_id FROM user_roles ur2 WHERE ur2.role_code = 'student')"
-);
+/*
+ * Показатели сверяются с тем же запросом, каким считает страница: она берёт
+ * `users` целиком и больше никого не отсекает — ученики ушли в свою таблицу
+ * и в этот список не попадают вовсе (см. UserRepository::staffStats).
+ */
+$staffTotal = (int) $db->value('SELECT COUNT(DISTINCT u.id) FROM users u');
 
 $t->contains($body, '<span class="stat-value">' . $staffTotal . '</span>',
     'число сотрудников в показателе совпадает с базой');
 
 $teacherTotal = (int) $db->value(
     "SELECT COUNT(DISTINCT u.id) FROM users u
-      JOIN user_roles ur ON ur.user_id = u.id AND ur.role_code = 'teacher'
-     WHERE u.id NOT IN (SELECT ur2.user_id FROM user_roles ur2 WHERE ur2.role_code = 'student')"
+      JOIN user_roles ur ON ur.user_id = u.id AND ur.role_code = 'teacher'"
 );
 
 $t->contains($body, '<span class="stat-value">' . $teacherTotal . '</span>',
@@ -2511,7 +2730,8 @@ $t->contains($owner->get('/panel/users')['body'], 'роль — Завуч', 'с
 $owner->post('/panel/users/role', [
     '_token'  => $owner->tokenFrom($owner->get('/panel/users')) ?? '',
     'user_id' => (string) $secondId,
-    'role'    => Role::STUDENT,
+    // Как и выше, код роли — строка: самой роли «Ученик» в системе нет.
+    'role'    => 'student',
 ]);
 
 $t->is($users->rolesOf($secondId) === [Role::HEAD_TEACHER], 'роль «Ученик» через список не назначается');
@@ -2526,10 +2746,9 @@ $t->is($users->rolesOf($ownerId) === [Role::ADMIN], 'у владельца ро�
 
 /* Выбор роли есть у всех сотрудников, кроме владельца и самого себя. */
 $roleFormExpected = (int) $db->value(
-    "SELECT COUNT(*) FROM users u
+    'SELECT COUNT(*) FROM users u
       WHERE u.is_owner = 0
-        AND u.id <> :self
-        AND u.id NOT IN (SELECT ur2.user_id FROM user_roles ur2 WHERE ur2.role_code = 'student')",
+        AND u.id <> :self',
     ['self' => $ownerId]
 );
 
@@ -2589,9 +2808,8 @@ $t->equals(0, substr_count($owner->get('/panel/users')['body'], 'status-red'),
  * Если таких нет — пропускаем, а не выдумываем пользователя ради проверки.
  */
 $neverLoggedIn = (int) $db->value(
-    "SELECT COUNT(*) FROM users u
-      WHERE u.last_login_at IS NULL
-        AND u.id NOT IN (SELECT ur2.user_id FROM user_roles ur2 WHERE ur2.role_code = 'student')"
+    'SELECT COUNT(*) FROM users u
+      WHERE u.last_login_at IS NULL'
 );
 
 if ($neverLoggedIn > 0) {

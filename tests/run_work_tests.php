@@ -30,6 +30,7 @@ $autoloader = new MyEdu\Core\Autoloader();
 $autoloader->addNamespace('MyEdu\\', $rootDir . '/src');
 $autoloader->register();
 
+use MyEdu\Auth\Actor;
 use MyEdu\Auth\ClassRepository;
 use MyEdu\Auth\Role;
 use MyEdu\Auth\StudentRepository;
@@ -189,12 +190,14 @@ $db->run(
 $users->setRole($otherTeacherId, Role::TEACHER);
 
 /*
- * Ученик заводится так, как его заводят в системе: через список класса.
+ * Ученик заводится так, как его заводят в системе: строкой в таблице
+ * `students`, а не в `users`.
  *
- * Это не формальность. Ученик — строка users без почты, с логином и
- * паролем, которые завуч выдал на бумаге. Заводить его через UserRepository
- * с почтой значило бы проверять модель, которой в проекте нет: такой ученик
- * прошёл бы тесты, но никогда не появился бы в реальном классе.
+ * Это не формальность. Ученик — отдельная таблица: логин, хеш пароля, ФИО и
+ * класс. Ни почты, ни ролей, ни аватара у него нет — они остались у
+ * сотрудников. Заводить ученика через UserRepository значило бы проверять
+ * модель, которой в проекте нет: такой ученик прошёл бы тесты, но никогда не
+ * появился бы в реальном классе.
  */
 $classes = new ClassRepository($db);
 $students = new StudentRepository($db);
@@ -212,32 +215,36 @@ if ($class === null) {
 $studentLogin = 'uchebnik';
 $studentPassword = 'uchebnik2025';
 
-$studentRow = $db->one('SELECT * FROM users WHERE login = :login', ['login' => $studentLogin]);
-
-if ($studentRow === null) {
-    $created = $students->create('Сидоров Пётр Иванович', $studentLogin, $studentPassword, $classId);
-    $studentId = $created['id'];
-} else {
-    $studentId = (int) $studentRow['id'];
-
-    $db->run(
-        "UPDATE users SET password_hash = :hash, status = 'active' WHERE id = :id",
-        ['hash' => password_hash($studentPassword, PASSWORD_DEFAULT), 'id' => $studentId]
-    );
-
-    // Уже существующего ученика приводим к ожидаемой роли: прошлый прогон мог
-    // оставить ему что-то другое.
-    $users->setRole($studentId, Role::STUDENT);
-    $students->addToClass($classId, $studentId);
-}
+/*
+ * makeStudent идемпотентен: при повторном прогоне ученик с тем же логином
+ * приводится к ожидаемому состоянию — пароль, активный статус, класс, — а не
+ * дублируется и не падает на уникальном индексе.
+ */
+$studentId = makeStudent($db, 'Сидоров Пётр Иванович', $studentLogin, $studentPassword, $classId);
 
 $t->group('Учётная запись ученика');
 
-$t->is($studentId > 0, 'ученик заведён через список класса');
-$t->is($db->value('SELECT email FROM users WHERE id = :id', ['id' => $studentId]) === null,
-    'у ученика нет почты: её нечем подтверждать, пароль выдан на бумаге');
-$t->is($db->value("SELECT role_code FROM user_roles WHERE user_id = :id", ['id' => $studentId]) === Role::STUDENT,
-    'роль ученика проставлена');
+$studentRow = $db->one('SELECT * FROM students WHERE id = :id', ['id' => $studentId]);
+
+$t->is($studentId > 0 && $studentRow !== null, 'ученик заведён в таблице students');
+$t->is((int) ($studentRow['class_id'] ?? 0) === $classId,
+    'у ученика указан класс: класс у него один и живёт в колонке, а не в списке членств');
+$t->equals('active', (string) ($studentRow['status'] ?? ''),
+    'ученик активен: заблокированный не может ни войти, ни начать работу');
+
+/*
+ * Почты у ученика нет вообще — ни пустой, ни незаполненной: колонки `email` в
+ * таблице `students` не существует, и это проверяется по схеме, а не по значению
+ * ячейки. SELECT email FROM students упал бы, а проверка «пустой ячейки» прошла
+ * бы на любой придуманной колонке.
+ */
+$t->is(
+    (int) $db->value(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'students' AND COLUMN_NAME = 'email'"
+    ) === 0,
+    'у ученика нет почты: её нечем подтверждать, пароль выдан на бумаге'
+);
 $t->is($students->isInClass($classId, $studentId), 'ученик состоит в классе');
 
 /*
@@ -268,11 +275,10 @@ if (!$pluginEnabled) {
 // --------------------------------------------------------------- вход
 
 /**
- * Вход по логину или почте — как это делает настоящий человек.
+ * Вход сотрудника по логину или почте — как это делает настоящий человек.
  *
- * У ученика почты нет, поэтому он входит по выданному логину. Проверять это
- * нужно на настоящем логине: если бы набор заводил ученика с адресом, поле
- * «почта» проверено бы не было.
+ * Проверять нужно на настоящем логине: если бы набор заводил сотрудника с
+ * адресом, поле «почта» проверено бы не было.
  */
 $login = static function (string $identifier, string $password): TestClient {
     $client = new TestClient($GLOBALS['baseUrl']);
@@ -288,11 +294,62 @@ $login = static function (string $identifier, string $password): TestClient {
     return $client;
 };
 
+/*
+ * Вход ученика — отдельная форма /student/login.
+ *
+ * Ученик живёт в таблице `students`, и общий вход сотрудников его не находит.
+ * Вход заводится здесь так же, как им пользуется человек с листка: по логину и
+ * паролю, выданным на бумаге. Шаблон у формы свой, но имена полей те же, что и
+ * у сотрудников (identifier, password, _token), — по ним и собирается запрос.
+ */
+$loginStudent = static function (string $identifier, string $password): TestClient {
+    $client = new TestClient($GLOBALS['baseUrl']);
+
+    $page = $client->get('/student/login');
+
+    $client->post('/student/login', [
+        '_token'     => $client->tokenFrom($page) ?? '',
+        'identifier' => $identifier,
+        'password'   => $password,
+    ]);
+
+    return $client;
+};
+
 $GLOBALS['baseUrl'] = $baseUrl;
 
 $teacher = $login($teacherEmail, $teacherPassword);
 $otherTeacher = $login($otherTeacherEmail, $otherTeacherPassword);
-$student = $login($studentLogin, $studentPassword);
+
+/*
+ * Ученик не входит через форму сотрудников.
+ *
+ * Проверяется до настоящего входа и отдельным клиентом: логин и пароль
+ * ученика на /login обязаны быть отвергнуты, иначе ученик попал бы в сессию
+ * без роли и увидел бы 403 на всех своих работах — то есть завёл бы себе
+ * невидимую поломку вместо работы. Один неудачный вход не блокирует набор:
+ * счётчик перебора ведётся по паре «логин + адрес», а успешный вход ученика
+ * ниже снимает его счётчик начисто.
+ */
+$wrongDoor = new TestClient($baseUrl);
+$wrongDoorPage = $wrongDoor->get('/login');
+$wrongDoorPost = $wrongDoor->post('/login', [
+    '_token'     => $wrongDoor->tokenFrom($wrongDoorPage) ?? '',
+    'identifier' => $studentLogin,
+    'password'   => $studentPassword,
+]);
+
+$t->is(
+    $wrongDoorPost['status'] === 302 && str_contains((string) $wrongDoorPost['location'], '/login'),
+    'ученик не входит через форму сотрудников: его возвращают назад на вход'
+);
+$t->is($wrongDoor->get('/works')['status'] === 302,
+    'после попытки входа через форму сотрудников ученик остаётся гостем');
+
+$student = $loginStudent($studentLogin, $studentPassword);
+
+$t->is($student->get('/works')['status'] === 200,
+    'ученик входит через свою форму /student/login');
 
 // --------------------------------------------------------------- права
 
@@ -1581,8 +1638,9 @@ $t->is($student->get('/work/999999/item/' . $firstItemId . '?t=' . $attemptToken
     'попытка не открывается по чужому номеру');
 
 /*
- * Чужая попытка: второй ученик того же класса, тоже через список класса.
- * Попытка защищена токеном, но токен — не приглашение смотреть чужое.
+ * Чужая попытка: второй ученик того же класса, заведённый в таблице
+ * `students` тем же хелпером. Попытка защищена токеном, но токен — не
+ * приглашение смотреть чужое.
  *
  * Работа ему выдана: иначе проверка была бы не о токене, а о невыданной работе,
  * и прошла бы даже с совсем открытой попыткой.
@@ -1590,23 +1648,9 @@ $t->is($student->get('/work/999999/item/' . $firstItemId . '?t=' . $attemptToken
 $otherLogin = 'uchebnitsa';
 $otherPassword = 'uchebnik2025';
 
-$otherRow = $db->one('SELECT * FROM users WHERE login = :login', ['login' => $otherLogin]);
+$otherId = makeStudent($db, 'Кузнецова Анна Ивановна', $otherLogin, $otherPassword, $classId);
 
-if ($otherRow === null) {
-    $otherId = $students->create('Кузнецова Анна Ивановна', $otherLogin, $otherPassword, $classId)['id'];
-} else {
-    $otherId = (int) $otherRow['id'];
-
-    $db->run(
-        "UPDATE users SET password_hash = :hash, status = 'active' WHERE id = :id",
-        ['hash' => password_hash($otherPassword, PASSWORD_DEFAULT), 'id' => $otherId]
-    );
-
-    $users->setRole($otherId, Role::STUDENT);
-    $students->addToClass($classId, $otherId);
-}
-
-$other = $login($otherLogin, $otherPassword);
+$other = $loginStudent($otherLogin, $otherPassword);
 
 $otherSeedIssue = (int) $db->insert('assignment_issues', [
     'assignment_id'   => $assignmentId,
@@ -2799,7 +2843,13 @@ $t->equals($attemptsBefore, (int) $db->value(
 $blockedPage = $student->get('/work/' . $assignmentId);
 $t->contains($blockedPage['body'], 'максимальное число раз', 'ученику объяснено, почему не дают попытку');
 
-// Учитель ограничением не связан: у него есть tests.repeat.
+/*
+ * Учитель ограничением не связан: у него есть tests.repeat.
+ *
+ * Его попытка — самопроверка, а не работа ученика, поэтому она пишется в
+ * колонку staff_id, а student_id остаётся пустым. Считать её по student_id
+ * значило бы не найти её вовсе — или, что хуже, найти чужую.
+ */
 $teacherWork = $teacher->get('/work/' . $assignmentId);
 $teacherStart = $teacher->post('/work/' . $assignmentId . '/start', [
     '_token' => $teacher->tokenFrom($teacherWork) ?? '',
@@ -2807,9 +2857,9 @@ $teacherStart = $teacher->post('/work/' . $assignmentId . '/start', [
 
 $t->is($teacherStart['status'] === 302, 'учитель может начать работу независимо от лимита');
 $t->is((int) $db->value(
-    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :id AND student_id = :u',
+    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :id AND staff_id = :u',
     ['id' => $assignmentId, 'u' => $teacherId]
-) === 1, 'попытка учителя заведена');
+) === 1, 'попытка учителя заведена в его колонке, а не в колонке ученика');
 
 // Снимаем лимит, чтобы последующие проверки не зависели от него.
 $db->run(
@@ -2832,6 +2882,9 @@ $t->notContains($unlimited['body'], 'попыток не осталось', 'п�
  * в выдаче и только что было снято. Ученик, которому работу не выдавали, лимита
  * не получает вовсе — иначе число из чужой выдачи досталось бы тому, кто её
  * не видел.
+ *
+ * Лицо передаётся как Actor, а не голым номером: в `students` и `users`
+ * нумерация независима, и раньше «учитель №7» читал лимит «ученика №7».
  */
 $assignmentsRepo = $app->get(MyEdu\Repository\AssignmentRepository::class);
 
@@ -2840,17 +2893,77 @@ $db->run(
     ['id' => $assignmentId]
 );
 
-$t->equals(2, $assignmentsRepo->attemptLimit($assignmentId, $studentId),
+$t->equals(2, $assignmentsRepo->attemptLimit($assignmentId, Actor::ofStudent($studentId)),
     'лимит берётся из выдачи, по которой ученик получил работу');
 
-$t->equals(null, $assignmentsRepo->attemptLimit($assignmentId, $otherTeacherId ?? 0),
+/*
+ * Сотрудник лимитом не ограничен вовсе — даже если под тем же номером в
+ * таблице `students` стоит человек с лимитом. Номера двух таблиц независимы,
+ * и попытка сотрудника пишется в другую колонку, поэтому чужой лимит ему не
+ * указка: иначе завуч не смог бы перепроверить работу после правки.
+ */
+$t->equals(null, $assignmentsRepo->attemptLimit($assignmentId, Actor::ofStaff($studentId)),
+    'сотруднику с тем же номером, что у ученика, лимит не достаётся: он не ученик');
+$t->equals(null, $assignmentsRepo->attemptLimit($assignmentId, Actor::ofStaff($otherTeacherId)),
+    'постороннему сотруднику лимит не достаётся: у него нет своей выдачи');
+
+/*
+ * Ученик, которому работу не выдавали, лимита не получает: лимит живёт в
+ * выдаче, а не в работе. Посторонний заводится и удаляется здесь же — он нужен
+ * ровно для этой проверки и не должен остаться в классе надолго.
+ */
+$strangerId = makeStudent($db, 'Посторонний Ученик', 'postoronniy', 'postoronniy2025');
+
+$t->equals(null, $assignmentsRepo->attemptLimit($assignmentId, Actor::ofStudent($strangerId)),
     'постороннему ученику лимит не достаётся: у него нет своей выдачи');
+
+$db->run('DELETE FROM students WHERE id = :id', ['id' => $strangerId]);
 
 // Возвращаем «без ограничения», чтобы дальнейшие проверки не зависели от него.
 $db->run(
     'UPDATE assignment_issues SET max_attempts = 0 WHERE assignment_id = :id',
     ['id' => $assignmentId]
 );
+
+// ---------------------------------------------------- номера из разных таблиц
+
+$t->group('Учитель с номером ученика не берёт его попытку');
+
+/*
+ * Регрессия на старый баг: пока владелец попытки хранился одним числом,
+ * «учитель №7» читал работу «ученика №7» — совпадение номеров из двух таблиц
+ * с независимой нумерацией. Теперь у попытки две колонки (student_id и
+ * staff_id), и владение решает колонка, а не число.
+ *
+ * Правило сверяется с настоящей строкой попытки и воспроизводит то условие,
+ * по которому WorkController::requireOwnAttempt() пускает к попытке. На уровне
+ * HTTP это не проверяется: единственная роль с правом дойти до попытки —
+ * tests.manage (см. Role::CAPABILITIES), и у любого сотрудника, до которого
+ * дотягивается маршрут, право есть, то есть разницы «видит / не видит» на
+ * странице не было бы. Поэтому проверяется сам механизм владения.
+ */
+$collisionAttempt = $db->one('SELECT * FROM assignment_attempts WHERE id = :id', ['id' => $attemptId]);
+
+$t->is($collisionAttempt !== null, 'попытка ученика найдена');
+
+$ownsAttempt = static function (array $attempt, Actor $actor): bool {
+    return $actor->isStudent()
+        ? $attempt['student_id'] !== null && (int) $attempt['student_id'] === $actor->studentId
+        : $attempt['staff_id'] !== null && (int) $attempt['staff_id'] === $actor->staffId;
+};
+
+if ($collisionAttempt !== null) {
+    // Номер берётся у самой попытки: это ровно то число, которое раньше
+    // считалось владельцем для всех сразу.
+    $sameNumber = (int) $collisionAttempt['student_id'];
+
+    $t->is($collisionAttempt['staff_id'] === null,
+        'у попытки ученика заполнена только ученическая колонка');
+    $t->is($ownsAttempt($collisionAttempt, Actor::ofStudent($sameNumber)),
+        'своя попытка открывается ученику с этим номером');
+    $t->is(!$ownsAttempt($collisionAttempt, Actor::ofStaff($sameNumber)),
+        'учителю с тем же номером попытка не своя: владение решает колонка, а не число');
+}
 
 // --------------------------------------------------------------- журнал
 
@@ -3153,7 +3266,7 @@ $t->is(
  * Ученик без работ виден в таблице строкой: молчаливое отсутствие строки
  * выглядело бы как «его нет в классе». Он же убирается в конце набора.
  */
-$third = $students->create('Мельников Павел Сергеевич', 'tretyuchiy', 'uchebnik2025', $classId)['id'];
+$third = makeStudent($db, 'Мельников Павел Сергеевич', 'tretyuchiy', 'uchebnik2025', $classId);
 
 /*
  * Штрафы.
@@ -3300,13 +3413,15 @@ $db->run(
     ['u' => $studentId, 'c' => $classId]
 );
 
-$db->run('DELETE FROM class_students WHERE student_id = :u', ['u' => $third]);
-// Роли уходят вместе с пользователем: внешний ключ настроен на каскад. Раньше
-// здесь стоял вызов, который снимал роли, — при одной роли на человека снимать
-// нечего, а удаление пользователя уносит и строку роли.
-$db->run('DELETE FROM users WHERE id = :id', ['id' => $third]);
-
-$db->run('DELETE FROM user_roles WHERE user_id = :u', ['u' => $headId]);
+/*
+ * Временные люди уходят каждый из своей таблицы.
+ *
+ * Ученик удаляется целиком: строки выдач и попытки уходят за ним по каскаду —
+ * внешние ключи настроены на удаление вместе с учеником, и отдельно снимать
+ * членства (таблицы class_students больше нет) или пытаться удалить его из
+ * `users` (там его нет) не нужно.
+ */
+$db->run('DELETE FROM students WHERE id = :id', ['id' => $third]);
 
 /*
  * Работа завуча создана ради проверки круга видимых работ и остаётся в базе
@@ -3316,10 +3431,14 @@ $db->run('DELETE FROM user_roles WHERE user_id = :u', ['u' => $headId]);
  */
 $db->run('DELETE FROM assignments WHERE id = :id', ['id' => $headAssignmentId]);
 
+// Роли завуча уходят каскадом вместе с пользователем: внешний ключ на users
+// настроен на удаление строки, поэтому отдельный DELETE по user_roles не нужен.
 $db->run('DELETE FROM users WHERE id = :id', ['id' => $headId]);
 
-$t->is($db->value('SELECT COUNT(*) FROM users WHERE login IN (:a, :b)', ['a' => $headLogin, 'b' => 'tretyuchiy']) === 0,
-    'временные учётные записи журнала удалены');
+$t->is((int) $db->value('SELECT COUNT(*) FROM users WHERE login = :a', ['a' => $headLogin]) === 0,
+    'временная учётная запись завуча удалена');
+$t->is((int) $db->value('SELECT COUNT(*) FROM students WHERE login = :b', ['b' => 'tretyuchiy']) === 0,
+    'временный ученик журнала удалён из students, а не из users');
 
 // --------------------------------------------------------------- мастер
 
@@ -3467,9 +3586,9 @@ $t->equals(1, preg_match_all('~aria-selected="true"~u', $workTabUnknown['body'])
 /*
  * Отказ первого шага не должен стоить остальных полей.
  *
-* Правило общее для всех форм: человек описал работу, выбрал срок,
-  и ошибка была в пустом названии. Если бы остальное стиралось, пришлось бы
-  заполнять поля заново из-за одного.
+ * Правило общее для всех форм: человек описал работу, выбрал срок,
+ * и ошибка была в пустом названии. Если бы остальное стиралось, пришлось бы
+ * заполнять поля заново из-за одного.
  */
 $teacher->post('/panel/assignments/' . $wizardId . '/edit/start', [
     '_token'      => $teacher->tokenFrom($startPageForTitle) ?? '',
@@ -6989,8 +7108,9 @@ $deputyStarted = $deputy->post('/work/' . $assignmentId . '/start', [
 
 $t->is($deputyStarted['status'] === 302, 'заведующий начал чужую работу');
 
+// Самопроверка сотрудника лежит в staff_id: по student_id она бы не нашлась.
 $deputyAttemptId = (int) ($db->value(
-    'SELECT id FROM assignment_attempts WHERE assignment_id = :a AND student_id = :u ORDER BY id DESC LIMIT 1',
+    'SELECT id FROM assignment_attempts WHERE assignment_id = :a AND staff_id = :u ORDER BY id DESC LIMIT 1',
     ['a' => $assignmentId, 'u' => $deputyId]
 ) ?? 0);
 
@@ -7019,7 +7139,7 @@ $t->is($deputySecond['status'] === 302,
     'заведующий проходит чужую работу повторно, хотя лимит у неё одна попытка');
 
 $t->equals(2, (int) $db->value(
-    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :a AND student_id = :u',
+    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :a AND staff_id = :u',
     ['a' => $assignmentId, 'u' => $deputyId]
 ), 'заведена вторая попытка заведующего');
 
@@ -7270,8 +7390,9 @@ $teacherStarted = $teacher->post('/work/' . $repeatId . '/start', [
 
 $t->is($teacherStarted['status'] === 302, 'учитель начал свою работу');
 
+// Самопроверка учителя, как и у любого сотрудника, пишется в staff_id.
 $repeatAttemptId = (int) ($db->value(
-    'SELECT id FROM assignment_attempts WHERE assignment_id = :a AND student_id = :u ORDER BY id DESC LIMIT 1',
+    'SELECT id FROM assignment_attempts WHERE assignment_id = :a AND staff_id = :u ORDER BY id DESC LIMIT 1',
     ['a' => $repeatId, 'u' => $teacherId]
 ) ?? 0);
 
@@ -7305,7 +7426,7 @@ $t->is($teacherThirdStart['status'] === 302,
     'учитель проходит работу повторно, хотя лимит у неё одна попытка');
 
 $t->equals(2, (int) $db->value(
-    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :a AND student_id = :u',
+    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :a AND staff_id = :u',
     ['a' => $repeatId, 'u' => $teacherId]
 ), 'заведена вторая попытка учителя');
 
