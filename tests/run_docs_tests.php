@@ -53,28 +53,9 @@ $docs = [
     'changelog.md',
     'ПРОДОЛЖИТЬ_РАБОТУ.md',
     'plugins/README.md',
-    'docs/журнал-разработки-до-первого-релиза.md',
     'docs/ревью-2026-10-18.md',
     'docs/план-устранения-по-ревью-2026-10-18.md',
 ];
-
-/*
- * Журнал работы до релиза — документ исторический.
- *
- * Он описывает проект таким, каким он был в процессе: там есть файлы, которых
- * уже нет (`src/Http/Presenter/GradeScale.php`, `public/public/index.php`), и
- * номера миграций, снятые ещё до снимка схемы. Это не ошибки, а запись о том,
- * что было.
- *
- * Поэтому сверка путей и миграций его не касается, а проверка личных данных —
- * касается: путь с именем пользователя Windows в истории недопустим нигде, даже
- * в прошедшем времени, и именно его в журнале и нашли.
- */
-$historicalDocs = ['docs/журнал-разработки-до-первого-релиза.md'];
-
-$currentDocs = static function (array $texts) use ($historicalDocs): array {
-    return array_diff_key($texts, array_flip($historicalDocs));
-};
 
 /**
  * @return array<string, string> «путь к документу» → содержимое
@@ -107,7 +88,7 @@ $runner->group('Документация: пути');
 
 $missingPaths = [];
 
-foreach ($currentDocs($texts) as $doc => $text) {
+foreach ($texts as $doc => $text) {
     // `src/Core/App.php`, `tools\run_tests.ps1`, `database/schema.sql:164`
     preg_match_all(
         '/`((?:src|public|templates|database|tools|tests|config|plugins|docs|deploy)\/[\\\\\/]?[\w.\-\/\\\\]*?\.(?:php|ps1|sql|md|css|js|json|bat|vbs|example|conf|zip))(?:[:][\d,\- ]*)?`/u',
@@ -196,7 +177,7 @@ $runner->group('Документация: миграции');
 
 $migrationMentions = [];
 
-foreach ($currentDocs($texts) as $doc => $text) {
+foreach ($texts as $doc => $text) {
     if (preg_match_all('/`(\d{3}_[a-z0-9_]+\.sql)`/i', $text, $found) > 0) {
         foreach (array_unique($found[1]) as $name) {
             $migrationMentions[] = $doc . ' → ' . $name;
@@ -223,7 +204,7 @@ $knownMigrations = [
 foreach (glob($root . '/database/migrations/*.sql') ?: [] as $path) {
     $name = basename((string) $path);
 
-    foreach (array_keys($currentDocs($texts)) as $doc) {
+    foreach (array_keys($texts) as $doc) {
         $knownMigrations[$doc . ' → ' . $name] = 'миграция, лежащая в database/migrations';
     }
 }
@@ -239,9 +220,9 @@ $runner->equals(
 // ---------------------------------------------------------------------------
 // 3. Личных путей в документации нет.
 //
-// В журнале разработки до релиза нашёлся путь с именем пользователя Windows.
-// Для публичного репозитория это имя разработчика на его машине, и оно не
-// имеет никакого отношения к проекту.
+// Путь с именем пользователя Windows однажды нашёлся в старом журнале работ
+// (архив удалён 23.10.2026). Для публичного репозитория это имя разработчика
+// на его машине, и оно не имеет никакого отношения к проекту.
 $runner->group('Документация: личные данные');
 
 $personal = [];
@@ -258,9 +239,9 @@ foreach ($texts as $doc => $text) {
 // может быть обрезан (осталось «C:\Users\»), и точное равенство перестаёт
 // работать именно там, где список нужен.
 //
-// Список пуст не «потому что чисто», а потому что волна 0 вычистила путь из
-// журнала работ и из этого же плана: цитата найденного — тоже находка, и
-// публиковать её нечего. Вернётся путь — упадёт набор.
+// Список пуст не «потому что чисто», а потому что волна 0 вычистила этот путь
+// из документов (архивный журнал с тех пор удалён), а цитата найденного — тоже
+// находка, и публиковать её нечего. Вернётся путь — упадёт набор.
 $knownPersonal = [];
 
 $isKnown = static function (string $line) use ($knownPersonal): bool {

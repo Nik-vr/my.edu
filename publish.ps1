@@ -352,8 +352,7 @@ function Test-ProjectFiles {
         'config\config.php',
         'database\schema.sql',
         'public\index.php',
-        'src\Core\App.php',
-        'docs\журнал-разработки-до-первого-релиза.md'
+        'src\Core\App.php'
     )
 
     $missing = @($required | Where-Object { -not (Test-Path (Join-Path $script:Root $_)) })
