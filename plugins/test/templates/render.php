@@ -62,7 +62,7 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
 
  <?php elseif ($q['type'] === 'multiple_choice'): ?>
  <p class="question__hint">
- Отметьте все подходящие варианты. Правильных: <?= $view->e((int) $q['payload']['correct_count']) ?>.
+ Отметьте все подходящие варианты.
  </p>
  <div class="options">
  <?php foreach ($q['payload']['options'] as $option): ?>

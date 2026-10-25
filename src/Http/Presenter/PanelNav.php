@@ -35,15 +35,22 @@ final class PanelNav
     /**
      * Группы и пункты меню для текущего пользователя.
      *
-     * @return list<array{title:string, items:list<array<string,mixed>>}>
+     * Каждая группа несёт ключ (`key`) и признак сворачиваемости: ключ — это
+     * имя cookie с состоянием группы, а сворачиваются разделы по решению
+     * владельца от 24.10.2026 (задача 1) — «Работы», «Школа» и «Система».
+     * «Главная» в этот список не входит: один пункт «Консоль» сворачивать
+     * нечего.
+     *
+     * @return list<array{key:string,title:string,collapsible:bool,items:list<array<string,mixed>>}>
      */
     public function items(string $currentPath): array
     {
         /*
-         * Счётчик считается по тому же кругу работ, что и сам журнал: завуч и
-         * администратор видят все работы школы, учитель — только свои. Раньше
-         * учитель получал бейдж по чужим работам — и находил за ним 403, потому
-         * что журнал был ему закрыт вовсе.
+         * Счётчик считается по тому же кругу работ, что и сам журнал: своя
+         * статистика у каждого, кто ведёт работы, а все работы школы — только
+         * у администратора (см. `journalAuthorId()`). Раньше учитель получал
+         * бейдж по чужим работам — и находил за ним 403, потому что журнал
+         * был ему закрыт вовсе.
          */
         $pendingReview = $this->auth->can(Role::REPORTS_VIEW)
             ? $this->assignments->countIssuesPendingReview($this->auth->journalAuthorId())
@@ -57,10 +64,10 @@ final class PanelNav
         $matches = [];
         $deepest = 0;
 
-        foreach ($this->definition($pendingReview, $pendingUsers) as $title => $items) {
+        foreach ($this->definition($pendingReview, $pendingUsers) as $group) {
             $visible = [];
 
-            foreach ($items as $item) {
+            foreach ($group['items'] as $item) {
                 if (isset($item['capability']) && !$this->auth->can((string) $item['capability'])) {
                     continue;
                 }
@@ -86,7 +93,12 @@ final class PanelNav
             // «здесь ничего нет»: пунктов без прав у человека не бывает,
             // и пустое заголовок-группа только пугает.
             if ($visible !== []) {
-                $groups[] = ['title' => (string) $title, 'items' => $visible];
+                $groups[] = [
+                    'key'         => $group['key'],
+                    'title'       => $group['title'],
+                    'collapsible' => $group['collapsible'],
+                    'items'       => $visible,
+                ];
             }
         }
 
@@ -118,12 +130,25 @@ final class PanelNav
      * Порядок групп отвечает на вопрос «куда идти», а не «что есть»:
      * сначала то, чем пользуются каждый день, потом система.
      *
-     * @return array<string, list<array<string,mixed>>>
+     * @return list<array{key:string,title:string,collapsible:bool,items:list<array<string,mixed>>}>
      */
     private function definition(int $pendingReview, int $pendingUsers): array
     {
+        /*
+         * Каждая группа — ключ, заголовок, признак сворачиваемости и пункты.
+         *
+         * Ключ (`works`, `school`, `system`) — имя cookie, в которой живёт
+         * состояние свёрнутости (решение владельца от 24.10.2026, задача 1):
+         * при первом входе «Школа» и «Система» свёрнуты, «Работы» открыта,
+         * дальше каждая группа помнит своё состояние отдельно. «Главная» не
+         * сворачивается: один пункт «Консоль» за заголовком не прячется.
+         */
         return [
-            'Главная' => [
+            [
+                'key'         => 'main',
+                'title'       => 'Главная',
+                'collapsible' => false,
+                'items' => [
                 [
                     /*
                      * Адрес главной — общий для всех: одна страница и для
@@ -136,8 +161,13 @@ final class PanelNav
                     'icon'       => 'dashboard',
                     'capability' => Role::PANEL_ACCESS,
                 ],
+                ],
             ],
-            'Работы' => [
+            [
+                'key'         => 'works',
+                'title'       => 'Работы',
+                'collapsible' => true,
+                'items' => [
                 [
                     // Список и создание разведены по разным пунктам и разным
                     // адресам: рядом с кнопкой удаления чужой работы стояла
@@ -195,8 +225,9 @@ final class PanelNav
                     'url'        => 'panel/journal',
                     'icon'       => 'journal',
                     'badge'      => $pendingReview,
-                    // reports.view — у учителя, завуча и администратора. Учитель
-                    // видит в разделе работы, которые выдал сам; круг видимых
+                    // reports.view — у учителя, завуча и администратора. Видит
+                    // каждый в разделе работы, которые выдал сам; исключение —
+                    // администратор, ему отдаётся вся школа. Круг видимых
                     // работ решает контроллер, а не пункт меню.
                     'capability' => Role::REPORTS_VIEW,
                 ],
@@ -217,8 +248,13 @@ final class PanelNav
                     'icon'       => 'rating',
                     'capability' => Role::TESTS_MANAGE,
                 ],
+                ],
             ],
-            'Школа' => [
+            [
+                'key'         => 'school',
+                'title'       => 'Школа',
+                'collapsible' => true,
+                'items' => [
                 [
                     'label'      => 'Классы и ученики',
                     'url'        => 'classes',
@@ -231,8 +267,13 @@ final class PanelNav
                     'icon'       => 'subjects',
                     'capability' => Role::CLASSES_MANAGE,
                 ],
+                ],
             ],
-            'Система' => [
+            [
+                'key'         => 'system',
+                'title'       => 'Система',
+                'collapsible' => true,
+                'items' => [
                 [
                     // Набор плагинов личный, поэтому пункт у учителя тоже:
                     // отключить лишние типы заданий у себя должен он сам, а не
@@ -254,6 +295,7 @@ final class PanelNav
                     'url'        => 'panel/settings',
                     'icon'       => 'settings',
                     'capability' => Role::USERS_MANAGE,
+                ],
                 ],
             ],
         ];

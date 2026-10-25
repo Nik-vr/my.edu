@@ -79,8 +79,6 @@ final class MultipleChoiceType implements QuestionTypeInterface
                 static fn (array $o): array => ['value' => (string) $o['value_key'], 'text' => (string) $o['text']],
                 $options
             ),
-            // Сколько верных всего — чтобы подсказать ученику, не раскрывая ответа.
-            'correct_count' => count($this->correctKeys($question)),
         ];
     }
 

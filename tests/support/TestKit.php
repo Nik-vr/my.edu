@@ -197,6 +197,18 @@ final class TestClient
     }
 
     /**
+     * Положить свою cookie — эмулирует выбор, сделанный в прошлом визите.
+     *
+     * Нужен проверкам состояний, которые живут в cookie: сервер читает их при
+     * отрисовке, и без возможности задать cookie клиентом проверить чтение
+     * можно только насловно.
+     */
+    public function setCookie(string $name, string $value): void
+    {
+        $this->cookies[$name] = $value;
+    }
+
+    /**
      * Значение поля формы по имени.
      */
     public function token(string $html): ?string

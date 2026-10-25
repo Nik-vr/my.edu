@@ -1551,20 +1551,25 @@ $t->contains($studentWorks['body'], 'Контрольная по биологи�
 
 $workPage = $student->get('/work/' . $assignmentId);
 $t->is($workPage['status'] === 200, 'страница работы открыта');
-$t->contains($workPage['body'], 'Задания', 'на странице список позиций');
-// Подпись под заголовком работы — .muted в шапке страницы шаблона.
-$t->is(preg_match('/muted">\s*3\s+задания/s', $workPage['body']) === 1,
-    'видно общее число заданий работы');
 /*
- * Задание опознаётся началом своего условия: заголовка у него больше нет.
- *
- * Ожидается именно то условие, которое осталось после правки выше, — «Вопрос
- * без заголовка». Прежнее «фотосинтезе» было верно для прежней модели, где
- * у позиции был снимок имени, и перестало быть верным, как только имя убрали:
- * правка условия в сценарии есть, а проверка смотрела на то, что было до неё.
+ * Список заданий на этом экране скрыт — решение владельца от 24.10.2026.
+ * Проверяется отсутствие таблицы, а не отсутствие подписи: подпись могла бы
+ * переехать в шапку, а вот таблица означала бы, что список вернулся.
+ * Условие первого задания теперь видно только на его собственном экране —
+ * проверка на него стоит там же, ниже, в группе «Прохождение работы».
  */
-$t->contains($workPage['body'], 'Вопрос без заголовка',
-    'первое задание работы видно ученику по началу условия');
+$t->notContains($workPage['body'], '<table',
+    'список заданий на экране перед работой скрыт');
+// Подпись под заголовком работы — .muted в шапке страницы шаблона.
+// Счётчик набран как «Всего N заданий» — формат задан владельцем.
+$t->is(preg_match('/muted">\s*Всего\s+3\s+задания/u', $workPage['body']) === 1,
+    'видно общее число заданий работы в виде «Всего N заданий»');
+
+/*
+ * Условие первого задания на этом экране больше не показывается — список
+ * скрыт. Проверка начала условия перенесена на страницу самого задания
+ * (группа «Прохождение работы», ниже): там условие и открывается.
+ */
 
 $workToken = $student->tokenFrom($workPage);
 
@@ -1682,6 +1687,24 @@ $itemPage = $student->get($itemPath . '?t=' . $attemptToken);
 $t->is($itemPage['status'] === 200, 'экран задания открыт');
 $t->contains($itemPage['body'], 'data-question-id=', 'плагин нарисовал свои вопросы');
 $t->contains($itemPage['body'], 'Задание №', 'задание подписано номером, а не именем');
+$t->contains(
+    $itemPage['body'],
+    'question__number">1</span>',
+    'у первого задания в кружке его номер'
+);
+
+/*
+ * Задание опознаётся началом своего условия: заголовка у него больше нет.
+ *
+ * Проверка перенесена сюда с экрана работы — там список заданий скрыт по
+ * решению владельца, и условие показывается только на странице самого
+ * задания. Ожидается именно то условие, которое осталось после правки выше,
+ * — «Вопрос без заголовка»: прежнее «фотосинтезе» было верно для прежней
+ * модели, где у позиции был снимок имени, и перестало быть верным, как
+ * только имя убрали.
+ */
+$t->contains($itemPage['body'], 'Вопрос без заголовка',
+    'первое задание работы видно ученику по началу условия на его экране');
 
 $itemToken = $student->tokenFrom($itemPage);
 $autoQuestionId = (int) $db->value(
@@ -1716,6 +1739,21 @@ $manualPage = $student->get($manualItemPath . '?t=' . $attemptToken);
 
 $t->is($manualPage['status'] === 200, 'второе задание открыто');
 $t->contains($manualPage['body'], 'зачем растению хлорофилл', 'видно текстовое задание');
+
+/*
+ * Кружок у вопроса — номер ЗАДАНИЯ, а не вопроса (решение владельца от
+ * 24.10.2026, задача 0).
+ *
+ * Раньше там стоял порядковый номер вопроса внутри задания, а задание
+ * содержит один вопрос — на всех страницах горела цифра «1», и ученик не
+ * видел, какое задание читает. Проверяется именно второе задание: на
+ * первом оба варианта совпали бы и поломку не показали.
+ */
+$t->contains(
+    $manualPage['body'],
+    'question__number">2</span>',
+    'у второго задания в кружке его номер, а не единица'
+);
 
 $manualAnswerText = 'Хлорофилл улавливает свет и передаёт его энергию реакции фотосинтеза';
 
@@ -1809,7 +1847,27 @@ $result = $student->get('/work/' . $attemptId . '/result?t=' . $attemptToken);
 $t->is($result['status'] === 200, 'результат работы открыт');
 $t->contains($result['body'], 'итог пока не окончательный', 'ученику сказано, что итог не окончательный');
 $t->contains($result['body'], 'ждёт проверки', 'в таблице позиций видно ожидающее задание');
-$t->contains($result['body'], 'среднее по весам', 'ученику объяснено правило подсчёта');
+$t->contains($result['body'], 'За разные задания может быть начислено разное количество баллов', 'ученику объяснено правило подсчёта');
+
+/*
+ * Вид оценки — дуга-шкала, как показано владельцу (решение от 24.10.2026,
+ * волна D): дуга с процентом, кружок оценки цветом шкалы и таблица
+ * «баллы / максимум / процент».
+ *
+ * Дуга обязана быть задана атрибутами SVG, а не инлайновым style=: в
+ * шаблонах style= запрещён проверкой правил интерфейса, и проверяется здесь
+ * именно то, что дуга не обходит запрет.
+ */
+$t->contains($result['body'], 'class="result-gauge"', 'на странице результата есть дуга-шкала');
+$t->contains($result['body'], 'stroke-dasharray="', 'дуга задана атрибутом stroke-dasharray');
+$t->is(
+    preg_match('/<svg[^>]*\sstyle="/u', (string) $result['body']) !== 1,
+    'в SVG нет инлайнового стиля'
+);
+$t->contains($result['body'], 'result-gauge__percent', 'процент показан внутри дуги');
+$t->contains($result['body'], 'grade-badge', 'оценка показана кружком');
+$t->contains($result['body'], 'class="result-figures"', 'есть таблица «баллы / максимум / процент»');
+$t->contains($result['body'], 'Максимум', 'в таблице есть максимум');
 
 // --------------------------------------------------------------- проверка учителем
 
@@ -3022,7 +3080,6 @@ $head = $login($headLogin, $headPassword);
 
 $journalIndex = $head->get('/panel/journal');
 $t->is($journalIndex['status'] === 200, 'завуч открывает список результатов');
-$t->contains($journalIndex['body'], $className, 'в списке есть созданный класс');
 $t->contains($journalIndex['body'], 'Результаты', 'страница называется результатами');
 
 /*
@@ -3049,25 +3106,28 @@ $t->notContains($journalIndex['body'], '<h1 class="card-title">',
  * Числа в журнале разбиты переносами строк («1» / «из 2» / «сдано»), поэтому
  * содержательные проверки идут по схлопнутому тексту: иначе они ловили бы
  * вёрстку, а не содержание.
- */
-$journalIndex = $head->get('/panel/journal');
-$journalFlat = trim(preg_replace('/\s+/', ' ', strip_tags($journalIndex['body'])));
-
-$t->is($journalIndex['status'] === 200, 'завуч открывает журнал');
-$t->contains($journalIndex['body'], $className, 'в журнале есть созданный класс');
-$t->contains($journalIndex['body'], 'Результаты', 'страница называется результатами');
-$t->contains($journalIndex['body'], 'Контрольная по биологии',
-    'выданная работа видна в журнале');
-
-/*
- * Учитель видит ту же работу в своём журнале: работа его, и раздел ему
- * открыт. Дальше проверяется обратная сторона — чужую работу он не видит.
+ *
+ * Содержание проверяется на журнале учителя — автора работы: круг работ у
+ * каждого теперь свой, и чужая работа не попадает ни в одну выдачу завуча.
  */
 $teacherJournalOwn = $teacher->get('/panel/journal');
 
 $t->is($teacherJournalOwn['status'] === 200, 'журнал у учителя открыт');
+$t->contains($teacherJournalOwn['body'], 'Результаты', 'страница называется результатами');
+$t->contains($teacherJournalOwn['body'], $className, 'в журнале у учителя есть созданный класс');
 $t->contains($teacherJournalOwn['body'], 'Контрольная по биологии',
-    'учитель видит в журнале свою работу');
+    'выданная работа видна в журнале');
+
+/*
+ * Завуч те же работы не видит: у него в журнале только его собственные
+ * выдачи. Решение владельца — отдельной логики для завуча нет, своя
+ * статистика у каждого, кто ведёт работы, а вся школа достаётся только
+ * администратору. Раньше право `classes.manage` отдавало завучу все работы
+ * школы, и журнал расходился со «Средним баллом», где он видел только свои.
+ */
+$t->is($journalIndex['status'] === 200, 'журнал завуча открывается');
+$t->notContains($journalIndex['body'], 'Контрольная по биологии',
+    'чужая работа не видна в журнале завуча');
 
 /*
  * Название работы — ссылка на её результаты.
@@ -3078,7 +3138,7 @@ $t->contains($teacherJournalOwn['body'], 'Контрольная по биоло
 $t->is(
     preg_match(
         '~<a href="[^"]*panel/journal/work/\d+[^"]*">\s*Контрольная по биологии\s*</a>~u',
-        (string) $journalIndex['body']
+        (string) $teacherJournalOwn['body']
     ) === 1,
     'название работы ведёт на её результаты'
 );
@@ -3095,14 +3155,19 @@ $t->is(
  * Раскладка таблицы: ученик, его задания квадратами, отметка и сводка
  * баллов. Квадрат показывает результат по одному заданию, а подсказка на нём —
  * ответ ученика.
+ *
+ * Страницу открывает учитель — автор работы. Завучу та же работа закрыта:
+ * круг работ у него теперь свой, как у учителя, а чужой работы нет ни в
+ * одном его выданном — право reports.view открывает раздел, но не чужие работы.
  */
-$workJournal = $head->get('/panel/journal/work/' . $assignmentId);
+$workJournal = $teacher->get('/panel/journal/work/' . $assignmentId);
 $workFlat = trim(preg_replace('/\s+/', ' ', strip_tags($workJournal['body'])));
 
-$t->is($workJournal['status'] === 200, 'журнал работы открыт');
-
-$workJournal = $head->get('/panel/journal/work/' . $assignmentId);
-$workFlat = trim(preg_replace('/\s+/', ' ', strip_tags($workJournal['body'])));
+$t->is($workJournal['status'] === 200, 'журнал работы открыт автором');
+$t->is(
+    $head->get('/panel/journal/work/' . $assignmentId)['status'] === 403,
+    'чужая работа закрыта в журнале завуча'
+);
 
 $t->contains($workJournal['body'], $className, 'вкладка с классом открыта');
 $t->contains($workJournal['body'], 'Сидоров Пётр Иванович', 'в таблице есть ученик');
@@ -3136,6 +3201,10 @@ $t->equals([1, 2, 3, 1, 2, 3], $journalPositions, 'задания в табли�
  * которой не выдавали, в журнале не появляется: попытка без выдачи ничего не
  * значит.
  *
+ * Следит за этим автор работы — учитель: круг работ у него свой, и до выдачи
+ * журнал отдавал бы ему страницу без единого адресата. Завучу та же работа
+ * чужая вовсе — он её в журнале не увидит ни до выдачи, ни после.
+ *
  * Попытка создаётся прямо в базе: HTTP-пути для этого нет — попытку заводит
  * ученик, а выдать работу чужому классу и дать ему решить её нельзя, иначе
  * проверка была бы про другое.
@@ -3156,22 +3225,11 @@ $t->is($foreignAssignmentId > 0, 'работа соседнего класса �
 
 $db->run("UPDATE assignments SET status = 'published' WHERE id = :id", ['id' => $foreignAssignmentId]);
 
-/*
- * Попытка создаётся прямо в базе: HTTP-пути для этого нет — ученик не может
- * выполнить невыданную работу, иначе проверка была бы про другое.
- */
-$db->run(
-    "INSERT INTO assignment_attempts
-        (assignment_id, student_id, token, attempt_no, status, manual, percent, grade, finished_at, started_at)
-     VALUES (:a, :u, :tok, 1, 'finished', 0, 100, 5, NOW(), NOW())",
-    ['a' => $foreignAssignmentId, 'u' => $studentId, 'tok' => 'журнал-чужой-класс']
-);
-
-$journalBeforeIssue = $head->get('/panel/journal');
+$journalBeforeIssue = $teacher->get('/panel/journal');
 
 $t->is($journalBeforeIssue['status'] === 200, 'журнал открыт до выдачи');
 $t->notContains($journalBeforeIssue['body'], 'Работа соседнего класса',
-    'невыданная работа в журнал не попадает');
+    'работа без выдачи и без попыток в журнал не попадает');
 
 /*
  * Обратная проверка: та же работа, выданная этому ученику, обязана появиться.
@@ -3191,17 +3249,75 @@ $db->run(
     ['i' => $journalIssueId, 'u' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
 );
 
-$journalAfterIssue = $head->get('/panel/journal');
+$journalAfterIssue = $teacher->get('/panel/journal');
 
 $t->contains($journalAfterIssue['body'], 'Работа соседнего класса',
     'после выдачи работа появилась в журнале');
 $t->is(
-    $head->get('/panel/journal/work/' . $foreignAssignmentId)['status'] === 200,
+    $teacher->get('/panel/journal/work/' . $foreignAssignmentId)['status'] === 200,
     'у выданной работы есть своя страница журнала'
 );
 $t->is(
-    $head->get('/panel/journal/work/999999')['status'] === 404,
+    $teacher->get('/panel/journal/work/999999')['status'] === 404,
     'несуществующая работа даёт 404'
+);
+
+/*
+ * Попытка создаётся прямо в базе: HTTP-пути для этого нет — ученик не может
+ * выполнить невыданную работу. Она нужна, чтобы проверить вторую половину
+ * правила: журнал уважает выдачу, но не перестаёт уважать результаты.
+ *
+ * Вставка идёт после проверок на выдачу, а не до них: с попыткой работа уже
+ * видна по ней самой, и проверка «после выдачи появилась» ничего бы не
+ * доказала.
+ */
+$db->run(
+    "INSERT INTO assignment_attempts
+        (assignment_id, student_id, token, attempt_no, status, manual, percent, grade, finished_at, started_at)
+     VALUES (:a, :u, :tok, 1, 'finished', 0, 100, 5, NOW(), NOW())",
+    ['a' => $foreignAssignmentId, 'u' => $studentId, 'tok' => 'журнал-чужой-класс']
+);
+
+$t->is((int) $db->value(
+    'SELECT COUNT(*) FROM assignment_attempts WHERE assignment_id = :id',
+    ['id' => $foreignAssignmentId]
+) === 1, 'попытка невыданной работы создана');
+
+/*
+ * Отзыв выдачи на работе, у которой есть результаты: журнал обязан её
+ * сохранить. Раньше эта проверка роняла страницу в 404, потому что журнал
+ * читал только выдачи, а отзыв их удаляет.
+ */
+$recallForeignPage = $teacher->get('/panel/assignments/' . $foreignAssignmentId . '/recall');
+
+$t->is($recallForeignPage['status'] === 200, 'страница подтверждения отзыва открывается');
+
+$t->contains(
+    $recallForeignPage['body'],
+    'Попыток (сохранятся)',
+    'подтверждение честно обещает сохранить попытки — ниже проверяем, что так и есть'
+);
+
+$recallForeign = $teacher->post('/panel/assignments/' . $foreignAssignmentId . '/recall', [
+    '_token' => $teacher->tokenFrom($recallForeignPage) ?? '',
+]);
+
+$t->is($recallForeign['status'] === 302, 'отзыв выдачи принят');
+
+$t->equals(0, (int) $db->value(
+    'SELECT COUNT(*) FROM assignment_issues WHERE assignment_id = :id',
+    ['id' => $foreignAssignmentId]
+), 'выдачи после отзыва нет');
+
+$t->contains(
+    $teacher->get('/panel/journal')['body'],
+    'Работа соседнего класса',
+    'работа с результатами осталась в журнале после отзыва выдачи'
+);
+
+$t->is(
+    $teacher->get('/panel/journal/work/' . $foreignAssignmentId)['status'] === 200,
+    'страница результатов такой работы открывается'
 );
 
 /*
@@ -3394,8 +3510,10 @@ $t->equals(
 
 /*
  * В журнале штраф виден отдельным числом: «набрано, штраф, итого».
+ *
+ * Страницу открывает автор работы: журнал у каждого теперь свой.
  */
-$journalWithPenalty = $head->get('/panel/journal/work/' . $assignmentId);
+$journalWithPenalty = $teacher->get('/panel/journal/work/' . $assignmentId);
 $journalPenaltyFlat = trim(preg_replace('/\s+/', ' ', strip_tags((string) $journalWithPenalty['body'])));
 
 $t->contains($journalPenaltyFlat, 'штраф',
@@ -3656,7 +3774,7 @@ $t->notContains($stepStart['body'], 'data-work-tab="publish"',
  * на двух страницах требовали держать в голове, какой из них сейчас открыт.
  * Теперь сведения — вкладка, а страница работы осталась для чтения.
  */
-$t->contains($stepStart['body'], 'Как собрана работа',
+$t->contains($stepStart['body'], 'Сведения о работе',
     'на вкладке «О работе» есть сведения о работе');
 
 /*
@@ -5036,6 +5154,98 @@ $t->equals(4, substr_count($percentSet, 'name="color[]"'),
 $t->notContains($percentSet, 'name="percent_label[]"', 'поля подписи словами больше нет');
 $t->notContains($percentSet, 'name="score_label[]"', 'подписи нет и у баллового набора');
 
+/*
+ * Выбор цвета — нативное поле, а не четыре кнопки (решение владельца от
+ * 24.10.2026, задача 4): по нажатию браузер показывает стандартное окно, в
+ * котором есть и привычные краски, и любая другая.
+ *
+ * Прежняя палитра закрывала выбор четырьмя значениями, и автор, захотевший
+ * соседний оттенок, не мог его выбрать.
+ */
+$t->equals(4, substr_count($percentSet, 'type="color"'),
+    'у каждой оценки нативное поле выбора цвета');
+$t->notContains($percentSet, 'scale-color__btn',
+    'прежней палитры из четырёх кнопок в форме больше нет');
+
+/*
+ * Свой цвет автора проходит путь целиком: поле → форма → база → форма.
+ *
+ * Сохраняется ровно то, что прислал браузер (в пределах `#rrggbb`), а
+ * мусор заменяется цветом оценки по умолчанию — иначе произвольная строка
+ * из запроса уехала бы в `criteria` и потом в разметку ученика.
+ *
+ * Проверяется и возврат: форма обязана показать сохранённый свой цвет в
+ * поле и покрасить строку оценки — для этого у строки есть атрибут
+ * data-grade-color (класса для своего цвета нет, а инлайновый style= в
+ * шаблонах запрещён правилами интерфейса).
+ */
+$scaleResultUrl = '/panel/assignments/' . $scaleWorkId . '/edit/result';
+$customHex = '#12ab57';
+
+$teacher->post($scaleResultUrl, [
+    '_token'        => $teacher->tokenFrom($teacher->get($scaleResultUrl)) ?? '',
+    'criteria_mode' => 'percent',
+    'grade_mode'    => 'weighted',
+    'show_results'  => '1',
+    'percent_min[]' => ['85', '70', '50', ''],
+    'color[]'       => [$customHex, 'primary', 'warning', 'danger'],
+]);
+
+$criteria = json_decode(
+    (string) $db->value('SELECT criteria FROM assignments WHERE id = :id', ['id' => $scaleWorkId]),
+    true
+);
+
+$t->is(is_array($criteria) && (string) ($criteria[0]['color'] ?? '') === $customHex,
+    'свой цвет сохранён в базу как есть');
+$t->is((string) ($criteria[1]['color'] ?? '') === 'primary',
+    'цвет из палитры сохранён названием, как и раньше');
+
+$scaleAfterCustom = $teacher->get($scaleResultUrl);
+
+$t->is(
+    preg_match('/name="color\[\]"\s+value="' . preg_quote($customHex, '/') . '"/', (string) $scaleAfterCustom['body']) === 1,
+    'форма показывает сохранённый свой цвет в поле'
+);
+$t->contains(
+    $scaleAfterCustom['body'],
+    'data-grade-color="' . $customHex . '"',
+    'строка оценки получила свой цвет атрибутом'
+);
+
+$gradeColorJs = (string) @file_get_contents(dirname(__DIR__) . '/public/assets/js/grade-color.js');
+
+$t->contains($gradeColorJs, 'data-grade-color', 'скрипт ищет строки со своим цветом');
+$t->contains($gradeColorJs, '.style.color', 'скрипт применяет цвет');
+
+// Мусорное значение — цвет оценки по умолчанию, а не строка в базе.
+$teacher->post($scaleResultUrl, [
+    '_token'        => $teacher->tokenFrom($scaleAfterCustom) ?? '',
+    'criteria_mode' => 'percent',
+    'grade_mode'    => 'weighted',
+    'show_results'  => '1',
+    'percent_min[]' => ['85', '70', '50', ''],
+    'color[]'       => ['фиолетовый', 'primary', 'warning', 'danger'],
+]);
+
+$criteria = json_decode(
+    (string) $db->value('SELECT criteria FROM assignments WHERE id = :id', ['id' => $scaleWorkId]),
+    true
+);
+
+$t->is((string) ($criteria[0]['color'] ?? '') === 'success',
+    'цвет вне палитры и вне #rrggbb заменён цветом оценки по умолчанию');
+
+// Возвращаем прежнее состояние шкалы: следующие группы проверяют её.
+$teacher->post($scaleResultUrl, [
+    '_token'        => $teacher->tokenFrom($teacher->get($scaleResultUrl)) ?? '',
+    'criteria_mode' => 'percent',
+    'grade_mode'    => 'weighted',
+    'show_results'  => '1',
+    'percent_min[]' => ['85', '70', '50', ''],
+    'color[]'       => ['success', 'primary', 'warning', 'danger'],
+]);
+
 // В балловом режиме появляется вторая граница.
 $db->run("UPDATE assignments SET criteria_mode = 'score' WHERE id = :id", ['id' => $scaleWorkId]);
 
@@ -6166,24 +6376,20 @@ $variantWorkPage = $student->get('/work/' . $variantWorkId);
 $t->is($variantWorkPage['status'] === 200, 'ученик открывает работу с вариантами');
 
 /*
- * До начала попытки ученик видит одно задание строки, а не все три.
+ * Список заданий на этом экране скрыт — решение владельца от 24.10.2026, и
+ * вместе со списком скрыты условия всех строк: до начала попытки ученик
+ * видит только название работы, счётчик и кнопку, а не состав.
  *
- * Три варианта в одной строке — это три способа выполнить одно и то же
- * задание, а не три задания работы. Если бы он видел их все, работа
- * «из трёх вопросов» превратилась бы в работу из пяти позиций.
- *
- * Проверяется не отсутствие одной строки, а счёт: в странице должно быть
- * ровно одно упоминание условий вариантов и ни одного от второго и третьего.
- * Раньше здесь стояли три `notContains`, и два вопроса к одному и тому же
- * недостижимому эффекту сбивали с толку при первом же падении.
+ * Правило «ученик видит одно задание строки, а не все три» проверяется ниже
+ * уже по существу: на данных попытки (`itemsForAttempt` даёт две позиции на
+ * четыре карточки) и на странице выпавшего варианта. Раньше оно читалось
+ * как побочная видимость списка, и со скрытием списка эта видимость
+ * закономерно ушла — но правило осталось закрытым.
  */
-$t->contains($variantWorkPage['body'], 'Вариант первый', 'основное задание строки видно ученику');
-$t->notContains($variantWorkPage['body'], 'Вариант второй', 'второй вариант до выдачи не виден');
-$t->notContains($variantWorkPage['body'], 'Вариант третий', 'третий вариант до выдачи не виден');
-$t->contains($variantWorkPage['body'], 'Вопрос к обычной строке', 'вторая строка работы видна целиком');
-
-$t->equals(1, substr_count($variantWorkPage['body'], 'Вопрос к заданию Вариант первый'),
-    'вариант выпал один раз — сколько бы их ни было в строке');
+$t->notContains($variantWorkPage['body'], 'Вопрос к заданию Вариант',
+    'условия вариантов строки до попытки не видны — список скрыт');
+$t->notContains($variantWorkPage['body'], 'Вопрос к обычной строке',
+    'условие второй строки скрыто вместе со списком');
 
 $variantStart = $student->post('/work/' . $variantWorkId . '/start', [
     '_token' => $student->tokenFrom($variantWorkPage) ?? '',
@@ -10064,6 +10270,219 @@ $t->equals(
     'без перемешивания порядок как в редакторе'
 );
 
+$t->group('Прохождение перемешанной работы кнопкой «дальше»');
+
+/*
+ * «Дальше» ведёт к следующему заданию ученика, а не к соседнему номеру
+ * позиции в редакторе.
+ *
+ * Номер, который складывался со шагом, брался из строки базы — это номер
+ * позиции в редакторе, — а передавался он в запрос, ждущий номер ученика.
+ * Без перемешивания нумерации совпадают и поломка не видна; при
+ * перемешивании «дальше» уходило на чужое задание либо за пределы списка,
+ * ученика возвращало к списку позиций, а оставшиеся задания он не
+ * открывал вовсе. При сдаче они уходили учителю как «не открывал» — работа
+ * завершалась сама и вдобавок оказывалась на проверке, хотя всё было
+ * посчитано автоматически.
+ *
+ * Обходится вся работа до конца: шесть переходов должны пройти по номерам
+ * 1…6 и закончиться списком позиций, а не оборваться посередине.
+ */
+if ($shuffleMatch === 1) {
+    /*
+     * Порядок должен отличаться от порядка редактора: иначе старый код
+     * прошёл бы обход чисто — он прибавлял бы единицу и в той нумерации.
+     * Пока порядок не отличится, заводится следующая попытка, а совпадение —
+     * одна из 720 перестановок, на которое полагаться нельзя.
+     */
+    $walkAttemptId = (int) $shuffleParts[1];
+    $walkToken = (string) $shuffleParts[3];
+    $walkItemId = (int) $shuffleParts[2];
+
+    for (
+        $try = 0;
+        $try < 5 && $rowsRepo->positionOrder($shuffleWorkId, $walkAttemptId) === [1, 2, 3, 4, 5, 6];
+        $try++
+    ) {
+        $againStart = $student->post('/work/' . $shuffleWorkId . '/start', [
+            '_token' => $student->tokenFrom($student->get('/work/' . $shuffleWorkId)) ?? '',
+        ]);
+
+        if (
+            ($againStart['status'] ?? 0) !== 302
+            || preg_match(
+                '#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#',
+                (string) ($againStart['location'] ?? ''),
+                $againMatch
+            ) !== 1
+        ) {
+            break;
+        }
+
+        $walkAttemptId = (int) $againMatch[1];
+        $walkItemId = (int) $againMatch[2];
+        $walkToken = (string) $againMatch[3];
+    }
+
+    $walkOrder = $rowsRepo->positionOrder($shuffleWorkId, $walkAttemptId);
+    $walkQuestionId = (int) $db->value(
+        "SELECT id FROM questions WHERE test_id = :id AND type = 'single_choice' ORDER BY position LIMIT 1",
+        ['id' => $transferTestId]
+    );
+
+    $t->is($walkQuestionId > 0, 'для обхода есть вопрос с выбором ответа');
+
+    $walkNumbers = [];
+    $walkItems = [];
+    $walkPositions = [];
+
+    for ($step = 1; $step <= 6; $step++) {
+        $walkPage = $student->get('/work/' . $walkAttemptId . '/item/' . $walkItemId . '?t=' . $walkToken);
+
+        $t->is(($walkPage['status'] ?? 0) === 200, 'задание ' . $step . ' обхода открылось');
+
+        $walkItems[] = $walkItemId;
+        $walkPositions[] = (int) $db->value(
+            'SELECT position FROM assignment_items WHERE id = :id',
+            ['id' => $walkItemId]
+        );
+
+        if (preg_match('/Задание (\d+) из 6/', (string) $walkPage['body'], $numberMatch) === 1) {
+            $walkNumbers[] = (int) $numberMatch[1];
+        }
+
+        /*
+         * Ответ даётся, а не пропускается: у задания может стоять «ответ
+         * обязателен», и тогда переход без ответа вернул бы ту же страницу —
+         * проверялось бы не то.
+         */
+        $walkNext = $student->post('/work/' . $walkAttemptId . '/item/' . $walkItemId, [
+            '_token' => $student->tokenFrom($walkPage) ?? '',
+            't'      => $walkToken,
+            [
+                'answer_present[' . $walkQuestionId . ']',
+                '1',
+            ],
+            ['answers[' . $walkQuestionId . ']', 'b'],
+            ['action', 'next'],
+        ]);
+
+        $t->is(($walkNext['status'] ?? 0) === 302, 'переход ' . $step . ' сделан редиректом');
+
+        if (preg_match('#/work/(\d+)/item/(\d+)\?t=[a-f0-9]{64}#', (string) ($walkNext['location'] ?? ''), $nextMatch) === 1) {
+            $walkItemId = (int) $nextMatch[2];
+
+            continue;
+        }
+
+        if (preg_match('#/work/attempt/(\d+)\?t=[a-f0-9]{64}#', (string) ($walkNext['location'] ?? ''), $listMatch) === 1) {
+            // Дошёл до конца — идти больше некуда. Нормально лишь на шестом шаге.
+            $walkItemId = 0;
+
+            continue;
+        }
+
+        // Ни на задание, ни на список не похоже: это и есть обрыв посередине.
+        $walkItemId = -1;
+    }
+
+    $t->equals($walkOrder, $walkPositions,
+        'задания открываются в том порядке, какой у этого ученика');
+    $t->equals([1, 2, 3, 4, 5, 6], $walkNumbers,
+        'нумерация сплошная при каждом переходе, а не номера позиций редактора');
+    $t->equals(6, count(array_unique($walkItems)),
+        'каждое из шести заданий показано по одному разу');
+
+    /*
+     * Ровно шесть прохождений: пропущенное задание оставило бы меньше,
+     * посещённое дважды — больше.
+     */
+    $t->equals(
+        6,
+        (int) $db->value(
+            'SELECT COUNT(*) FROM test_item_attempts WHERE assignment_attempt_id = :id',
+            ['id' => $walkAttemptId]
+        ),
+        'при обходе не осталось ни пропущенных, ни повторно открытых заданий'
+    );
+}
+
+$t->group('В тесте ученика не видно число правильных вариантов');
+
+/*
+ * Подсказка «Правильных: N» выдавала вопрос целиком: зная, что верных два,
+ * и увидев три оставшихся варианта, ученик искал эти два, не читая условие.
+ *
+ * Проверяется на странице прохождения, а не в файле шаблона: важно, что
+ * счётчик не доходит до ученика, а не то, что строка где-то удалена.
+ */
+$mcTestId = (int) $db->value(
+    "SELECT test_id FROM questions WHERE type = 'multiple_choice' ORDER BY test_id LIMIT 1"
+);
+
+$t->is($mcTestId > 0, 'в базе есть задание с выбором нескольких ответов');
+
+if ($mcTestId > 0) {
+    $mcWorkId = (int) $db->insert('assignments', [
+        'title' => 'Работа с несколькими верными',
+        'author_id' => $teacherId,
+        'status' => 'published',
+        'created_at' => date('Y-m-d H:i:s'),
+        'updated_at' => date('Y-m-d H:i:s'),
+    ]);
+
+    $db->insert('assignment_items', [
+        'assignment_id' => $mcWorkId,
+        'position' => 1,
+        'variant' => 1,
+        'plugin_id' => 'test',
+        'task_kind' => 'multiple_choice',
+        'task_id' => $mcTestId,
+        'weight' => 1.0,
+        'max_score' => 1.0,
+        'created_at' => date('Y-m-d H:i:s'),
+    ]);
+
+    $mcIssueId = (int) $db->insert('assignment_issues', [
+        'assignment_id' => $mcWorkId,
+        'author_id' => $teacherId,
+        'available_from' => date('Y-m-d H:i:s'),
+        'available_until' => date('Y-m-d H:i:s', strtotime('+1 day')),
+        'created_at' => date('Y-m-d H:i:s'),
+    ]);
+
+    $db->insert('assignment_issue_students', [
+        'issue_id' => $mcIssueId,
+        'student_id' => $studentId,
+        'class_id' => $classId,
+        'assigned_at' => date('Y-m-d H:i:s'),
+    ]);
+
+    $mcStart = $student->post('/work/' . $mcWorkId . '/start', [
+        '_token' => $student->tokenFrom($student->get('/work/' . $mcWorkId)) ?? '',
+    ]);
+
+    $mcMatch = preg_match(
+        '#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#',
+        (string) ($mcStart['location'] ?? ''),
+        $mcParts
+    );
+
+    $t->is(($mcStart['status'] ?? 0) === 302 && $mcMatch === 1,
+        'работа с несколькими верными ответами начата');
+
+    if ($mcMatch === 1) {
+        $mcPage = $student->get(
+            '/work/' . $mcParts[1] . '/item/' . $mcParts[2] . '?t=' . $mcParts[3]
+        );
+
+        $t->contains($mcPage['body'], 'Отметьте все подходящие варианты',
+            'задание показано как вопрос с несколькими ответами');
+        $t->notContains($mcPage['body'], 'Правильных:',
+            'ученику не названо число правильных вариантов');
+    }
+}
+
 $t->group('Запрет копирования текста задания');
 
 /*
@@ -10500,5 +10919,461 @@ $t->contains(
     "url.searchParams.delete('edit')",
     'переход между вкладками убирает из адреса открытое задание'
 );
+
+$t->group('Пропущенное задание не уходит на ручную проверку');
+
+/*
+ * Решение владельца от 24.10.2026 (волна C): задание, которое ученик не
+ * открывал, — это «пропущено», а не «ждёт проверки».
+ *
+ * Раньше плагин возвращал forReview, и попытка целиком получала отметку
+ * ручной проверки: учитель видел работу в очереди, открывал её, а проверять
+ * было нечего — ответа не существует. Очередь «ждут проверки» засорялась
+ * чужими непрочитанными строками, и настоящие текстовые ответы в ней
+ * терялись.
+ *
+ * Сценарий: работа из двух одинаковых по устройству заданий, ученик
+ * открывает и выполняет только первое, а работу сдаёт сразу. Второе в его
+ * попытке не раскрывалось вовсе — и оно обязано стать пропущенным, без
+ * ожидания учителя, а сама попытка — не помечаться ручной.
+ *
+ * Ручная проверка при этом не исчезает: она остаётся у текстовых вопросов
+ * со стратегией manual — её проверяет группа «Итог по весам» выше.
+ */
+$skippedWorkId = (int) $db->insert('assignments', [
+    'title'         => 'Пропуск не ждёт учителя',
+    'author_id'     => $teacherId,
+    'status'        => 'published',
+    'show_results'  => 1,
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+foreach ([1, 2] as $skipPosition) {
+    $db->insert('assignment_items', [
+        'assignment_id' => $skippedWorkId,
+        'position'      => $skipPosition,
+        'variant'       => 1,
+        'plugin_id'     => 'test',
+        'task_kind'     => 'single_choice',
+        'task_id'       => $transferTestId,
+        'weight'        => 1.0,
+        'max_score'     => 1.0,
+        'created_at'    => date('Y-m-d H:i:s'),
+    ]);
+}
+
+$skippedIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id'   => $skippedWorkId,
+    'author_id'       => $teacherId,
+    'available_from'  => null,
+    'available_until' => null,
+    'created_at'      => date('Y-m-d H:i:s'),
+]);
+
+$db->run(
+    'INSERT INTO assignment_issue_students (issue_id, student_id, class_id, assigned_at)'
+    . ' VALUES (:i, :u, :c, :t)',
+    ['i' => $skippedIssueId, 'u' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
+);
+
+$skippedStartPage = $student->get('/work/' . $skippedWorkId);
+
+$t->is($skippedStartPage['status'] === 200, 'работа с пропуском открыта');
+
+$skippedStart = $student->post('/work/' . $skippedWorkId . '/start', [
+    '_token' => $student->tokenFrom($skippedStartPage) ?? '',
+]);
+
+$t->is($skippedStart['status'] === 302, 'попытка начата');
+
+$skippedParts = [];
+
+$t->is(
+    preg_match('#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#', (string) ($skippedStart['location'] ?? ''), $skippedParts) === 1,
+    'адрес первого задания получен'
+);
+
+$skippedAttemptId = (int) ($skippedParts[1] ?? 0);
+$skippedFirstItemId = (int) ($skippedParts[2] ?? 0);
+$skippedToken = (string) ($skippedParts[3] ?? '');
+
+$skippedFirstPage = $student->get('/work/' . $skippedAttemptId . '/item/' . $skippedFirstItemId . '?t=' . $skippedToken);
+
+$t->is($skippedFirstPage['status'] === 200, 'первое задание открылось');
+
+$skippedQuestionId = (int) $db->value(
+    'SELECT id FROM questions WHERE test_id = :id ORDER BY position LIMIT 1',
+    ['id' => $transferTestId]
+);
+
+/*
+ * Сдача с первого задания: второе ученик не открывал вовсе, и запись о его
+ * прохождении в базе не появляется — ровно тот случай, что проверяется.
+ */
+$skippedFinish = $student->post('/work/' . $skippedAttemptId . '/item/' . $skippedFirstItemId, [
+    '_token' => $student->tokenFrom($skippedFirstPage) ?? '',
+    't'      => $skippedToken,
+    [
+        'answer_present[' . $skippedQuestionId . ']',
+        '1',
+    ],
+    ['answers[' . $skippedQuestionId . ']', 'a'],
+    ['action', 'finish'],
+]);
+
+$t->is($skippedFinish['status'] === 302, 'работа сдана с первого задания');
+
+$skippedSecondItemId = (int) $db->value(
+    'SELECT id FROM assignment_items WHERE assignment_id = :a AND position = 2',
+    ['a' => $skippedWorkId]
+);
+
+$skippedResult = $db->one(
+    'SELECT status, needs_review FROM assignment_item_results
+      WHERE attempt_id = :a AND item_id = :i',
+    ['a' => $skippedAttemptId, 'i' => $skippedSecondItemId]
+);
+
+$t->is($skippedResult !== null, 'результат неоткрытого задания записан');
+$t->equals('skipped', (string) ($skippedResult['status'] ?? ''),
+    'неоткрытое задание — пропущено, а не неверно и не pending');
+$t->equals(0, (int) ($skippedResult['needs_review'] ?? 1),
+    'пропущенное задание не требует ручной проверки');
+
+$t->equals(0, (int) $db->value(
+    'SELECT manual FROM assignment_attempts WHERE id = :id',
+    ['id' => $skippedAttemptId]
+), 'попытка с пропуском не помечена как ждущая учителя');
+
+$skippedResultPage = $student->get(
+    '/work/' . $skippedAttemptId . '/result?t=' . $skippedToken
+);
+
+$t->is(($skippedResultPage['status'] ?? 0) === 200, 'страница результата открыта');
+$t->contains((string) $skippedResultPage['body'], 'пропущено',
+    'ученик видит, что задание пропущено');
+
+$t->group('Случайные варианты показываются при выполнении');
+
+/*
+ * Логика, заданная владельцем (24.10.2026, задача 3):
+ *
+ *   если для задания включено «Выбрать N случайных вариантов ответа»,
+ *   ученику показывается ровно N вариантов: отмеченные «Обязательно
+ *   показывать» идут в первую очередь, среди остальных выбираются
+ *   случайные; при включённом «Перемешать варианты ответа» показанные
+ *   N перемешиваются; сумма баллов считается по показанным вариантам.
+ *
+ * Проверяется на настоящем прохождении: задание с четырьмя вариантами,
+ * лимит три, отметка на первом, перемешивание включено. Счётчики и порядок
+ * берутся со страницы, которую реально открывает ученик, — модульные
+ * проверки отбора живут в наборе грейдинга, здесь важно, что до ученика
+ * доходит именно это.
+ */
+$randomWorkId = (int) $db->insert('assignments', [
+    'title'         => 'Случайные варианты: проверка',
+    'author_id'     => $teacherId,
+    'status'        => 'published',
+    'show_results'  => 1,
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$randomTestId = (int) $db->insert('tests', [
+    'subject_id' => null, 'author_id' => $teacherId, 'class_id' => null,
+    'title' => 'Вопрос с лимитом вариантов', 'description' => '',
+    'time_limit_min' => 0, 'shuffle_questions' => 0, 'shuffle_options' => 1,
+    'max_attempts' => 0, 'show_results' => 1, 'status' => 'draft',
+    'created_at' => date('Y-m-d H:i:s'), 'updated_at' => date('Y-m-d H:i:s'),
+]);
+
+$randomQuestionId = (int) $db->insert('questions', [
+    'test_id' => $randomTestId, 'type' => 'single_choice',
+    'prompt' => 'Выберите планету Солнечной системы',
+    'position' => 1, 'weight' => 2.00, 'is_required' => 1,
+    'explanation' => null,
+    'config' => json_encode(['random_options' => 3, 'correct' => 'b'], JSON_UNESCAPED_UNICODE),
+]);
+
+$randomVariants = [
+    ['a', 'Меркурий'],
+    ['b', 'Венера'],
+    ['c', 'Юпитер'],
+    ['d', 'Плутон'],
+];
+
+foreach ($randomVariants as $randomIndex => $randomVariant) {
+    $db->insert('question_options', [
+        'question_id' => $randomQuestionId, 'kind' => 'option',
+        'value_key' => $randomVariant[0], 'text' => $randomVariant[1],
+        'position' => $randomIndex + 1, 'pair_key' => null,
+        // Отметка на первом варианте — «Обязательно показывать».
+        'always_show' => $randomIndex === 0 ? 1 : 0,
+    ]);
+}
+
+$db->insert('assignment_items', [
+    'assignment_id' => $randomWorkId, 'position' => 1, 'variant' => 1,
+    'plugin_id' => 'test', 'task_kind' => 'single_choice',
+    'task_id' => $randomTestId, 'weight' => 1.0, 'max_score' => 1.0,
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$randomIssueId = (int) $db->insert('assignment_issues', [
+    'assignment_id' => $randomWorkId, 'author_id' => $teacherId,
+    'available_from' => null, 'available_until' => null,
+    'created_at' => date('Y-m-d H:i:s'),
+]);
+
+$db->run(
+    'INSERT INTO assignment_issue_students (issue_id, student_id, class_id, assigned_at)'
+    . ' VALUES (:i, :u, :c, :t)',
+    ['i' => $randomIssueId, 'u' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
+);
+
+$randomStartPage = $student->get('/work/' . $randomWorkId);
+$randomStart = $student->post('/work/' . $randomWorkId . '/start', [
+    '_token' => $student->tokenFrom($randomStartPage) ?? '',
+]);
+
+$t->is($randomStart['status'] === 302, 'работа с лимитом вариантов начата');
+
+$randomParts = [];
+
+$t->is(
+    preg_match('#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#', (string) ($randomStart['location'] ?? ''), $randomParts) === 1,
+    'адрес задания с лимитом получен'
+);
+
+$randomAttemptId = (int) ($randomParts[1] ?? 0);
+$randomItemId = (int) ($randomParts[2] ?? 0);
+$randomToken = (string) ($randomParts[3] ?? '');
+
+$randomPage = $student->get('/work/' . $randomAttemptId . '/item/' . $randomItemId . '?t=' . $randomToken);
+$randomBody = (string) $randomPage['body'];
+
+preg_match_all('/<span class="option__text">([^<]*)<\/span>/', $randomBody, $randomShown);
+$shownTexts = array_values(array_unique($randomShown[1] ?? []));
+
+$t->is($randomPage['status'] === 200, 'страница задания с лимитом открылась');
+
+$t->equals(3, count($shownTexts),
+    'показано ровно три варианта из четырёх — лимит соблюдён');
+
+$t->is(in_array('Меркурий', $shownTexts, true),
+    'вариант с отметкой «Обязательно показывать» показан');
+$t->is(in_array('Венера', $shownTexts, true),
+    'правильный ответ показан — без него вопрос неразрешим');
+$t->is(count($shownTexts) < 4, 'не все варианты показаны: один действительно отпал');
+
+/*
+ * Порядок закреплён за попыткой: три перезагрузки подряд должны дать один
+ * и тот же порядок, иначе ученик при каждом обновлении страницы увидел бы
+ * новую раскладку и сбивался.
+ */
+$randomOrders = [];
+
+for ($randomReload = 0; $randomReload < 3; $randomReload++) {
+    $randomAgain = $student->get('/work/' . $randomAttemptId . '/item/' . $randomItemId . '?t=' . $randomToken);
+
+    preg_match_all('/<span class="option__text">([^<]*)<\/span>/', (string) $randomAgain['body'], $randomOrder);
+    $randomOrders[] = implode('|', $randomOrder[1] ?? []);
+}
+
+$t->equals(1, count(array_unique($randomOrders)),
+    'показанный порядок одинаков при перезагрузке страницы');
+
+/*
+ * Сумма баллов считается по показанным вариантам: ответ берётся из того,
+ * что видит ученик, и за верный ответ начисляется весь вес вопроса —
+ * урезание списка не уменьшает максимум задания.
+ */
+$randomFinish = $student->post('/work/' . $randomAttemptId . '/item/' . $randomItemId, [
+    '_token' => $student->tokenFrom($randomPage) ?? '',
+    't'      => $randomToken,
+    ['answer_present[' . $randomQuestionId . ']', '1'],
+    ['answers[' . $randomQuestionId . ']', 'b'],
+    ['action', 'finish'],
+]);
+
+$t->is($randomFinish['status'] === 302, 'задание с лимитом сдано');
+
+$randomResult = $db->one(
+    'SELECT score, max_score, status FROM assignment_item_results
+      WHERE attempt_id = :a AND item_id = :i',
+    ['a' => $randomAttemptId, 'i' => $randomItemId]
+);
+
+$t->is($randomResult !== null, 'результат задания с лимитом записан');
+$t->equals(
+    2.0,
+    (float) ($randomResult['score'] ?? 0),
+    'верный ответ из показанных вариантов оценён в полный вес вопроса'
+);
+$t->equals(
+    'correct',
+    (string) ($randomResult['status'] ?? ''),
+    'проверка прошла по показанным вариантам'
+);
+
+$t->group('Тестовое прохождение под виртуальным учеником');
+
+/*
+ * Решение владельца от 24.10.2026 (задача 6):
+ *
+ *   - сотрудникам работы не выдаются, поэтому «Пройти работу» открывает
+ *     пробу в отдельной вкладке, в интерфейсе ученика;
+ *   - ученик пробы — виртуальный: один фиксированный id, без класса и без
+ *     отображения в списках учеников, имя — ФИО проходящего;
+ *   - результаты видны автору как у всех, но живут до закрытия вкладки:
+ *     уборка удаляет попытку со всеми следами.
+ *
+ * Проверяется весь путь: кнопка → показ без меню → попытка под
+ * виртуальным → сдача и результат → уборка.
+ */
+$trialEditor = $teacher->get('/panel/assignments/' . $assignmentId . '/edit');
+
+$t->is($trialEditor['status'] === 200, 'редактор работы открыт');
+$t->contains($trialEditor['body'], 'Пройти работу', 'в редакторе есть кнопка прогона');
+$t->contains($trialEditor['body'], '?trial=1', 'кнопка ведёт в тестовое прохождение');
+$t->contains($trialEditor['body'], 'target="_blank"', 'прогон открывается в отдельной вкладке');
+
+$trialPage = $teacher->get('/work/' . $assignmentId . '?trial=1');
+
+$t->is($trialPage['status'] === 200, 'страница пробы открыта');
+$t->notContains($trialPage['body'], '<aside class="sidebar"',
+    'проба идёт в интерфейсе ученика: панельного меню нет');
+
+$trialStart = $teacher->post('/work/' . $assignmentId . '/start', [
+    '_token' => $teacher->tokenFrom($trialPage) ?? '',
+]);
+
+$t->is($trialStart['status'] === 302, 'попытка пробы начата');
+
+$trialAttemptId = (int) $db->value(
+    'SELECT id FROM assignment_attempts WHERE student_id = :s ORDER BY id DESC LIMIT 1',
+    ['s' => StudentRepository::TRIAL_ID]
+);
+
+$t->is($trialAttemptId > 0, 'попытка записана под виртуальным учеником');
+
+$trialRow = $db->one(
+    'SELECT staff_id, student_id FROM assignment_attempts WHERE id = :id',
+    ['id' => $trialAttemptId]
+);
+
+$t->equals(StudentRepository::TRIAL_ID, (int) ($trialRow['student_id'] ?? 0),
+    'в колонке ученика — фиксированный id виртуального');
+$t->equals(0, (int) ($trialRow['staff_id'] ?? 0),
+    'колонка сотрудника пуста: это ученическая попытка, а не самопроверка');
+
+$virtual = $db->one(
+    'SELECT full_name, class_id, login FROM students WHERE id = :id',
+    ['id' => StudentRepository::TRIAL_ID]
+);
+
+$t->is($virtual !== null, 'виртуальный ученик заведён');
+$t->equals('Иванова Мария Петровна', (string) ($virtual['full_name'] ?? ''),
+    'имя виртуального — ФИО проходящего сотрудника');
+/*
+ * class_id должен быть именно NULL. Здесь нельзя пользоваться `??`: он
+ * подставляет значение и при отсутствии ключа, и при NULL — и проверка
+ * приняла бы ноль за «привязан к классу».
+ */
+$t->is(
+    array_key_exists('class_id', (array) $virtual) && ($virtual['class_id'] ?? null) === null,
+    'виртуальный не привязан ни к одному классу'
+);
+$t->is(
+    $students->findByName('Иванова Мария Петровна') === null,
+    'по ФИО виртуальный недоступен: импорт и поиск его не найдут'
+);
+$t->is(
+    (int) $db->value(
+        'SELECT COUNT(*) FROM students WHERE class_id = :c'
+        . ' AND id = ' . StudentRepository::TRIAL_ID,
+        ['c' => $classId]
+    ) === 0,
+    'в списках учеников виртуального нет'
+);
+
+// Интерфейс ученика и на странице задания: меню панели скрыто.
+$trialParts = [];
+
+$t->is(
+    preg_match('#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#', (string) ($trialStart['location'] ?? ''), $trialParts) === 1,
+    'адрес первого задания пробы получен'
+);
+
+$trialItemPage = $teacher->get('/work/' . $trialParts[1] . '/item/' . $trialParts[2] . '?t=' . $trialParts[3]);
+
+$t->is($trialItemPage['status'] === 200, 'задание пробы открылось');
+$t->notContains($trialItemPage['body'], '<aside class="sidebar"',
+    'и на странице задания панельного меню нет');
+$t->contains($trialItemPage['body'], 'attempt-form', 'форма задания на месте — прохождение идёт обычным путём');
+
+// Сдача и результат — как у настоящего ученика: та же страница, те же данные.
+$trialFinish = $teacher->post('/work/' . $trialParts[1] . '/item/' . $trialParts[2], [
+    '_token' => $teacher->tokenFrom($trialItemPage) ?? '',
+    't'      => $trialParts[3],
+    ['action', 'finish'],
+]);
+
+$t->is($trialFinish['status'] === 302, 'проба сдана');
+
+$trialResult = $teacher->get((string) ($trialFinish['location'] ?? ''));
+
+$t->is(($trialResult['status'] ?? 0) === 200, 'результат пробы открылся');
+$t->contains((string) $trialResult['body'], 'По заданиям',
+    'результат пробы показан тем же разбором, что и у настоящих учеников');
+
+/*
+ * Непустой результат: если бы плагин не открыл ни одного задания, страница
+ * была бы «пропущена» и пуста — проверка ниже ловит именно такой случай.
+ */
+$t->is(
+    (int) $db->value(
+        'SELECT COUNT(*) FROM assignment_item_results
+          WHERE attempt_id = :a',
+        ['a' => $trialAttemptId]
+    ) > 0,
+    'результаты пробы записаны под виртуального ученика'
+);
+
+// Уборка — тот же запрос, что шлёт beacon при закрытии вкладки.
+$trialCleanup = $teacher->post('/work/trial/cleanup', [
+    '_token' => $teacher->tokenFrom($trialResult) ?? '',
+    'attempt' => $trialAttemptId,
+]);
+
+$t->is($trialCleanup['status'] === 200, 'уборка принята');
+
+$t->equals(0, (int) $db->value(
+    'SELECT COUNT(*) FROM assignment_attempts WHERE id = :id',
+    ['id' => $trialAttemptId]
+), 'попытка пробы удалена — результаты не остались в базе');
+
+$t->equals(0, (int) $db->value(
+    'SELECT COUNT(*) FROM test_item_attempts WHERE assignment_attempt_id = :a',
+    ['a' => $trialAttemptId]
+), 'черновики плагина убраны вместе с попыткой — сирот не осталось');
+
+$afterCleanup = $teacher->get('/work/' . $assignmentId);
+
+$t->contains($afterCleanup['body'], '<aside class="sidebar"',
+    'после уборки панельное меню вернулось');
+
+/*
+ * Проба не попадает в статистику: и журнал, и средний балл строятся по
+ * выдачам (`assignment_issue_students`), а виртуального в выдачах нет вовсе.
+ * Проверяется средний балл — там выводятся ФИО учеников, и ФИО
+ * проходящего (которое носит виртуальный) в списке не должно значиться.
+ */
+$ratingsAfterTrial = $teacher->get('/panel/ratings');
+
+$t->is($ratingsAfterTrial['status'] === 200, 'страница среднего балла открыта');
+$t->notContains((string) $ratingsAfterTrial['body'], 'Иванова Мария Петровна',
+    'виртуальный не попал в статистику среднего балла');
 
 exit($t->report());

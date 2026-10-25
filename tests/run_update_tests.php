@@ -209,6 +209,30 @@ $t->equals(null, MyEdu\Core\SystemUpdate::safePath('config/config.local.php'), '
 $t->equals(null, MyEdu\Core\SystemUpdate::safePath('public/uploads/picture.png'), 'загруженные картинки не трогаются');
 $t->equals(null, MyEdu\Core\SystemUpdate::safePath('.git/config'), 'каталог git не трогается');
 
+/*
+ * Результат скачивания архива: успех — это true, а не строка.
+ *
+ * Баг владельца (24.10.2026, задача 4): при скачивании в файл fetch()
+ * возвращает true — тело уже лежит в файле, — а проверка ждала непустую
+ * строку и отвергала именно успешное скачивание. Последняя причина при этом
+ * была null, и человек видел «Архив не скачан: неизвестная причина» при
+ * полностью скачанном архиве, а в журнале — ничего, потому что запись
+ * туда стоит только на успешном конце пути.
+ *
+ * Правило вынесено в отдельный метод и проверяется здесь: строки правды
+ * живут в одном месте, а не разъезжаются между скачиванием и его проверкой.
+ */
+$t->group('Скачивание архива');
+
+$t->is(MyEdu\Core\SystemUpdate::downloadSucceeded(true) === true,
+    'запись в файл: true — это успех, а не отказ');
+$t->is(MyEdu\Core\SystemUpdate::downloadSucceeded('архив в память') === true,
+    'тело ответа в память — тоже успех');
+$t->is(MyEdu\Core\SystemUpdate::downloadSucceeded('') === false,
+    'пустая строка — отказ чтения');
+$t->is(MyEdu\Core\SystemUpdate::downloadSucceeded(false) === false,
+    'false — отказ');
+
 /**
  * Распаковка архива в отдельный каталог.
  *

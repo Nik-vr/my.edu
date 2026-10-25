@@ -40,6 +40,11 @@ final class PhpMailer implements MailerInterface
     private ?string $lastError = null;
 
     /**
+     * @var string|null предупреждение PHP при успешной отправке, null — их не было
+     */
+    private ?string $lastWarning = null;
+
+    /**
      * @param array<string,string> $options  дополнительные заголовки письма
      * @param bool                 $useEnvelopeFrom передавать ли «-f» в mail()
      */
@@ -63,9 +68,15 @@ final class PhpMailer implements MailerInterface
         return $this->lastError;
     }
 
+    public function lastWarning(): ?string
+    {
+        return $this->lastWarning;
+    }
+
     public function send(MailMessage $message): bool
     {
         $this->lastError = null;
+        $this->lastWarning = null;
 
         if (!function_exists('mail')) {
             return $this->fail('функция mail() недоступна: она выключена настройками PHP');
@@ -101,26 +112,73 @@ final class PhpMailer implements MailerInterface
 
         $parameters = $this->useEnvelopeFrom ? ['-f' . $this->fromEmail] : [];
 
-        $sent = @mail(
-            $message->to,
-            $this->encodeHeader($message->subject),
-            $body,
-            implode("\r\n", $headers),
-            ...$parameters
-        );
+        /*
+         * Предупреждения PHP вокруг mail() собираются, а не подавляются.
+         *
+         * Прежний `@mail()` прятал самое ценное для диагностики: на части
+         * шаред-хостингов mail() отвечает успехом, а sendmail тут же жалуется
+         * («не удалось выполнить /usr/sbin/sendmail», «нет места», «прав нет»)
+         * — письмо исчезает без следа, владелец видит «принято», а в логах
+         * пусто. Решение владельца от 24.10.2026 (задача 7): ловим каждое
+         * предупреждение и показываем его там же, где результат отправки.
+         *
+         * Обработчик временный и ставится только вокруг вызова: он подавляет
+         * вывод предупреждения прямо в страницу (обработчик возвращает true)
+         * и отдаёт текст своей цели — журналу и lastWarning().
+         */
+        $warnings = [];
 
-        if ($sent !== true) {
-            $this->fail(
-                'mail() вернула false для ' . $message->to
-                . ' (отправитель ' . $this->fromEmail . ')'
-                . ($this->useEnvelopeFrom ? ' с параметром -f' : '')
-                . '. Частая причина на шаред-хостинге: запрещён пятый параметр '
-                . 'либо не задан mail.sendmail_from в php.ini — попробуйте '
-                . 'mail.envelope_from => false.'
+        set_error_handler(static function (int $level, string $text) use (&$warnings): bool {
+            $warnings[] = $text;
+
+            return true;
+        });
+
+        try {
+            $sent = mail(
+                $message->to,
+                $this->encodeHeader($message->subject),
+                $body,
+                implode("\r\n", $headers),
+                ...$parameters
             );
+        } finally {
+            restore_error_handler();
         }
 
-        return $sent === true;
+        if ($sent !== true) {
+            $reason = 'mail() вернула false для ' . $message->to
+                . ' (отправитель ' . $this->fromEmail . ')'
+                . ($this->useEnvelopeFrom ? ' с параметром -f' : '');
+
+            if ($warnings !== []) {
+                $reason .= '. PHP сообщил: ' . implode('; ', $warnings);
+            } else {
+                $reason .= '. Частая причина на шаред-хостинге: запрещён пятый параметр '
+                    . 'либо не задан mail.sendmail_from в php.ini — попробуйте '
+                    . 'mail.envelope_from => false.';
+            }
+
+            return $this->fail($reason);
+        }
+
+        /*
+         * Успех тоже остаётся в журнале: раньше запись была только при отказе,
+         * и владелец не мог отличить «письмо ушло» от «отправки не было
+         * вовсе». В журнал попадает адрес, тема и результат, но не текст
+         * письма: журнал читается вслух при диагностике, а содержимое касается
+         * адресата.
+         */
+        if ($warnings !== []) {
+            $this->lastWarning = 'PHP предупредил при отправке: ' . implode('; ', $warnings);
+
+            error_log('[mail] принято с предупреждением для ' . $message->to
+                . ', тема «' . $message->subject . '»: ' . implode('; ', $warnings));
+        } else {
+            error_log('[mail] принято для ' . $message->to . ', тема «' . $message->subject . '»');
+        }
+
+        return true;
     }
 
     /**

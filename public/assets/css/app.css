@@ -133,7 +133,7 @@ a { color: var(--accent-link); }
     font-weight: 600;
 }
 
-.topnav__roles { font-weight: 400; font-size: 12px; color: var(--text-muted); }
+.topnav__roles { font-weight: 400; font-size: var(--font-ui); color: var(--text-muted); }
 
 .topnav__logout { margin: 0; }
 
@@ -262,7 +262,7 @@ a { color: var(--accent-link); }
     vertical-align: top;
 }
 
-.generated-table th { font-size: 13px; color: var(--text-muted, #5a6472); font-weight: 600; }
+.generated-table th { font-size: var(--font-ui); color: var(--text-muted, #5a6472); font-weight: 600; }
 
 /* Имя: короткое, поэтому колонка узкая и не забирает место у значений. */
 .generated-table th:nth-child(1), .generated-table td:nth-child(1) { width: 15%; }
@@ -295,7 +295,7 @@ a { color: var(--accent-link); }
  * только напоминание, чем заполнен промежуток. Колонка прижата к левому краю и
  * не забирает ширину у полей: соседние ячейки с числами от неё зависят больше.
  */
-.generated-table__formula { color: var(--text-muted); font-size: 13px; white-space: nowrap; }
+.generated-table__formula { color: var(--text-muted); font-size: var(--font-ui); white-space: nowrap; }
 
 /* Поля диапазона идут в ряд: три отдельных столбца ради трёх чисел не стоили. */
 .generated-table__values span { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -319,7 +319,7 @@ a { color: var(--accent-link); }
 }
 
 .data-table th {
-    font-size: 12px;
+    font-size: var(--font-ui);
     text-transform: uppercase;
     letter-spacing: .03em;
     color: var(--text-muted);
@@ -382,7 +382,7 @@ a { color: var(--accent-link); }
     border-radius: 50%;
     background: var(--surface);
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--font-small);
     font-weight: 700;
     line-height: 1;
     cursor: help;
@@ -408,7 +408,7 @@ a { color: var(--accent-link); }
     background: var(--surface);
     box-shadow: 0 10px 28px rgb(0 0 0 / .14);
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--font-ui);
     font-weight: 400;
     line-height: 1.45;
     text-align: left;
@@ -528,10 +528,10 @@ code {
 .cell-avatar--owner { background: var(--purple); }
 
 /* Подпись под именем в таблице пользователей. */
-.cell-subtext { font-size: 11.5px; color: var(--text-muted); }
+.cell-subtext { font-size: var(--font-ui); color: var(--text-muted); }
 
 /* Даты в таблице пользователей: приглушены, чтобы спорить не с именем. */
-.cell-muted { font-size: 12.5px; color: var(--text-muted); }
+.cell-muted { font-size: var(--font-ui); color: var(--text-muted); }
 
 /* Ряд верхних показателей: отступ снизу, как у соседних блоков. */
 .stats-row { margin-bottom: 16px; }
@@ -589,7 +589,90 @@ code {
 .grade--warning { color: var(--grade-warning); }
 .grade--danger  { color: var(--grade-danger); }
 
-.metric-label { font-size: 13px; color: var(--text-muted); }
+.metric-label { font-size: var(--font-ui); color: var(--text-muted); }
+
+/* ------------------------------------------------------ результат: дуга-шкала
+ *
+ * Вид оценки на странице результата — дуга-шкала, как показано владельцу:
+ * SVG-дуга с процентом, кружок оценки цветом авторской шкалы и таблица
+ * «баллы / максимум / процент». Решение владельца от 24.10.2026 (волна D).
+ *
+ * Вся геометрия дуги — в атрибутах самой SVG (stroke-dasharray, stroke-width,
+ * r, transform): инлайновые style= в шаблонах запрещены проверкой
+ * `tests/run_ui_rules_tests.php`, а атрибуты — обычная разметка.
+ */
+.result-gauge-row {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+}
+
+.result-gauge { flex: 0 0 auto; }
+
+.result-gauge__track { stroke: var(--border-color); }
+
+.result-gauge__value { stroke: var(--accent); }
+
+.result-gauge__percent {
+    font-size: 17px;
+    font-weight: 700;
+    fill: var(--text);
+}
+
+.result-gauge__caption {
+    font-size: 10px;
+    fill: var(--text-muted);
+}
+
+.result-gauge-data {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+/*
+ * Кружок оценки: та же краска, что и у числа оценки (класс grade--* берёт
+ * цвет из шкалы автора), только обведённая — цвет читается и как пятно, и
+ * как цифра. currentColor берёт цвет текста, то есть ровно тот, что задал
+ * класс оценки: отдельная переменная здесь разошлась бы с шкалой.
+ */
+.grade-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 58px;
+    height: 58px;
+    flex: 0 0 auto;
+    border: 3px solid currentColor;
+    border-radius: 50%;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.result-figures {
+    border-collapse: collapse;
+    font-size: var(--font-ui);
+}
+
+.result-figures th,
+.result-figures td {
+    padding: 5px 16px 5px 0;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.result-figures th {
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.result-figures td {
+    font-weight: 700;
+    color: var(--text);
+}
 
 .chip-list { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
 
@@ -597,9 +680,9 @@ code {
 
 .chip--link:hover { border-color: var(--accent-link); }
 
-.chip__note { font-size: 12px; color: var(--text-muted); }
+.chip__note { font-size: var(--font-small); color: var(--text-muted); }
 
-.chip__count { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
+.chip__count { font-size: var(--font-small); color: var(--accent-ink); font-weight: 600; }
 
 .badge--bad { background: var(--bad-soft); color: var(--bad-text); }
 
@@ -639,7 +722,7 @@ code {
     padding: 18px 20px;
     text-align: center;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 .footer p { margin: 0; }
@@ -674,7 +757,7 @@ code {
   background: var(--accent-soft);
   color: var(--accent-ink);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--font-ui);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -931,6 +1014,44 @@ code {
     .profile-avatar-form__actions { justify-content: center; }
 }
 
+/*
+ * Выбор размера шрифта: три переключателя столбцом и кнопка под ними.
+ *
+ * Переключатели не в ряд, а друг под другом — как в настройках, а не как в
+ * опросе из трёх клеток: подпись «Нормальный» длиннее соседней, и в ряду они
+ * рвались бы на две строки по-разному в зависимости от ширины. Кнопка
+ * отдельной строкой, чтобы её не принять за четвёртый выбор.
+ */
+.profile-font-size__choices {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.profile-font-size__actions {
+    margin-top: 14px;
+}
+
+/*
+ * Форма темы в профиль: та же раскладка, что у размера шрифта, но своё имя
+ * класса — это другая форма с другим адресом, и общая разметка между ними
+ * всё равно не разделяется (см. templates/auth/_theme_form.php).
+ */
+.profile-theme__choices {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.profile-theme__actions {
+    margin-top: 14px;
+}
+
+/* Два блока настроек в одной карточке: второй отодвинут от первого. */
+.card-body .profile-theme { margin-top: 22px; }
+
 /* ---------------------------------------------------------------- факты, чипы */
 
 .facts { margin: 18px 0 0; }
@@ -971,7 +1092,7 @@ code {
     border-radius: 8px;
     background: #0077ff;
     color: #fff;
-    font-size: 13px;
+    font-size: var(--font-small);
     font-weight: 700;
     letter-spacing: .5px;
 }
@@ -985,7 +1106,7 @@ code {
     color: var(--accent-ink);
     border-radius: 999px;
     padding: 4px 12px;
-    font-size: 13px;
+    font-size: var(--font-small);
 }
 
 .badge {
@@ -994,7 +1115,7 @@ code {
     color: var(--accent-ink);
     border-radius: 6px;
     padding: 2px 8px;
-    font-size: 12px;
+    font-size: var(--font-small);
     font-weight: 500;
 }
 
@@ -1045,7 +1166,7 @@ code {
 
 .field__label { display: block; font-weight: 600; margin-bottom: 6px; }
 
-.field__hint { display: block; color: var(--text-muted); font-size: 13px; margin-top: 6px; }
+.field__hint { display: block; color: var(--text-muted); font-size: var(--font-small); margin-top: 6px; }
 
 /*
  * Обязательные поля отмечены звёздочкой.
@@ -1089,7 +1210,7 @@ form:not(.inline-form):has([required])::before {
     display: block;
     margin: 0 0 16px;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 /*
@@ -1279,6 +1400,85 @@ input[type="file"]::file-selector-button:hover {
 
 .attempt__who { font-weight: 600; }
 
+/* ------------------------------------------- сворачиваемые разделы меню
+ *
+ * Заголовок раздела — кнопка (решение владельца от 24.10.2026, задача 1):
+ * нажатие сворачивает и разворачивает раздел, состояние живёт в cookie
+ * каждого раздела отдельно.
+ *
+ * Селектор с предком, а не один класс: правило должно перебивать
+ * `.nav-label` из сборки gentelella (кнопке по умолчанию достаётся фон и
+ * рамка браузера), а сборка подключается позже проектных стилей и при
+ * равной специфичности выигрывает каскад.
+ *
+ * Шрифт не берётся наследием целиком (font: reset съел бы font-size: 10px
+ * от .nav-label): у кнопки свой, браузерный шрифт, и наследуется только
+ * семейство — иначе подпись заголовка печаталась бы другим шрифтом, чем
+ * соседние.
+ */
+.sidebar-nav .nav-label--toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin: 0;
+    background: none;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.sidebar-nav .nav-label--toggle:hover {
+    color: var(--sidebar-text-hover, rgba(123, 143, 163, 0.9));
+}
+
+/* Стрелка состояния: направление меняет только класс на группе — после
+ * нажатия разметку трогает скрипт, а рисует её CSS, поэтому серверная и
+ * клиентская картинки совпадают. */
+.sidebar-nav .nav-label--toggle::after {
+    content: '▾';
+    font-size: 11px;
+    opacity: .7;
+}
+
+.nav-group--closed .nav-label--toggle::after {
+    content: '▸';
+}
+
+/* Пункты свёрнутого раздела скрыты: это и есть сворачивание. Класс ставит
+ * сервер по cookie при отрисовке и скрипт при нажатии — один класс на
+ * оба пути. */
+.nav-group--closed .nav-sublist {
+    display: none;
+}
+
+/*
+ * В узкой колонке (rail) свёрнутость не действует: там не видно ни
+ * заголовков разделов, ни подписей пунктов — только иконки, и прятать
+ * иконки «Школы» за свёрнутостью, о которой в этом режиме не узнать, было
+ * бы потерей пунктов без всякой выгоды.
+ *
+ * Ограничение по ширине экрана обязательно: класс rail сервер ставит по
+ * cookie без оглядки на ширину, и без media-запроса правило перебило бы
+ * свёрнутость на телефоне, где меню выдвижное и разделы сворачиваются
+ * как обычно.
+ */
+@media (min-width: 769px) {
+    body.sidebar-rail .nav-group--closed .nav-sublist {
+        display: block;
+    }
+}
+
+/*
+ * Группа кнопок навигации в шапке прохождения: шапка рисует их как
+ * submit-кнопки формы задания (атрибут `form`), и группа должна стоять в
+ * ряд, а не столбиком — иначе навигация в шапке читалась бы как поломка.
+ */
+.attempt__nav { display: flex; align-items: center; gap: 8px; }
+
 .attempt__progress { color: var(--text-muted); font-size: 14px; }
 
 .attempt__score { color: var(--text-muted); font-size: 14px; }
@@ -1306,7 +1506,7 @@ input[type="file"]::file-selector-button:hover {
 
 .qnav__title {
     margin: 0 0 12px;
-    font-size: 13px;
+    font-size: var(--font-ui);
     text-transform: uppercase;
     letter-spacing: .04em;
     color: var(--text-muted);
@@ -1700,7 +1900,7 @@ input[type="file"]::file-selector-button:hover {
     width: 1%;
     padding-right: 12px;
     color: var(--adm-muted, var(--text-muted));
-    font-size: 13px;
+    font-size: var(--font-ui);
     text-align: right;
     white-space: nowrap;
 }
@@ -1744,7 +1944,7 @@ input[type="file"]::file-selector-button:hover {
 .inline-status {
     margin: 6px 0 0;
     padding: 6px 10px;
-    font-size: 13px;
+    font-size: var(--font-small);
 }
 
 /*
@@ -1915,7 +2115,7 @@ input[type="file"]::file-selector-button:hover {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: var(--font-ui);
     font-weight: 600;
 }
 
@@ -2008,7 +2208,7 @@ input[type="file"]::file-selector-button:hover {
 
 .result-head__grade-value { font-size: 52px; font-weight: 700; line-height: 1; }
 
-.result-head__grade-label { font-size: 12px; opacity: .9; text-align: center; padding: 0 8px; }
+.result-head__grade-label { font-size: var(--font-ui); opacity: .9; text-align: center; padding: 0 8px; }
 
 .score-board {
     display: grid;
@@ -2029,13 +2229,13 @@ input[type="file"]::file-selector-button:hover {
 
 .score-board__of { font-size: 14px; font-weight: 400; color: var(--text-muted); }
 
-.score-board__label { font-size: 13px; color: var(--text-muted); }
+.score-board__label { font-size: var(--font-ui); color: var(--text-muted); }
 
 .scale-table { width: 100%; border-collapse: collapse; }
 
 .scale-table th, .scale-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
 
-.scale-table th { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+.scale-table th { font-size: var(--font-ui); color: var(--text-muted); font-weight: 500; }
 
 .scale-table tr.is-current { background: var(--accent-soft); font-weight: 600; }
 
@@ -2066,7 +2266,7 @@ input[type="file"]::file-selector-button:hover {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: var(--font-ui);
     font-weight: 600;
 }
 
@@ -2216,7 +2416,7 @@ input[type="file"]::file-selector-button:hover {
     border-radius: 10px;
     background: #d63638;
     color: #fff;
-    font-size: 12px;
+    font-size: var(--font-small);
     font-weight: 700;
 }
 
@@ -2291,7 +2491,7 @@ input[type="file"]::file-selector-button:hover {
 /* Имя и роли в одну колонку: иначе приветствие и роли расходятся по ширине. */
 .adm-top__who { display: inline-flex; flex-direction: column; line-height: 1.2; text-align: left; }
 
-.adm-top__roles { color: #a9b4c1; font-size: 12px; }
+.adm-top__roles { color: #a9b4c1; font-size: var(--font-small); }
 
 /*
 * Выход в шапке. С формой, а не ссылкой: выход меняет состояние на сервере
@@ -2343,7 +2543,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     margin: 14px 0 6px;
     padding: 0 14px;
     color: #8d97a4;
-    font-size: 12px;
+    font-size: var(--font-ui);
     font-weight: 700;
     letter-spacing: .04em;
     text-transform: uppercase;
@@ -2390,7 +2590,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     border-radius: 10px;
     background: #3d4756;
     color: #e7ecf2;
-    font-size: 12px;
+    font-size: var(--font-small);
     font-weight: 700;
 }
 
@@ -2426,7 +2626,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .wizard__title {
     margin: 0 10px 14px;
     color: #7d8a99;
-    font-size: 11px;
+    font-size: var(--font-ui);
     font-weight: 700;
     letter-spacing: .09em;
     text-transform: uppercase;
@@ -2532,7 +2732,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .ql-upload-note {
     margin-top: 6px;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 .ql-upload-note--error { color: var(--red, #b42318); }
@@ -2553,7 +2753,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .wizard__group-title {
     margin: 0 0 6px;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--font-ui);
     font-weight: 600;
 }
 
@@ -2618,7 +2818,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     flex: none;
     width: 26px;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-ui);
     text-align: right;
 }
 
@@ -2628,7 +2828,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     display: flex;
     align-items: baseline;
     gap: 10px;
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 .board-row__price { font-weight: 600; }
@@ -2712,7 +2912,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .work-card.is-dragging { opacity: .5; }
 
 .work-card__title { font-weight: 600; overflow-wrap: anywhere; }
-.work-card__kind { color: var(--text-muted); font-size: 13px; }
+.work-card__kind { color: var(--text-muted); font-size: var(--font-ui); }
 
 /*
  * Значок с восклицательным знаком и подсказкой при наведении.
@@ -2736,7 +2936,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     border-radius: 50%;
     background: var(--grade-warning);
     color: #fff;
-    font-size: 12px;
+    font-size: var(--font-ui);
     font-weight: 700;
     line-height: 1;
     cursor: help;
@@ -2756,7 +2956,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     border-radius: var(--radius, 4px);
     background: #333;
     color: #fff;
-    font-size: 12px;
+    font-size: var(--font-ui);
     font-weight: 400;
     line-height: 1.45;
     text-align: left;
@@ -2923,7 +3123,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .work-folder__title::before {
     content: '▸';
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--font-small);
 }
 
 .work-folder__box[open] > .work-folder__title::before { content: '▾'; }
@@ -2931,7 +3131,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .work-folder__count {
     color: var(--text-muted);
     font-weight: 400;
-    font-size: 13px;
+    font-size: var(--font-small);
 }
 
 /*
@@ -2959,7 +3159,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 
 .work-list__head {
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--font-ui);
     border-bottom: 1px solid var(--border);
 }
 
@@ -3014,7 +3214,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
  */
 .work-row__delete-error {
     color: var(--bad, #d64545);
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 .work-row__actions .is-busy { opacity: 0.5; pointer-events: none; }
@@ -3153,7 +3353,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     padding: 14px 26px;
     background: var(--adm-dark-2);
     color: #93a0af;
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 .adm-foot p { margin: 0; }
@@ -3228,7 +3428,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
  */
 .facts__label {
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-ui);
     margin-right: 6px;
 }
 
@@ -3257,7 +3457,7 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
     margin: 0;
     padding: 0;
     color: #6b7280;
-    font-size: 13px;
+    font-size: var(--font-ui);
 }
 
 .steps-inline .is-current {
@@ -3503,32 +3703,35 @@ body.adm { display: flex; flex-direction: column; min-height: 100vh; background:
 .scale-row__points:empty { display: none; }
 
 /*
- * Цвет: квадрат рядом со списком.
+ * Цвет: поле выбора цвета рядом со списком.
  *
- * Квадрат рисуется краской, а не картинкой: иначе в тёмной теме он остался бы
- * белым, а рядом с ним — тот же, что выбрал автор. Само значение приходит
- * списком, поэтому квадрат показывает сохранённый цвет, а скрипт
- * `scale-color.js` подтягивает его на глаз при выборе нового.
+ * Это нативное `<input type="color">` — решение владельца от 24.10.2026
+ * (задача 4): по нажатию браузер показывает стандартное окно, где есть и
+ * привычные четыре краски, и любая другая. Прежняя палитра из четырёх
+ * кнопок удалена вместе с разметкой — выбор был закрыт набором, а автор
+ * мог захотеть соседний оттенок.
+ *
+ * Размер и рамка заданы явно: у поля по умолчанию свои, и на тёмной теме
+ * оно выглядело бы чужим пятном. Краску строки при выборе подтягивает
+ * `scale-color.js`.
  */
 .scale-field--color { flex: 0 0 auto; }
 
-.scale-color { display: flex; align-items: center; gap: 8px; }
-
-.scale-color__chip {
-    flex: none;
-    width: 16px;
-    height: 16px;
-    border: 1px solid rgba(0, 0, 0, .25);
-    border-radius: 3px;
-    background: var(--grade-primary);
+.scale-color__input {
+    display: block;
+    width: 64px;
+    height: 34px;
+    padding: 2px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    background: var(--bg-surface-secondary, #fff);
+    cursor: pointer;
 }
 
-.scale-color__chip--success { background: var(--grade-success); }
-.scale-color__chip--primary { background: var(--grade-primary); }
-.scale-color__chip--warning { background: var(--grade-warning); }
-.scale-color__chip--danger  { background: var(--grade-danger); }
-
-.scale-color__select { width: auto; min-width: 9rem; }
+.scale-color__input:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+}
 
 /* Стрелка — приглашение смотреть вправо, а не разделитель колонок. */
 .scale-row__arrow {

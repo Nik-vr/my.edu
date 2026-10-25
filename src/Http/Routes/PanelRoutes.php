@@ -108,6 +108,10 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/assignments/{id}/status', [$c->assignments, 'status'], Role::TESTS_MANAGE);
         $router->get('/panel/assignments/{id}/delete', [$c->assignments, 'confirmDestroy'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/delete', [$c->assignments, 'destroy'], Role::TESTS_MANAGE);
+
+        // Отзыв выдачи: удаляет все выдачи работы, но сохраняет саму работу и результаты
+        $router->get('/panel/assignments/{id}/recall', [$c->assignments, 'confirmRecall'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/recall', [$c->assignments, 'recall'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/tasks/new', [$c->assignments, 'createTask'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/tasks/add', [$c->assignments, 'addExistingTask'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/items/{itemId}', [$c->assignments, 'updateItem'], Role::TESTS_MANAGE);

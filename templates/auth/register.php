@@ -72,7 +72,7 @@ declare(strict_types=1);
             <input class="form-control" type="text" id="register-name" name="full_name"
                    value="<?= $view->e($old['full_name']) ?>"
                    required maxlength="191" autofocus autocomplete="name"
-                   placeholder="Петроченко Николай Юрьевич">
+                   placeholder="Иванов Иван Иванович">
             <div class="form-help">В этом порядке: фамилия, имя, отчество. Обязательны фамилия и имя.</div>
         </div>
 

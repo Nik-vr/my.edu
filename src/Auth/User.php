@@ -15,6 +15,15 @@ namespace MyEdu\Auth;
  */
 final class User
 {
+    /** Размеры шрифта, доступные человеку, и тот, который считается нормальным. */
+    public const FONT_SMALL = 'small';
+    public const FONT_NORMAL = 'normal';
+    public const FONT_LARGE = 'large';
+
+    /** Темы оформления: тёмная — умолчание, светлая — выбор человека. */
+    public const THEME_DARK = 'dark';
+    public const THEME_LIGHT = 'light';
+
     /** @param list<string> $roles */
     public function __construct(
         public readonly int $id,
@@ -28,6 +37,24 @@ final class User
         public readonly ?string $birthDate = null,
         public readonly ?string $vkUrl = null,
         /*
+         * Личный размер шрифта: small, normal, large.
+         *
+         * Защищён от мусора тем же приёмом, что и остальные значения из базы:
+         * что не из списка — то нормальный размер. Иначе человек, однажды
+         * написавший в поле что попало, навсегда остался бы со страницей без
+         * шрифта, и никакого сообщения об этом он бы не увидел.
+         */
+        public readonly string $fontSize = self::FONT_NORMAL,
+        /*
+         * Личная тема: dark, light.
+         *
+         * Хранится на сервере (решение владельца от 24.10.2026, волна E):
+         * раньше выбор жил в localStorage браузера и терялся на другом
+         * устройстве. Приведение — тем же правилом, что и у размера шрифта:
+         * мусор считается тёмной темой, то есть значением по умолчанию.
+         */
+        public readonly string $theme = self::THEME_DARK,
+        /*
          * Отпечаток пароля — не сам хеш и не сам пароль.
          *
          * Нужен сессии: смена пароля должна обрывать все входы человека, а
@@ -37,6 +64,56 @@ final class User
          */
         public readonly ?string $passwordStamp = null
     ) {
+    }
+
+    /**
+     * Размеры шрифта в порядке «от мелкого к крупному».
+     *
+     * Список нужен форме настроек: она рисует выбор в этом порядке, а не в
+     * порядке, в каком значения записаны в коде. Это же — полный список
+     * допустимых значений: всё, чего здесь нет, при сохранении отклоняется.
+     *
+     * @return list<string>
+     */
+    public static function fontSizes(): array
+    {
+        return [self::FONT_SMALL, self::FONT_NORMAL, self::FONT_LARGE];
+    }
+
+    /**
+     * Привести значение из базы или из запроса к одному из допустимых размеров.
+     *
+     * Отдельная функция, а не проверка в месте чтения: значений три — в базе,
+     * в форме и в оболочке страницы, — и если каждое будет приводить по-своему,
+     * то расхождение обнаружится только на экране человека.
+     */
+    public static function fontSizeOf(mixed $value): string
+    {
+        $value = is_string($value) ? $value : '';
+
+        return in_array($value, self::fontSizes(), true) ? $value : self::FONT_NORMAL;
+    }
+
+    /**
+     * @return list<string> темы в порядке: тёмная, светлая
+     */
+    public static function themes(): array
+    {
+        return [self::THEME_DARK, self::THEME_LIGHT];
+    }
+
+    /**
+     * Привести значение из базы или из запроса к одной из допустимых тем.
+     *
+     * Та же причина, что и у размера шрифта: значение читается в трёх местах —
+     * база, форма профиля, оболочка страницы, — и приведение должно быть
+     * одним, иначе форма запомнит одно, а оболочка нарисует другое.
+     */
+    public static function themeOf(mixed $value): string
+    {
+        $value = is_string($value) ? $value : '';
+
+        return in_array($value, self::themes(), true) ? $value : self::THEME_DARK;
     }
 
     /** @param array<string,mixed> $row */
@@ -53,6 +130,8 @@ final class User
             emailVerifiedAt: !empty($row['email_verified_at']) ? (string) $row['email_verified_at'] : null,
             birthDate: !empty($row['birth_date']) ? (string) $row['birth_date'] : null,
             vkUrl: !empty($row['vk_url']) ? (string) $row['vk_url'] : null,
+            fontSize: self::fontSizeOf($row['font_size'] ?? null),
+            theme: self::themeOf($row['theme'] ?? null),
             passwordStamp: substr(hash('sha256', (string) ($row['password_hash'] ?? '')), 0, 32)
         );
     }

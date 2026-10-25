@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace MyEdu\Http\Controller\Panel;
 
 use MyEdu\Auth\Auth;
-use MyEdu\Auth\Role;
 use MyEdu\Core\Request;
 use MyEdu\Core\Response;
 use MyEdu\Core\View;
@@ -20,9 +19,12 @@ use MyEdu\Repository\RatingRepository;
  * что и журнал, но сводкой. Правила периода живут в `RatingPeriod`, что считать
  * попыткой — в `RatingRepository`; здесь только форма и раскладка.
  *
- * Чужие работы видны тем же, кому и в «Просмотре результатов»: администратору
- * все, остальным свои. Иначе сводка по классу собирала бы половину работ школы
- * из одного учительского аккаунта и выглядела бы полной.
+ * Круг видимых работ — общий с журналом, `Auth::journalAuthorId()`: своя
+ * статистика у каждого, кто ведёт работы, и вся школа — только у
+ * администратора. Раньше здесь была своя копия той же проверки, и журнал со
+ * «Средним баллом» расходились для завуча: он видел в одном все работы школы,
+ * а в другом — только свои. Решение владельца — отдельной логики для завуча
+ * нет, и круг теперь берётся из одного места.
  */
 final class RatingController
 {
@@ -38,7 +40,7 @@ final class RatingController
     public function index(Request $request): Response
     {
         $period = RatingPeriod::fromRequest($request->queryParam('period'));
-        $authorId = $this->auth->can(Role::USERS_MANAGE) ? 0 : (int) ($this->auth->user()?->id ?? 0);
+        $authorId = max(0, $this->auth->journalAuthorId());
 
         $byClass = $this->ratings->byClass($period, $authorId);
         $classId = (int) $request->queryParam('class', '0');

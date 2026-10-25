@@ -290,8 +290,17 @@ final class Database
             $updateColumns = array_values(array_diff($columns, $keyColumns));
         }
 
+        // Use prefixed parameter names for ON DUPLICATE KEY UPDATE to avoid
+        // "Invalid parameter number" with emulated prepares disabled: the same
+        // named parameter cannot appear twice in one query (once in VALUES,
+        // once in UPDATE). Prefix 'u_' keeps update parameters separate.
+        $updateParams = [];
         $assignments = array_map(
-            fn (string $c): string => $this->quoteIdent($c) . ' = VALUES(' . $this->quoteIdent($c) . ')',
+            function (string $c) use (&$updateParams, $data): string {
+                $paramName = 'u_' . $c;
+                $updateParams[$paramName] = $data[$c];
+                return $this->quoteIdent($c) . ' = :' . $paramName;
+            },
             $updateColumns
         );
 
@@ -303,7 +312,7 @@ final class Database
             $sql .= ' ON DUPLICATE KEY UPDATE ' . implode(', ', $assignments);
         }
 
-        $this->run($sql, $data);
+        $this->run($sql, $data + $updateParams);
     }
 
     /**

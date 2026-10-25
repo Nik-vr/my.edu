@@ -93,6 +93,16 @@ CREATE TABLE IF NOT EXISTS `users` (
   --   загружал; тогда показываются инициалы. См. миграцию 018.
   `avatar_url`        VARCHAR(255) NULL,
   `is_owner`          TINYINT(1)   NOT NULL DEFAULT 0,
+  -- font_size — личный размер шрифта: small, normal, large. Читается в
+  --   оболочке страницы (data-font-size) и в настройках профиля. См. миграцию
+  --   008. Значения вне списка обрезаются до normal при чтении.
+  `font_size`         VARCHAR(8)   NOT NULL DEFAULT 'normal' COMMENT 'личный размер шрифта: small, normal, large',
+  -- theme — личная тема оформления: dark, light. Читается в оболочке
+  --   страницы (data-theme) до первой отрисовки и в настройках профиля.
+  --   См. миграцию 010. Значения вне списка считаются тёмной темой.
+  --   Прежний выбор жил в localStorage браузера и терялся на другом
+  --   устройстве; теперь тема живёт в профиле, как и размер шрифта.
+  `theme`             VARCHAR(8)   NOT NULL DEFAULT 'dark' COMMENT 'личная тема: dark, light',
   `status`            ENUM('pending','active','blocked') NOT NULL DEFAULT 'pending',
   `email_verified_at` DATETIME     NULL,
   `last_login_at`     DATETIME     NULL,
@@ -210,6 +220,12 @@ CREATE TABLE IF NOT EXISTS `students` (
   -- status — только active/blocked: значения pending у ученика не бывает,
   --   почты для подтверждения адреса у него нет.
   `status`        ENUM('active','blocked') NOT NULL DEFAULT 'active',
+  -- font_size — личный размер шрифта: small, normal, large. Как у
+  --   сотрудников, но своё значение: у каждого свой выбор. См. миграцию 008.
+  `font_size`     VARCHAR(8)   NOT NULL DEFAULT 'normal' COMMENT 'личный размер шрифта: small, normal, large',
+  -- theme — личная тема оформления: dark, light. Как у сотрудников, но своё
+  --   значение: у каждого свой выбор. См. миграцию 010.
+  `theme`         VARCHAR(8)   NOT NULL DEFAULT 'dark' COMMENT 'личная тема: dark, light',
   `class_id`      INT UNSIGNED NULL COMMENT 'один класс на ученика; NULL — вне класса',
   `created_at`    DATETIME     NOT NULL,
   `updated_at`    DATETIME     NOT NULL,

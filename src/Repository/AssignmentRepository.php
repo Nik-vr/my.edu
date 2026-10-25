@@ -1614,6 +1614,19 @@ final class AssignmentRepository
     }
 
     /**
+     * Количество выдач работы.
+     */
+    public function countIssued(int $assignmentId): int
+    {
+        return (int) $this->db->value(
+            'SELECT COUNT(*) FROM assignment_issue_students ais
+             JOIN assignment_issues i ON i.id = ais.issue_id
+             WHERE i.assignment_id = :id',
+            ['id' => $assignmentId]
+        );
+    }
+
+    /**
      * @param array<string,mixed> $data
      * @param array<string,mixed> $where
      */
@@ -1625,29 +1638,105 @@ final class AssignmentRepository
     /**
      * Результаты позиций попытки вместе с самими позициями.
      *
-     * LEFT JOIN, а не INNER: позиция без результата — это нормальное
-     * состояние, ученик до неё не дошёл.
+     * Позиции — те, что выпали именно этой попытке, то есть по одной карточке
+     * на строку: то же, что itemsForAttempt(). Раньше здесь шёл полный список
+     * карточек работы, и у вариантов, не выпавших этой попытке, результата
+     * не было вовсе. Свод считал такое за непроверенную позицию, поэтому
+     * работа с вариантами навсегда оставалась «ждущей проверки», хотя всё
+     * было посчитано автоматически, а в списке учителя мелькали чужие
+     * варианты.
+     *
+     * LEFT JOIN заменён на выборку результата по уже известным позициям.
+     * Колонки назначаются явно, а не через «запись + запись»: у позиции и у
+     * результата есть своя max_score, и названия колонок в выборке
+     * совпадали — побеждала последняя, то есть результата. Здесь это же
+     * правило выражено словами: максимум берётся из результата.
      *
      * @return list<array<string,mixed>>
      */
     public function resultsForAttempt(int $attemptId): array
     {
-        /*
-         * Идентификатор попытки передаётся двумя именами: эмуляция prepares
-         * отключена, и один и тот же параметр дважды в запросе PDO не
-         * допускает — считает его лишним и отвечает «Invalid parameter number».
-         */
-        return $this->db->all(
-            'SELECT i.*, r.id AS result_id, r.score, r.max_score, r.percent, r.grade,
-                    r.penalty, r.status AS result_status, r.needs_review, r.comment, r.checked_at,
-                    r.checked_by, r.snapshot
-               FROM assignment_items i
-          LEFT JOIN assignment_item_results r
-                 ON r.item_id = i.id AND r.attempt_id = :attempt
-              WHERE i.assignment_id = (SELECT assignment_id FROM assignment_attempts WHERE id = :owner)
-           ORDER BY i.position',
-            ['attempt' => $attemptId, 'owner' => $attemptId]
+        $attempt = $this->findAttempt($attemptId);
+
+        if ($attempt === null) {
+            return [];
+        }
+
+        $items = $this->itemsForAttempt((int) $attempt['assignment_id'], $attemptId);
+
+        if ($items === []) {
+            return [];
+        }
+
+        $results = $this->resultsByItem(
+            $attemptId,
+            array_map(static fn (array $item): int => (int) $item['id'], $items)
         );
+
+        $rows = [];
+
+        foreach ($items as $item) {
+            $result = $results[(int) $item['id']] ?? null;
+
+            /*
+             * array_merge, а не «массив + массив»: у позиции и результата
+             * своя max_score, и «+» оставил бы значение позиции — то есть
+             * максимум всей карточки вместо максимума проверенного ответа.
+             * На слиянии побеждает правая часть, и максимум берётся из
+             * результата, как и раньше в запросе с двумя одноимёнными
+             * колонками.
+             */
+            $rows[] = array_merge($item, [
+                'result_id'    => $result['id'] ?? null,
+                'score'        => $result['score'] ?? null,
+                'max_score'    => $result['max_score'] ?? null,
+                'percent'      => $result['percent'] ?? null,
+                'grade'        => $result['grade'] ?? null,
+                'penalty'      => $result['penalty'] ?? null,
+                'result_status' => $result['status'] ?? null,
+                'needs_review' => $result['needs_review'] ?? 0,
+                'comment'      => $result['comment'] ?? null,
+                'checked_at'   => $result['checked_at'] ?? null,
+                'checked_by'   => $result['checked_by'] ?? null,
+                'snapshot'     => $result['snapshot'] ?? null,
+            ]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Результаты указанных позиций у одной попытки, по позиции.
+     *
+     * Эмуляция prepares отключена, поэтому имя колонки IN собирается из
+     * разных имён параметра: одинаковый :имя дважды в запросе PDO считает
+     * лишним и отвечает «Invalid parameter number».
+     *
+     * @param list<int> $itemIds
+     * @return array<int,array<string,mixed>>
+     */
+    private function resultsByItem(int $attemptId, array $itemIds): array
+    {
+        $placeholders = [];
+        $params = ['attempt' => $attemptId];
+
+        foreach (array_values($itemIds) as $index => $itemId) {
+            $key = 'item' . $index;
+            $placeholders[] = ':' . $key;
+            $params[$key] = $itemId;
+        }
+
+        $byItem = [];
+
+        foreach ($this->db->all(
+            'SELECT * FROM assignment_item_results
+              WHERE attempt_id = :attempt AND item_id IN (' . implode(', ', $placeholders) . ')',
+            $params
+        ) as $row) {
+            $byItem[(int) $row['item_id']] = $row;
+        }
+
+        return $byItem;
     }
 
     /** @return array<string,mixed>|null результат по позиции, если он уже есть */
@@ -1682,6 +1771,54 @@ final class AssignmentRepository
     // ------------------------------------------------------- журнал: новый вид
 
     /**
+     * Удалить одну попытку со всеми следами — для тестового прохождения.
+     *
+     * Решение владельца от 24.10.2026 (задача 6): результаты тестового
+     * прогона существуют только, пока открыта вкладка с ним, — при закрытии
+     * вкладки (скрипт шлёт beacon) и при новом тестовом старте попытка
+     * убирается, в базе она не должна оставаться.
+     *
+     * Порядок от дочерних таблиц к родительской: `test_item_attempts` —
+     * таблица тест-плагина, и внешнего ключа на попытку у неё нет
+     * намеренно (см. migrations/001_work_items.sql): без этой строки она
+     * оставила бы сироты, и каждый тестовый прогон копил бы мёртвые строки.
+     * Результаты позиций уходят каскадом вместе с попыткой.
+     */
+    public function deleteAttemptCascade(int $attemptId): void
+    {
+        $this->db->run(
+            'DELETE FROM test_item_attempts WHERE assignment_attempt_id = :attempt',
+            ['attempt' => $attemptId]
+        );
+        $this->db->run('DELETE FROM assignment_attempts WHERE id = :id', ['id' => $attemptId]);
+    }
+
+    /**
+     * Удалить все попытки ученика — страховка перед новым тестовым проходом.
+     *
+     * Виртуальный ученик один на всю систему (StudentRepository::TRIAL_ID),
+     * и прежние его попытки принадлежат прошлым проходам (возможно, уже
+     * закрытым вкладкам). Новый старт чистит всё прошлое: в базе живёт не
+     * более одной тестовой попытки, и в журнале она не значится — виртуальный
+     * без класса и без выдачи.
+     */
+    public function deleteAttemptsOfStudent(int $studentId): void
+    {
+        $attemptIds = [];
+
+        foreach ($this->db->all(
+            'SELECT id FROM assignment_attempts WHERE student_id = :student',
+            ['student' => $studentId]
+        ) as $row) {
+            $attemptIds[] = (int) $row['id'];
+        }
+
+        foreach ($attemptIds as $attemptId) {
+            $this->deleteAttemptCascade($attemptId);
+        }
+    }
+
+    /**
      * Журнал: выданные работы, сгруппированные по классам.
      *
      * В журнале попадают только те работы, которые кому-то выдавали: работа,
@@ -1691,10 +1828,11 @@ final class AssignmentRepository
      * Класс берётся из `assignment_issue_students` — это класс на момент
      * выдачи, и он может отличаться от того, где ученик учится сейчас.
      *
-     * Круг работ зависит от того, кто смотрит. Завуч и администратор видят
-     * все работы школы ($authorId = 0), учитель — только свои: иначе раздел
-     * показал бы ему результаты чужих классов, к которым у него нет доступа.
-     * Та же граница действует на странице работы и на проверке попыток.
+     * Круг работ зависит от того, кто смотрит. Все работы школы ($authorId
+     * = 0) видит только администратор, учителю и завучу — только свои, которые
+     * выдали они: иначе раздел показал бы ему результаты чужих классов, к
+     * которым у него нет доступа. Та же граница действует на странице работы
+     * и на проверке попыток.
      *
      * Счётчики «сдано» и «ждут проверки» считают только ученические попытки
      * (student_id заполнен): рядом с ними стоит «выдано», которое считает
@@ -1708,15 +1846,39 @@ final class AssignmentRepository
     {
         $where = $authorId > 0 ? ' WHERE a.author_id = :journal_author' : '';
 
+        /*
+         * Пары «работа + класс» собираются из двух источников, а не только из
+         * выдач.
+         *
+         * Первая половина — прежняя: кому работу выдали, с классом на момент
+         * выдачи. Вторая — попытки: ученик, прошедший работу, остаётся в
+         * журнале со своим текущим классом, даже когда выдачу отозвали.
+         * Отзыв удаляет `assignment_issues`, и работа целиком пропадала бы из
+         * журнала вместе с результатами всех, кто её сдал, — вопреки
+         * обещанию «Результаты учеников сохранены».
+         *
+         * UNION, а не UNION DISTINCT: DISTINCT в конце и так уберёт дубли
+         * пары, а сам он в подзапросе объединения запрещён в этой
+         * конфигурации MySQL.
+         */
         return $this->db->all(
             "SELECT DISTINCT c.id AS class_id, c.name AS class_name, c.title AS class_title,
                     a.id AS assignment_id, a.title AS assignment_title,
                     a.published_at, a.status AS assignment_status,
-                    (SELECT COUNT(DISTINCT s2.student_id)
-                       FROM assignment_issue_students s2
-                       JOIN assignment_issues i2 ON i2.id = s2.issue_id
-                      WHERE i2.assignment_id = a.id
-                        AND s2.class_id = c.id) AS issued_count,
+                    (SELECT COUNT(DISTINCT u2.student_id)
+                       FROM (
+                           SELECT s2.student_id, s2.class_id, i2.assignment_id
+                             FROM assignment_issue_students s2
+                             JOIN assignment_issues i2 ON i2.id = s2.issue_id
+                           UNION
+                           SELECT t2.student_id, st2.class_id, t2.assignment_id
+                             FROM assignment_attempts t2
+                             JOIN students st2 ON st2.id = t2.student_id
+                            WHERE t2.student_id IS NOT NULL
+                              AND st2.class_id IS NOT NULL
+                       ) u2
+                      WHERE u2.assignment_id = a.id
+                        AND u2.class_id = c.id) AS issued_count,
                     (SELECT COUNT(*)
                        FROM assignment_attempts t
                       WHERE t.assignment_id = a.id
@@ -1728,10 +1890,19 @@ final class AssignmentRepository
                         AND t.manual = 1
                         AND t.status = 'finished'
                         AND t.student_id IS NOT NULL) AS review_count
-               FROM assignment_issue_students s
-               JOIN assignment_issues i ON i.id = s.issue_id
-               JOIN assignments a ON a.id = i.assignment_id
-               JOIN classes c ON c.id = s.class_id
+               FROM (
+                   SELECT i.assignment_id, s.class_id
+                     FROM assignment_issue_students s
+                     JOIN assignment_issues i ON i.id = s.issue_id
+                   UNION
+                   SELECT t.assignment_id, st.class_id
+                     FROM assignment_attempts t
+                     JOIN students st ON st.id = t.student_id
+                    WHERE t.student_id IS NOT NULL
+                      AND st.class_id IS NOT NULL
+               ) pairs
+               JOIN assignments a ON a.id = pairs.assignment_id
+               JOIN classes c ON c.id = pairs.class_id
                {$where}
               ORDER BY c.name, a.title",
             $authorId > 0 ? ['journal_author' => $authorId] : []
@@ -1739,7 +1910,14 @@ final class AssignmentRepository
     }
 
     /**
-     * Классы, которым работа выдавалась: вкладки на странице работы.
+     * Классы, с которыми работа связана: вкладки на странице работы.
+     *
+     * Как и в общем списке журнала, берётся объединение двух источников:
+     * кому работу выдали (с классом на момент выдачи) и кто по ней проходил
+     * (с текущим классом ученика). Вторая половина нужна после отзыва
+     * выдачи — без неё страница работы отвечала бы 404 «Работа никому не
+     * выдавалась», и результаты становились бы недоступны, хотя попытки
+     * и оценки остались в базе.
      *
      * @return list<array<string,mixed>>
      */
@@ -1747,14 +1925,24 @@ final class AssignmentRepository
     {
         return $this->db->all(
             "SELECT c.id, c.name, c.title,
-                    COUNT(DISTINCT s.student_id) AS student_count
-               FROM assignment_issue_students s
-               JOIN assignment_issues i ON i.id = s.issue_id
-               JOIN classes c ON c.id = s.class_id
-              WHERE i.assignment_id = :assignment
+                    COUNT(DISTINCT u.student_id) AS student_count
+               FROM (
+                   SELECT s.student_id, s.class_id
+                     FROM assignment_issue_students s
+                     JOIN assignment_issues i ON i.id = s.issue_id
+                    WHERE i.assignment_id = :assignment1
+                   UNION
+                   SELECT t.student_id, st.class_id
+                     FROM assignment_attempts t
+                     JOIN students st ON st.id = t.student_id
+                    WHERE t.assignment_id = :assignment2
+                      AND t.student_id IS NOT NULL
+                      AND st.class_id IS NOT NULL
+               ) u
+               JOIN classes c ON c.id = u.class_id
               GROUP BY c.id, c.name, c.title
               ORDER BY c.name",
-            ['assignment' => $assignmentId]
+            ['assignment1' => $assignmentId, 'assignment2' => $assignmentId]
         );
     }
 
@@ -1775,24 +1963,41 @@ final class AssignmentRepository
      */
     public function journalWorkStudents(int $assignmentId, int $classId): array
     {
+        /*
+         * Ученики берутся из тех же двух источников, что и вкладки классов:
+         * кто получил работу (класс на момент выдачи) и кто по ней проходил
+         * (класс ученика сейчас). Вторая половина отвечает за период после
+         * отзыва выдачи, когда строк выдачи в базе уже нет.
+         *
+         * EXISTS, а не UNION по ученикам: так проще читается условие «есть
+         * выдача этому классу ИЛИ есть попытка у нынешнего ученика этого
+         * класса», а проекция результата — попытки с последним счётом —
+         * остаётся прежней.
+         */
         return $this->db->all(
             "SELECT DISTINCT u.id AS student_id, u.full_name,
                     t.id AS attempt_id, t.attempt_no, t.status, t.score, t.max_score,
                     t.percent, t.grade, t.penalty, t.late_penalty, t.manual_penalty,
                     t.penalty_comment, t.started_at, t.finished_at, t.manual
-               FROM assignment_issue_students s
-               JOIN assignment_issues i ON i.id = s.issue_id
-               JOIN students u ON u.id = s.student_id
+               FROM students u
           LEFT JOIN assignment_attempts t
                  ON t.student_id = u.id
                 AND t.assignment_id = :assignment
-              WHERE i.assignment_id = :assignment2
-                AND s.class_id = :class
+              WHERE EXISTS (
+                        SELECT 1
+                          FROM assignment_issue_students s
+                          JOIN assignment_issues i ON i.id = s.issue_id
+                         WHERE i.assignment_id = :assignment_issued
+                           AND s.student_id = u.id
+                           AND s.class_id = :class
+                    )
+                 OR (t.id IS NOT NULL AND u.class_id = :class_now)
               ORDER BY u.full_name, t.attempt_no",
             [
-                'assignment' => $assignmentId,
-                'assignment2' => $assignmentId,
-                'class' => $classId,
+                'assignment'         => $assignmentId,
+                'assignment_issued'  => $assignmentId,
+                'class'              => $classId,
+                'class_now'          => $classId,
             ]
         );
     }
@@ -1828,6 +2033,13 @@ final class AssignmentRepository
      * Срок нужен для отметки опоздания: работа, сданная после него, помечается
      * в таблице отдельным значком. У ученика может быть несколько выдач, и
      * берётся самый поздний срок — последний, когда работа была доступна.
+     *
+     * В отличие от списка классов и учеников, этот метод намеренно читает
+     * только выдачи. Срок живёт в самой выдаче, в попытке его копии нет, и
+     * после отзыва выдачи отметить опоздание не по чему — в журнале такие
+     * ученики показываются без значка, а не с выдуманным сроком. Подменять
+     * срок датой попытки нельзя: это уже другое правило, и оно перестало бы
+     * совпадать с тем, что видел ученик при прохождении.
      *
      * @return array<int,string> срок по ученику
      */

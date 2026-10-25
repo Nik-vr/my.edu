@@ -266,6 +266,34 @@ $strict = $makeQuestion('multiple_choice', ['correct' => ['a', 'c'], 'partial' =
 $t->equals(0.0, $registry->get('multiple_choice')->grade($strict, ['a'])->score, 'при partial=false только «всё или ничего»');
 $t->equals(1.0, $registry->get('multiple_choice')->grade($strict, ['a', 'c'])->score, 'при partial=false полный набор даёт балл');
 
+/*
+ * В тесте, который видит ученик, не должно быть числа правильных
+ * вариантов.
+ *
+ * Подсказка «Правильных: N» выдавала вопрос целиком: зная, что верных
+ * два, и увидев три оставшихся варианта, ученик искал эти два, не читая
+ * условие. Счётчик убран и из показа, и из подсказки — и то и другое
+ * проверяется здесь, потому что ключ в payload и текст в шаблоне
+ * связаны: второй без первого проверить негде.
+ */
+$mcPayload = $makeQuestion(
+    'multiple_choice',
+    ['correct' => ['a', 'c'], 'partial' => true],
+    $opts(['a', 'b', 'c', 'd'])
+)->payload();
+
+$t->is(
+    array_key_exists('correct_count', $mcPayload) === false,
+    'в показе задания нет числа правильных вариантов'
+);
+
+$renderTemplate = (string) @file_get_contents($projectRoot . '/plugins/test/templates/render.php');
+
+$t->is(
+    str_contains($renderTemplate, 'Правильных:') === false,
+    'в подсказке ученику не названо число правильных вариантов'
+);
+
 $weight = $makeQuestion('multiple_choice', ['correct' => ['a', 'c'], 'partial' => true, 'miss_penalty' => 0.5], $opts(['a', 'b', 'c', 'd']), 3.0);
 // 1 из 2 верных → доля 0.5, вес 3.0 → 1.5
 $t->equals(1.5, $registry->get('multiple_choice')->grade($weight, ['a'])->score, 'вес вопроса масштабирует частичный балл');
@@ -350,6 +378,92 @@ $t->equals(1.0, $type->grade($qMatchStrict, $correctPairs)->score, 'при parti
 
 $detail = $type->grade($q, ['l1' => 'r2', 'l2' => 'r3', 'l3' => 'r4', 'l4' => 'r1'])->detail;
 $t->equals(true, $detail['errors'][0]['left'] === 'l3' ? true : ($detail['errors'][1]['left'] === 'l3'), 'в разборе указано, какие пары неверны');
+
+/*
+ * Настройки показа действуют и на соответствие.
+ *
+ * Поле «показывать N вариантов» раньше читалось только у одиночного и
+ * множественного выбора: у соответствия автор видел его в настройках, а
+ * ученик получал всю правую колонку подряд — настройка ничего не делала.
+ * Галочка «перемешивать варианты ответа» читалась, но в показ не
+ * попадала, так что тоже была обещанием, которое не выполняется.
+ *
+ * Лимит урезает правую колонку: левая — это условие, её урезать нельзя,
+ * иначе пару составить не из чего. Поэтому верные партнёры видимых левых
+ * элементов включаются всегда, а отсекаются только отвлекающие.
+ */
+$keptLeft = $opts(['l1', 'l2'], 'left');
+$keptRight = [];
+
+foreach ([['r1', 'l1'], ['r2', 'l2'], ['r3', null], ['r4', null], ['r5', null]] as $i => [$key, $pair]) {
+    $keptRight[] = [
+        'kind' => 'right',
+        'value_key' => $key,
+        'text' => "текст {$key}",
+        'position' => $i,
+        'pair_key' => $pair,
+    ];
+}
+
+$qLimited = $makeQuestion('matching', [
+    'pairs' => ['l1' => 'r1', 'l2' => 'r2'],
+    'random_options' => 3,
+], array_merge($keptLeft, $keptRight));
+
+$limited = $qLimited->payload();
+$limitedRight = array_column($limited['right'], 'value');
+
+$t->equals(['l1', 'l2'], array_column($limited['left'], 'value'),
+    'условие не урезается: оно и есть вопрос');
+$t->equals(3, count($limitedRight),
+    'правая колонка урезается до указанного числа');
+$t->is(in_array('r1', $limitedRight, true) && in_array('r2', $limitedRight, true),
+    'верные партнёры видимых условий показаны всегда — без них пару не составить');
+
+$limitSorted = $limitedRight;
+sort($limitSorted);
+
+$t->is(
+    count(array_diff($limitSorted, ['r1', 'r2', 'r3', 'r4', 'r5'])) === 0,
+    'показаны только варианты этого вопроса'
+);
+
+/*
+ * Перемешивание действует: порядок правой колонки меняется, состав —
+ * тот же, а условие остаётся в порядке автора.
+ *
+ * Здесь лимита уже нет: с ним набор отвлекающих вариантов зависит от
+ * seed'а, и состав показанного менялся бы закономерно — сверять его надо
+ * было бы с полным списком, а не с прошлым разом. Проверяется несколько
+ * seed'ами сразу: на пяти вариантах совпадение порядка возможно, и одна
+ * проверка была бы проверкой на удачу.
+ */
+$qFree = $makeQuestion('matching', [
+    'pairs' => ['l1' => 'r1', 'l2' => 'r2'],
+], array_merge($keptLeft, $keptRight));
+
+$plainRight = array_column($qFree->payload()['right'], 'value');
+
+$allSorted = ['r1', 'r2', 'r3', 'r4', 'r5'];
+$moved = false;
+
+foreach ([777, 1001, 2002, 3003] as $seed) {
+    $seeded = $qFree->withRuntime($seed, true)->payload();
+    $seededRight = array_column($seeded['right'], 'value');
+    $seededSorted = $seededRight;
+    sort($seededSorted);
+
+    $t->equals($allSorted, $seededSorted,
+        'перемешивание не теряет и не дублирует варианты ответа');
+    $t->equals(['l1', 'l2'], array_column($seeded['left'], 'value'),
+        'условие остаётся в порядке автора');
+
+    if ($seededRight !== $plainRight) {
+        $moved = true;
+    }
+}
+
+$t->is($moved, 'варианты ответа перемешиваются, а не показываются как написаны');
 
 // ------------------------------------------------------------------ 5. Открытый ответ
 
@@ -969,4 +1083,65 @@ $t->equals(
     count($all->visibleOptionsOfKind(Question::KIND_OPTION, [])),
     'без числа показываются все варианты, даже если правильный не отмечен'
 );
+
+/*
+ * Порядок показа — по правилу владельца (24.10.2026, задача 3):
+ * «обязательно показываемые» идут в первую очередь, среди остальных
+ * выбираются случайные.
+ *
+ * Без «перемешать варианты» выбранные стоят в исходном порядке — только
+ * отбор случайный, а раскладка авторская. С перемешиванием состав тот же,
+ * но порядок закрепляется за парой «попытка + задание» и не меняется от
+ * перезагрузки: два открытия с одним seed обязаны дать один результат.
+ *
+ * withRuntime обязателен: и отбор, и порядок берут seed из рантайма — без
+ * него выбор случайных падал бы на обращении к несуществующему ключу.
+ */
+$threeOfFour = new Question(
+    1,
+    'single_choice',
+    'Вопрос',
+    1.0,
+    true,
+    null,
+    ['random_options' => 3, 'correct' => 'c'],
+    $variantOptions
+);
+
+$plainPick = $threeOfFour->withRuntime(7, false)->visibleOptionsOfKind(Question::KIND_OPTION, ['c']);
+$plainKeys = array_column($plainPick, 'value_key');
+
+$t->equals(3, count($plainKeys), 'при лимите три показывается ровно три');
+$t->equals('a', $plainKeys[0] ?? '', 'отмеченный «обязательно показывать» вариант идёт первым');
+$t->is(in_array('c', $plainKeys, true), 'правильный ответ в показе');
+$t->equals(
+    count($plainKeys),
+    count(array_unique($plainKeys)),
+    'варианты не повторяются'
+);
+$t->equals(
+    1,
+    4 - count($plainKeys),
+    'ровно один вариант из четырёх отпал'
+);
+
+$shuffledFirst = array_column(
+    $threeOfFour->withRuntime(7, true)->visibleOptionsOfKind(Question::KIND_OPTION, ['c']),
+    'value_key'
+);
+$shuffledAgain = array_column(
+    $threeOfFour->withRuntime(7, true)->visibleOptionsOfKind(Question::KIND_OPTION, ['c']),
+    'value_key'
+);
+
+$plainSorted = $plainKeys;
+$shuffledSorted = $shuffledFirst;
+sort($plainSorted);
+sort($shuffledSorted);
+
+$t->equals($plainSorted, $shuffledSorted,
+    'перемешивание меняет порядок, но не состав выбора');
+$t->equals($shuffledFirst, $shuffledAgain,
+    'при одном seed порядок воспроизводим — перезагрузка не двигает варианты');
+
 exit($t->report());

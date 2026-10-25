@@ -215,11 +215,7 @@ require __DIR__ . '/_page_header.php';
                     <label class="form-label" for="subject-name">Название</label>
                     <input class="form-control" type="text" id="subject-name" name="name"
                            required maxlength="191" placeholder="Биология"
-                           value="<?= $view->e($newName) ?>"
-                    <div class="form-help">
-                        Кода у предмета нет: он нигде не участвует — работы и
-                        выгрузки знают предмет по названию.
-                    </div>
+                           value="<?= $view->e($newName) ?>">
                 </div>
             </div>
 

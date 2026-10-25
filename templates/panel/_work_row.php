@@ -30,6 +30,8 @@ $name = trim((string) $row['title']);
 $isMine = (int) $row['author_id'] === (int) $currentUserId;
 $isPublished = (string) $row['status'] === 'published';
 $isArchived = (string) $row['status'] === 'archived';
+$issued = (int) ($row['issued_count'] ?? 0);
+$workState = $workState ?? 'published'; // состояние вкладки: published, issued, drafts
 ?>
 
 <li class="work-row<?= $selectable ? ' work-row--selectable' : '' ?>" data-work-row>
@@ -142,6 +144,31 @@ $isArchived = (string) $row['status'] === 'archived';
                    href="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/edit/start')) ?>">
                     Редактировать
                 </a>
+                <?php if ($issued > 0 && $workState === 'issued'): ?>
+                    <?php /*
+                    Кнопка отзыва выдачи: удаляет все выдачи работы (issues и студентов).
+                    Работа остаётся опубликованной, но перестаёт быть доступной ученикам.
+                    Подтверждение обязательно — отзыв необратим для уже начавших.
+
+                    Атрибут data-work-delete здесь намеренно НЕ стоит, хотя он есть у
+                    кнопки удаления ниже. Он включает обработчик из work-list.js, а тот
+                    по завершении показывает тост «Работа удалена вместе с попытками» и
+                    убирает строку из списка — то есть врёт: отзыв выдачи не удаляет
+                    работу и не трогает попытки, он лишь закрывает доступ. Раньше оба
+                    атрибута (data-work-delete и data-confirm) стояли на одной кнопке,
+                    два обработчика спорили за клик, и побеждал work-list.js с ложным
+                    тостом. Теперь кнопку ведёт только data-confirm — стандартное окно
+                    подтверждения, которое отправляет форму на /recall и после ответа
+                    перезагружает список с верным сообщением «Выдача работы отозвана».
+                    */ ?>
+                    <a class="btn btn-sm btn-warning"
+                       href="<?= $view->e($view->url('panel/assignments/' . $assignmentId . '/recall')) ?>"
+                       data-confirm="Отозвать выдачу работы «<?= $view->e($name) ?>»?"
+                       data-confirm-body="Все выдачи этой работы будут удалены. Ученики, которые уже начали её проходить, смогут доработать, но новые не смогут начать. Результаты сохранятся."
+                       data-confirm-yes="Отозвать выдачу">
+                        Отозвать выдачу
+                    </a>
+                <?php endif; ?>
                 <?php /*
                 Удаление — ссылка, а не форма: без скриптов она ведёт на страницу
                 подтверждения, и работа удаляется только после явного нажатия.

@@ -16,7 +16,8 @@ use MyEduPlugin\Variable\Number;
  * разыгрывала новый.
  *
  * @var \MyEdu\Core\View $view
- * @var string $title
+ * @var string $title название работы — уходит в <title> вкладки браузера
+ * @var string $heading заголовок задания в теле страницы: «Задание №N»
  * @var string $prompt
  * @var array<string,float> $values
  * @var float|null $answer
@@ -28,15 +29,12 @@ use MyEduPlugin\Variable\Number;
  * @var int $itemId
  * @var int $attemptId
  * @var string $token
- * @var string $attemptUrl
- * @var string $nextUrl
- * @var bool $isLast
  * @var int|null $remaining сколько секунд осталось на попытку
  */
 $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($value, 1, ',', ''), '0'), ',');
 ?>
 <div class="page-header">
- <h1 class="page-title"><?= $view->e($title) ?></h1>
+ <h1 class="page-title"><?= $view->e($heading) ?></h1>
  <p class="muted">
  Задание <?= $view->e($position) ?> из <?= $view->e($total) ?> ·
  вес в итоге работы <?= $view->e($formatScore($weight)) ?>
@@ -44,10 +42,12 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
 </div>
 
 <?php /*
- Таймер рисует ядро: остаток времени считает оно, а плагин его только
- показывает. Без лимита таймера нет вовсе.
- */ ?>
-<?= $view->raw($view->render('work/_timer', ['remaining' => $remaining ?? null], '')) ?>
+ Таймер теперь живёт в шапке страницы: его рисует оболочка по данным
+ шапки прохождения, тем же частичным шаблоном и с теми же
+ идентификаторами — отсчёт ведёт attempt.js как прежде. В теле задания
+ остаётся только data-remaining на форме, откуда скрипт берёт начальное
+ значение.
+*/ ?>
 
 <?php /* Запрет копирования подключается ядром: решение принимает учитель. */ ?>
 <?= $view->raw($view->render('work/_no_copy', ['noCopy' => !empty($noCopy)], '')) ?>
@@ -101,32 +101,10 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
  <?= $view->raw($ui->hidden('values[' . $name . ']', Number::format((float) $value))) ?>
  <?php endforeach; ?>
 
- <div class="page-actions">
- <span class="actions-row__spacer"></span>
-
- <?php if ($isLast): ?>
- <?= $view->raw($ui->button('Завершить работу', [
-     'size'  => 'btn-lg',
-     'name'  => 'action',
-     'value' => 'finish',
- ])) ?>
- <?php else: ?>
- <?= $view->raw($ui->button('Далее →', [
-     'size'  => 'btn-lg',
-     'name'  => 'action',
-     'value' => 'next',
- ])) ?>
- <?php endif; ?>
- </div>
-
  <p class="muted">
  Ответ сохраняется при каждом переходе, поэтому страницу можно обновить и
  вернуться позже: числа останутся теми же.
  </p>
 </form>
-
-<p>
- <a class="btn btn-ghost" href="<?= $view->e($attemptUrl) ?>">К списку заданий работы</a>
-</p>
 
 <script src="<?= $view->e($view->asset('assets/js/attempt.js')) ?>" defer></script>

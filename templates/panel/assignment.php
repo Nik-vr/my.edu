@@ -77,7 +77,8 @@ $view->crumbs([
  <?php if (! $isAuthor && $isPublished): ?>
  <p class="page-actions">
  <a class="btn btn-primary"
-  href="<?= $view->e($view->url('work/' . (int) $assignment['id'])) ?>">
+  href="<?= $view->e($view->url('work/' . (int) $assignment['id'] . '?trial=1')) ?>"
+  target="_blank" rel="noopener">
  Пройти работу
  </a>
  </p>

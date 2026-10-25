@@ -203,21 +203,40 @@ $pointsText = static function (?float $points) use ($total): string {
 
  <label class="scale-field scale-field--color">
   <span class="form-label">Цвет</span>
-  <span class="scale-color">
-   <span class="scale-color__chip scale-color__chip--<?= $view->e($color) ?>" aria-hidden="true"></span>
-   <select name="color[]" class="scale-color__select" data-color-select>
-    <?php foreach (GradeScaleValidator::COLORS as $option): ?>
-    <option value="<?= $view->e($option) ?>" <?= $color === $option ? 'selected' : '' ?>>
-     <?= $view->e(GradeScaleValidator::COLOR_TITLES[$option]) ?>
-    </option>
-    <?php endforeach; ?>
-   </select>
-  </span>
+  <?php /*
+   * Нативное поле выбора цвета — решение владельца от 24.10.2026 (задача 4).
+   *
+   * По нажатию браузер показывает стандартное окно, где лежат и привычные
+   * четыре краски, и любая другая: прежняя палитра из четырёх кнопок
+   * закрывала выбор предустановленным набором, а автор мог захотеть
+   * оранжевый «поближе к жёлтому».
+   *
+   * Значение — всегда HEX: название из палитры переводится по `colorHex()`,
+   * свой цвет проходит как есть. Поле без подписи для чтения с экрана —
+   * просто квадрат, поэтому у него есть имя с номером оценки.
+   */ ?>
+  <input type="color" name="color[]"
+   value="<?= $view->e(GradeScaleValidator::colorHex($color)) ?>"
+   class="scale-color__input"
+   title="Цвет оценки <?= $view->e($grade) ?>"
+   aria-label="Цвет оценки <?= $view->e($grade) ?>">
  </label>
 
  <span class="scale-row__arrow" aria-hidden="true">→</span>
 
- <span class="scale-row__grade scale-row__grade--<?= $view->e($color) ?>">
+ <span class="scale-row__grade<?php
+ /*
+  * Краска строки в форме: четыре палитры дают готовый класс, а свой цвет
+  * класса не имеет и передаётся атрибутом — его применяет скрипт
+  * `grade-color.js`. Класс вида `--#2fb344` не сделал бы ничего, кроме
+  * сломанного имени.
+  */
+ ?><?= GradeScaleValidator::isPaletteColor($color)
+     ? ' scale-row__grade--' . $view->e($color)
+     : '' ?>"
+ <?= GradeScaleValidator::isPaletteColor($color)
+     ? ''
+     : 'data-grade-color="' . $view->e($color) . '"' ?>>
   <?= $view->e($grade) ?>
  </span>
 </div>

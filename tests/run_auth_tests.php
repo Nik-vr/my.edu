@@ -566,7 +566,7 @@ $resend = $guest->post('/confirm/resend', [
 ]);
 
 $t->is($resend['status'] === 302, 'повторная отправка обработана');
-$t->contains($guest->get('/login')['body'], 'отправили письмо', 'показан общий ответ о письме');
+$t->contains($guest->get('/login')['body'], 'Письмо отправлено на указанный вами адрес', 'показан общий ответ о письме');
 
 // В журнале должна появиться новая ссылка подтверждения.
 $resentMail = $logFile === [] ? '' : (string) file_get_contents($logFile[0]);
@@ -585,7 +585,7 @@ $unknown = $guest->post('/confirm/resend', [
 ]);
 
 $t->is($unknown['status'] === 302, 'неизвестный адрес обработан так же');
-$t->contains($guest->get('/login')['body'], 'отправили письмо', 'неизвестный адрес не выдаёт себя');
+$t->contains($guest->get('/login')['body'], 'Письмо отправлено на указанный вами адрес', 'неизвестный адрес не выдаёт себя');
 
 // Подтверждаем по самой свежей ссылке.
 $confirmToken = $resentToken;
@@ -2121,6 +2121,260 @@ $t->contains($profileNoName['body'], 'form-control is-invalid', 'пустое и
 $t->contains($profileNoName['body'], 'form-error', 'под полем написано, что не так');
 $t->contains($profileNoName['body'], 'aria-invalid="true"', 'поле объявлено неверным для чтения с экрана');
 
+// ------------------------------------------------------------------ размер шрифта
+
+$t->group('Личный размер шрифта: сотрудник');
+
+/*
+ * Выбор размера стоит на странице профиля и работает без JavaScript.
+ *
+ * Форма отправляется обычным POST, страница перезагружается, и ядро при
+ * отрисовке читает сохранённое значение из базы заново. Поэтому проверяется
+ * не «сохранилось», а «страница стала другого размера» — то, что человек
+ * увидит после перезагрузки, а не строка в базе.
+ */
+$fontPage = $owner->get('/profile');
+
+$t->is($fontPage['status'] === 200, 'страница профиля открыта для проверки размера шрифта');
+$t->contains($fontPage['body'], 'name="font_size"', 'на странице есть выбор размера шрифта');
+$t->contains($fontPage['body'], 'value="small"', 'есть вариант «мелкий»');
+$t->contains($fontPage['body'], 'value="normal"', 'есть вариант «нормальный»');
+$t->contains($fontPage['body'], 'value="large"', 'есть вариант «крупный»');
+
+/*
+ * Атрибут на <html> — единственное место, где CSS узнаёт выбор человека.
+ *
+ * Он рисуется сервером, а не скриптом: страница открывается уже в нужном
+ * размере и не мигает. Гость и человек без выбора видят «normal» — систему
+ * как задумано.
+ */
+$t->is(
+    preg_match('#<html[^>]*data-font-size="normal"#', (string) $fontPage['body']) === 1,
+    'по умолчанию страница отдаётся нормального размера'
+);
+
+$fontSaved = $owner->post('/profile/font-size', [
+    '_token'   => $owner->tokenFrom($fontPage) ?? '',
+    'font_size' => 'large',
+]);
+
+$t->is($fontSaved['status'] === 302, 'крупный размер сохранён');
+
+$t->equals(
+    'large',
+    (string) $users->findRowByEmail('owner@example.edu')['font_size'],
+    'крупный размер записан в базу'
+);
+
+$fontLargePage = $owner->get('/profile');
+
+$t->is(
+    preg_match('#<html[^>]*data-font-size="large"#', (string) $fontLargePage['body']) === 1,
+    'после сохранения страница отдаётся крупного размера'
+);
+
+$t->contains($fontLargePage['body'], 'value="large" checked',
+    'сохранённый вариант отмечен в форме');
+
+/*
+ * Мусорное значение не должно дойти ни до базы, ни до страницы.
+ *
+ * Пути у значения три — форма, база и атрибут страницы, — и проверяется
+ * именно то, что расхождение между ними не случилось: форма не принимает
+ * ничего, кроме трёх размеров, а если значение пришло мимо формы, база
+ * записывает нормальный, а не пустую строку.
+ */
+$fontGarbage = $owner->post('/profile/font-size', [
+    '_token'    => $owner->tokenFrom($fontLargePage) ?? '',
+    'font_size' => 'gigantic',
+]);
+
+$t->is($fontGarbage['status'] === 302, 'значение вне списка обработано без отказа');
+$t->equals(
+    'normal',
+    (string) $users->findRowByEmail('owner@example.edu')['font_size'],
+    'значение вне списка приведено к нормальному размеру'
+);
+$t->is(
+    preg_match('#<html[^>]*data-font-size="normal"#', (string) $owner->get('/profile')['body']) === 1,
+    'страница после мусорного значения отдаётся нормального размера'
+);
+
+// Пустое поле — тоже нормальный размер, а не пустая строка в атрибуте.
+$owner->post('/profile/font-size', [
+    '_token'    => $owner->tokenFrom($owner->get('/profile')) ?? '',
+    'font_size' => '',
+]);
+
+$t->is(
+    preg_match('#<html[^>]*data-font-size="normal"#', (string) $owner->get('/profile')['body']) === 1,
+    'пустое значение даёт нормальный размер'
+);
+
+// Мелкий размер сохраняется тем же путём, что и крупный.
+$owner->post('/profile/font-size', [
+    '_token'    => $owner->tokenFrom($owner->get('/profile')) ?? '',
+    'font_size' => 'small',
+]);
+
+$t->is(
+    preg_match('#<html[^>]*data-font-size="small"#', (string) $owner->get('/profile')['body']) === 1,
+    'мелкий размер сохраняется и показывается'
+);
+
+// Возвращаем нормальный размер: следующие группы проверяют страницу в нём.
+$owner->post('/profile/font-size', [
+    '_token'    => $owner->tokenFrom($owner->get('/profile')) ?? '',
+    'font_size' => 'normal',
+]);
+
+// Размер шрифта не является сведением о человеке и не правится вместе с ним.
+$owner->post('/profile', [
+    '_token'      => $owner->tokenFrom($owner->get('/profile')) ?? '',
+    'last_name'   => 'Власенко',
+    'first_name'  => 'Ольга',
+    'middle_name' => '',
+    'birth_date'  => '',
+    'vk_url'      => '',
+]);
+
+$t->equals(
+    'normal',
+    (string) $users->findRowByEmail('owner@example.edu')['font_size'],
+    'правка «О себе» не сбрасывает выбранный размер шрифта'
+);
+
+/*
+ * Без токена CSRF сохранение не проходит: размер — чужой выбор, который
+ * нельзя сделать за человека его же страницей.
+ */
+$noToken = $owner->post('/profile/font-size', [
+    'font_size' => 'large',
+]);
+
+$t->is($noToken['status'] !== 302 || $noToken['status'] === 200,
+    'сохранение без токена не проходит');
+$t->equals(
+    'normal',
+    (string) $users->findRowByEmail('owner@example.edu')['font_size'],
+    'без токена размер не изменился'
+);
+
+// ------------------------------------------------------------------ тема
+
+$t->group('Личная тема оформления: сотрудник');
+
+/*
+ * Тема живёт в профиле человека, а не в браузере (решение владельца от
+ * 24.10.2026, волна E). Раньше выбор жил в localStorage: на другом
+ * устройстве, после очистки хранилища и при входе с нового компьютера
+ * человек получал тёмную тему, хотя выбирал светлую.
+ *
+ * Проверяется то же, что и у размера шрифта: не строка в базе, а атрибут
+ * `data-theme`, который рисует сервер и который видит человек после
+ * перезагрузки. Это же доказывает, что страница отдаётся сразу в нужном
+ * виде и не мигает.
+ */
+$themePage = $owner->get('/profile');
+
+$t->is($themePage['status'] === 200, 'страница профиля открыта для проверки темы');
+$t->contains($themePage['body'], 'name="theme"', 'на странице есть выбор темы');
+$t->contains($themePage['body'], 'value="dark"', 'есть вариант «тёмная»');
+$t->contains($themePage['body'], 'value="light"', 'есть вариант «светлая»');
+
+$t->is(
+    preg_match('#<html[^>]*data-theme="dark"#', (string) $themePage['body']) === 1,
+    'по умолчанию страница отдаётся в тёмной теме'
+);
+
+/*
+ * Кнопка в шапке шлёт тот же адрес, что и форма профиля: один обработчик
+ * на двоих, и проверяется, что адрес у кнопки действительно лежит в
+ * разметке — иначе скрипт молча не сохранял бы выбор.
+ */
+/*
+ * Кнопки темы в шапке больше нет (решение владельца от 24.10.2026, задача
+ * 2) — настройка живёт только на странице профиля. Проверяется, что форма
+ * профиля ведёт на свой адрес сохранения: раньше тот же адрес был и у
+ * кнопки в шапке, и два входа к одному свойству путали человека.
+ */
+$t->contains($themePage['body'], 'action="/profile/theme"', 'форма темы в профиле ведёт на свой адрес');
+
+$themeSaved = $owner->post('/profile/theme', [
+    '_token' => $owner->tokenFrom($themePage) ?? '',
+    'theme'  => 'light',
+]);
+
+$t->is($themeSaved['status'] === 302, 'светлая тема сохранена');
+$t->equals(
+    'light',
+    (string) $users->findRowByEmail('owner@example.edu')['theme'],
+    'светлая тема записана в базу'
+);
+
+$themeLightPage = $owner->get('/profile');
+
+$t->is(
+    preg_match('#<html[^>]*data-theme="light"#', (string) $themeLightPage['body']) === 1,
+    'после сохранения страница отдаётся в светлой теме'
+);
+$t->contains($themeLightPage['body'], 'value="light" checked',
+    'сохранённая тема отмечена в форме');
+
+/*
+ * Мусор и пустое значение — тёмная тема, то есть умолчание: в атрибут не
+ * должна попасть ни пустая строка, ни произвольное слово из запроса.
+ */
+$themeGarbage = $owner->post('/profile/theme', [
+    '_token' => $owner->tokenFrom($themeLightPage) ?? '',
+    'theme'  => 'gigantic',
+]);
+
+$t->is($themeGarbage['status'] === 302, 'тема вне списка обработана без отказа');
+$t->equals(
+    'dark',
+    (string) $users->findRowByEmail('owner@example.edu')['theme'],
+    'значение вне списка приведено к тёмной теме'
+);
+$t->is(
+    preg_match('#<html[^>]*data-theme="dark"#', (string) $owner->get('/profile')['body']) === 1,
+    'страница после мусорного значения отдаётся в тёмной теме'
+);
+
+$owner->post('/profile/theme', [
+    '_token' => $owner->tokenFrom($owner->get('/profile')) ?? '',
+    'theme'  => '',
+]);
+
+$t->is(
+    preg_match('#<html[^>]*data-theme="dark"#', (string) $owner->get('/profile')['body']) === 1,
+    'пустое значение даёт тёмную тему'
+);
+
+// Без токена CSRF тема не меняется — чужой выбор нельзя сделать за человека.
+$owner->post('/profile/theme', [
+    'theme' => 'light',
+]);
+
+$t->is(
+    preg_match('#<html[^>]*data-theme="dark"#', (string) $owner->get('/profile')['body']) === 1,
+    'сохранение темы без токена не проходит'
+);
+
+/*
+ * Возвращаем тёмную тему: следующие группы проверяют страницу в ней, а
+ * светлая тема на них повлияла бы так же неожиданно, как и чужой размер.
+ */
+$owner->post('/profile/theme', [
+    '_token' => $owner->tokenFrom($owner->get('/profile')) ?? '',
+    'theme'  => 'dark',
+]);
+
+$t->is(
+    preg_match('#<html[^>]*data-theme="dark"#', (string) $owner->get('/profile')['body']) === 1,
+    'тёмная тема возвращается тем же путём'
+);
+
 // Страница пользователя у администратора: чужие данные правятся, свои — нет.
 $t->group('Страница пользователя у администратора');
 
@@ -2289,11 +2543,122 @@ $t->contains($console['body'], 'class="sidebar"', 'есть боковое ме�
 $t->contains($console['body'], 'class="topbar"', 'есть шапка');
 $t->contains($console['body'], 'page-wrapper', 'есть область содержимого');
 $t->contains($console['body'], 'sidebar-toggle', 'меню сворачивается');
-$t->contains($console['body'], 'data-theme-toggle', 'в шапке переключатель темы');
+/*
+ * Кнопки темы в шапке больше нет — решение владельца от 24.10.2026
+ * (задача 2): тема выбирается на странице профиля, в карточке «Вид
+ * интерфейса», и проверяется там же — в группе «Личная тема оформления».
+ * Два входа к одному свойству путали: человек не понимал, какой из них
+ * главный.
+ */
+$t->notContains($console['body'], 'data-theme-toggle', 'кнопки темы в шапке больше нет');
 $t->contains($console['body'], '/profile', 'из шапки есть переход в свои данные');
 $t->contains($console['body'], 'sidebar-user', 'в подвале меню есть человек');
 
+/*
+ * Разделы меню сворачиваются — решение владельца от 24.10.2026 (задача 1).
+ *
+ * У сворачиваемых разделов заголовок — кнопка, у «Главной» — обычный
+ * надзаголовок: сворачивать один пункт «Консоль» нечего.
+ */
+foreach (['works', 'school', 'system'] as $navKey) {
+    $t->contains(
+        $console['body'],
+        'data-nav-toggle="' . $navKey . '"',
+        'раздел с ключом «' . $navKey . '» сворачивается кнопкой'
+    );
+}
+
+$t->notContains($console['body'], 'data-nav-toggle="main"',
+    'раздел «Главная» не сворачивается');
+$t->contains($console['body'], 'nav-sublist',
+    'пункты раздела лежат в обёртке, которую прячет сворачивание');
+
+/*
+ * Первый вход: cookie нет, действует задуманный порядок — «Школа» и
+ * «Система» свёрнуты, «Работы» открыты.
+ *
+ * Проверяется класс на самой группе: он ставится сервером при отрисовке,
+ * поэтому состояние видно до загрузки скриптов и не мигает.
+ */
+$t->is(
+    substr_count($console['body'], 'nav-group--closed') === 2,
+    'без cookie свёрнуты ровно два раздела: Школа и Система'
+);
+$t->is(
+    preg_match('#<div class="nav-group nav-group--closed">\s*<button[^>]*data-nav-toggle="school"#s', $console['body']) === 1,
+    'по умолчанию свёрнута «Школа»'
+);
+$t->is(
+    preg_match('#<div class="nav-group nav-group--closed">\s*<button[^>]*data-nav-toggle="system"#s', $console['body']) === 1,
+    'по умолчанию свёрнута «Система»'
+);
+$t->is(
+    preg_match('#<div class="nav-group">\s*<button[^>]*data-nav-toggle="works"#s', $console['body']) === 1,
+    'по умолчанию «Работы» открыты'
+);
+
+/*
+ * Активный раздел развёрнут всегда: человек пришёл в раздел, и пункты
+ * раздела обязаны быть видны, даже когда его личный выбор — свёрнут (или
+ * свёрнут дефолт). Cookie при этом не переписывается — раскрытие по
+ * текущему адресу не отменяет выбора для следующего входа.
+ */
+$systemPage = $owner->get('/panel/users');
+
+$t->is($systemPage['status'] === 200, 'страница раздела «Система» открыта');
+$t->is(
+    preg_match('#<div class="nav-group">\s*<button[^>]*data-nav-toggle="system"#s', $systemPage['body']) === 1,
+    'раздел с активным пунктом развёрнут, несмотря на дефолтную свёрнутость'
+);
+
+/*
+ * Личный выбор: cookie каждого раздела своя, и одна не двигает другую.
+ *
+ * Проверяется обе стороны: «Школа» развёрнута по своей cookie, а «Работы»
+ * закрыты по своей — и обе остаются независимыми от дефолта.
+ */
+$owner->setCookie('myedu-nav-school', '0');
+$owner->setCookie('myedu-nav-works', '1');
+
+$navAfterChoice = $owner->get('/portal');
+
+$t->is(
+    preg_match('#<div class="nav-group">\s*<button[^>]*data-nav-toggle="school"#s', $navAfterChoice['body']) === 1,
+    'сохранённое состояние «Школа: открыта» перекрывает дефолт'
+);
+$t->is(
+    preg_match('#<div class="nav-group nav-group--closed">\s*<button[^>]*data-nav-toggle="works"#s', $navAfterChoice['body']) === 1,
+    'состояние «Работы: свёрнуты» сохранено и не зависит от других разделов'
+);
+
+/*
+ * Сессия не сбрасывается: навигационные cookie безвредны для следующих
+ * проверок — они меняют только видимость разделов, а сами проверки ищут в
+ * разметке текст и классы, а не считают видимые пункты. forgetCookies()
+ * удалил бы и сессию, и дальнейшие проверки шли бы уже со страницы входа.
+ */
+
 foreach (['Главная', 'Работы', 'Школа', 'Система'] as $groupTitle) {
+    /*
+     * Сворачиваемые разделы выводятся кнопкой с переносом строк между
+     * атрибутами и подписью (задача 1), поэтому прежняя проверка
+     * «>Название<» одной строкой для них не проходит. Смысл проверки тот
+     * же: заголовок группы присутствует в меню и подписан своим именем.
+     */
+    $keyByTitle = ['Работы' => 'works', 'Школа' => 'school', 'Система' => 'system'];
+
+    if (isset($keyByTitle[$groupTitle])) {
+        $t->is(
+            preg_match(
+                '#data-nav-toggle="' . $keyByTitle[$groupTitle] . '"[^>]*>\s*' . $groupTitle . '\s*</button>#su',
+                (string) $console['body']
+            ) === 1,
+            'группа меню «' . $groupTitle . '»'
+        );
+
+        continue;
+    }
+
     $t->contains($console['body'], '>' . $groupTitle . '<', 'группа меню «' . $groupTitle . '»');
 }
 
@@ -2541,6 +2906,59 @@ $t->contains($studentHome->get('/portal')['body'], 'class="topbar"', 'учени
 $t->notContains($studentHome->get('/portal')['body'], 'aria-label="Разделы панели"', 'ученику меню панели не показывается');
 $t->contains($studentHome->get('/portal')['body'], '/profile', 'ученик видит вход в свои данные');
 $t->contains($studentHome->get('/portal')['body'], '/logout', 'у ученика есть выход в шапке');
+
+/*
+ * Размер шрифта — личное свойство, а не привилегия сотрудника.
+ *
+ * Ученик не правит своё имя и не меняет пароль: имя заводит завуч, а пароль
+ * выдаётся на бумаге. Размер шрифта — другое: он не является сведением о
+ * человеке и не выдаётся кем-то, поэтому выбирается им самим, ровно так же,
+ * как сотрудником на его карточке.
+ */
+$studentFontPage = $studentHome->get('/profile');
+
+$t->is($studentFontPage['status'] === 200, 'ученик открывает свои данные');
+$t->contains($studentFontPage['body'], 'name="font_size"', 'у ученика есть выбор размера шрифта');
+$t->notContains($studentFontPage['body'], 'name="last_name"',
+    'формы имени у ученика нет — имя заводит завуч');
+$t->notContains($studentFontPage['body'], 'name="new_password"',
+    'формы смены пароля у ученика нет — пароль выдаётся на бумаге');
+
+$studentFontSaved = $studentHome->post('/profile/font-size', [
+    '_token'    => $studentHome->tokenFrom($studentFontPage) ?? '',
+    'font_size' => 'large',
+]);
+
+$t->is($studentFontSaved['status'] === 302, 'ученик сохранил крупный размер');
+$t->equals('large', (string) $db->value('SELECT font_size FROM students WHERE id = :id', ['id' => $studentId]),
+    'выбор ученика записан в его таблицу, а не в сотрудническую');
+$t->is(
+    preg_match('#<html[^>]*data-font-size="large"#', (string) $studentHome->get('/profile')['body']) === 1,
+    'страница ученика после сохранения отдаётся крупного размера'
+);
+
+// Мусорное значение у ученика приводится тем же правилом, что и у сотрудника.
+$studentHome->post('/profile/font-size', [
+    '_token'    => $studentHome->tokenFrom($studentHome->get('/profile')) ?? '',
+    'font_size' => 'gigantic',
+]);
+
+$t->equals('normal', (string) $db->value('SELECT font_size FROM students WHERE id = :id', ['id' => $studentId]),
+    'значение вне списка приведено к нормальному размеру и у ученика');
+
+// Возвращаем нормальный размер — он же у всех по умолчанию.
+$studentHome->post('/profile/font-size', [
+    '_token'    => $studentHome->tokenFrom($studentHome->get('/profile')) ?? '',
+    'font_size' => 'normal',
+]);
+
+/*
+ * Выбор сотрудника не переходит к ученику и наоборот: у них разные таблицы и
+ * разные страницы, а свойство одно. Проверяется через разницу в базе — так
+ * видно, что записался именно тот, кто нажал.
+ */
+$t->equals('normal', (string) $users->findRowByEmail('owner@example.edu')['font_size'],
+    'выбор ученика не попал в запись сотрудника');
 
 /*
  * Гость остаётся на страницах вне панели: вход, регистрация и восстановление

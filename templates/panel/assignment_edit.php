@@ -161,7 +161,8 @@ $editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
     ?>
     <?php if ($isPublished): ?>
     <a class="btn"
-      href="<?= $view->e($view->url('work/' . $assignmentId)) ?>">
+      href="<?= $view->e($view->url('work/' . $assignmentId . '?trial=1')) ?>"
+      target="_blank" rel="noopener">
     Пройти работу
     </a>
     <?php endif; ?>

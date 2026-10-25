@@ -7,7 +7,9 @@ namespace MyEdu\Http\Controller;
 use MyEdu\Auth\Auth;
 use MyEdu\Auth\AuthMailer;
 use MyEdu\Auth\AuthService;
+use MyEdu\Auth\StudentRepository;
 use MyEdu\Auth\TokenRepository;
+use MyEdu\Auth\User;
 use MyEdu\Auth\UserRepository;
 use MyEdu\Auth\VkUrl;
 
@@ -43,6 +45,7 @@ final class AuthController
         private readonly TokenRepository $tokens,
 private readonly Auth $auth,
         private readonly UserRepository $users,
+        private readonly StudentRepository $students,
         private readonly ImageUpload $uploads,
         private readonly string $baseUrl
     ) {
@@ -134,7 +137,7 @@ return $this->render('auth/register', [
 
         $this->session->set(
             'flash_notice',
-            'Если такой адрес зарегистрирован и ожидает подтверждения, мы отправили письмо.'
+            'Письмо отправлено на указанный вами адрес.'
         );
 
         return $this->redirect('login');
@@ -274,7 +277,7 @@ public function showLogin(Request $request): Response
         );
 
         if (($result['ok'] ?? false) !== true) {
-            $this->session->set('flash_error', (string) $result['error']);
+            $this->session->set('flash_error', 'Не удалось войти: ' . (string) $result['error']);
             $this->session->set('last_identifier', (string) $request->postParam('identifier', ''));
 
             return $this->redirect('student/login');
@@ -300,7 +303,7 @@ public function showLogin(Request $request): Response
         );
 
         if (($result['ok'] ?? false) !== true) {
-            $this->session->set('flash_error', (string) $result['error']);
+            $this->session->set('flash_error', 'Не удалось войти: ' . (string) $result['error']);
             $this->session->set('last_identifier', (string) $request->postParam('identifier', ''));
 
             return $this->redirect('login');
@@ -348,7 +351,7 @@ public function showLogin(Request $request): Response
          */
         $this->session->set(
             'flash_notice',
-            'Если такой адрес зарегистрирован, мы отправили письмо со ссылкой для смены пароля.'
+            'Письмо со ссылкой для смены пароля отправлено на указанный вами адрес.'
         );
 
         return $this->redirect('login');
@@ -403,7 +406,8 @@ public function showReset(Request $request): Response
         $result = $this->service->resetPasswordWithToken($token, $password);
 
         if (($result['ok'] ?? false) !== true) {
-            $this->session->set('flash_error', (string) $result['error']);
+            // Обвязка по месту: речь о смене пароля, а не об отправке письма.
+            $this->session->set('flash_error', 'Не удалось сменить пароль: ' . (string) $result['error']);
 
             if (!empty($result['retryable'])) {
                 return $this->rememberResetToken($token);
@@ -600,6 +604,90 @@ public function showReset(Request $request): Response
         $this->session->remove('profile_old');
         $this->session->remove('profile_errors');
         $this->session->set('flash_notice', 'Данные сохранены');
+
+        return $this->redirect('profile');
+    }
+
+    /**
+     * Личный размер шрифта: мелкий, нормальный, крупный.
+     *
+     * Отдельная форма и отдельный адрес, а не поле внутри «О себе»: у
+     * сотрудника и у ученика разные страницы профиля и разные таблицы, а
+     * свойство одно и чинится в одном месте. Собрав всё в одну форму
+     * «О себе», пришлось бы для ученика держать вторую копию той же логики —
+     * и проверку, и сохранение, и сообщение об ошибке.
+     *
+     * Обработчик работает и для сотрудника, и для ученика: разбирается он
+     * сам, а не по требованию страницы. Это то отличие, которое отделяет его
+     * от `saveProfile` — там сотрудничество проверяется в начале, потому что
+     * форма правит сведения, существующие только у сотрудника. Размер шрифта
+     * есть у обоих.
+     *
+     * Сохранение без JavaScript: значение уходит обычной формой, страница
+     * перезагружается, и ядро при отрисовке читает его из базы заново —
+     * объект пользователя живёт один запрос.
+     */
+    public function saveFontSize(Request $request): Response
+    {
+        $this->requireToken($request, $this->csrf);
+
+        // Значение из запроса приводится к списку, а не проверяется по месту:
+        // три размера общаются и с CSS, и с формой, и одной проверкой на все
+        // три места обойтись дешевле, чем тремя.
+        $fontSize = User::fontSizeOf($request->postParam('font_size'));
+
+        $student = $this->auth->student();
+
+        if ($student !== null) {
+            $this->students->setFontSize($student->id, $fontSize);
+        } else {
+            $this->users->setFontSize((int) $this->auth->id(), $fontSize);
+        }
+
+        /*
+         * Сообщение называет именно то, что человек увидит после перезагрузки:
+         * он вернётся на ту же страницу уже в новом размере, и если сказать
+         * просто «Сохранено», останется вопрос — чего именно.
+         */
+        $this->session->set('flash_notice', 'Размер шрифта сохранён');
+
+        return $this->redirect('profile');
+    }
+
+    /**
+     * Личная тема оформления: тёмная или светлая.
+     *
+     * Решение владельца от 24.10.2026 (волна E): тема живёт в профиле, а не
+     * в браузере. Обработчик один на двух потребителей — как и у размера
+     * шрифта, у сотрудника и ученика разные страницы, а свойство одно:
+     *
+     *   - форма в профиле отправляется обычным POST: страница перезагружается
+     *     с сообщением «Тема сохранена»;
+     *   - кнопка в шапке шлёт данные без перезагрузки (X-Requested-With) и
+     *     получает JSON: тема на странице применяется сразу, без ожидания.
+     *
+     * Правило приведения одно на всё — `User::themeOf`: в базу попадает
+     * только dark или light, и оболочка при отрисовке ничего не проверяет.
+     */
+    public function saveTheme(Request $request): Response
+    {
+        $this->requireToken($request, $this->csrf);
+
+        $theme = User::themeOf($request->postParam('theme'));
+
+        $student = $this->auth->student();
+
+        if ($student !== null) {
+            $this->students->setTheme($student->id, $theme);
+        } else {
+            $this->users->setTheme((int) $this->auth->id(), $theme);
+        }
+
+        if ($request->wantsJson()) {
+            return Response::json(['ok' => true, 'theme' => $theme]);
+        }
+
+        $this->session->set('flash_notice', 'Тема сохранена');
 
         return $this->redirect('profile');
     }

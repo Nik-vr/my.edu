@@ -70,7 +70,7 @@ $view->crumbs([
 
 <?php if ($rows === []): ?>
  <div class="card">
- <p class="muted">Ученики выданы, но попыток нет: работу ещё не начали.</p>
+ <p class="muted">Работа выдана ученикам, но никто из них ещё не выполнил работу.</p>
  </div>
 <?php else: ?>
  <div class="card">

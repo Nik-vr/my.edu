@@ -45,6 +45,16 @@ final class SmtpMailer implements MailerInterface
         return $this->lastError;
     }
 
+    /**
+     * Предупреждений при успешной отправке нет: свойства драйвера —
+     * коды и тексты ответа SMTP, и все они уходят в lastError() при отказе.
+     * Метод нужен интерфейсу — страница настроек спрашивает у любого драйвера.
+     */
+    public function lastWarning(): ?string
+    {
+        return null;
+    }
+
     public function send(MailMessage $message): bool
     {
         $this->lastError = null;

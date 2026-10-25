@@ -88,8 +88,36 @@ final class WorkItemHandler
             $values = $fresh;
         }
 
+        /*
+         * Шапка прохождения вместо крошек — решение владельца от 24.10.2026,
+         * как и в тесте: «имя+класс | таймер | кнопки», список заданий скрыт.
+         *
+         * Кнопка одна, как и была в форме: у вариативной задачи перехода
+         * назад нет — ответ пересчитывается по условию, и возврат к прошлой
+         * задаче ничего бы не вернул.
+         *
+         * Название работы берётся из позиции (`$context->item['assignment_title']`),
+         * а не из данных задания: ядро кладёт его туда вместе с токеном.
+         * Оно же уходит в `<title>` вкладки браузера, а заголовок задания
+         * остаётся в теле страницы (`heading`).
+         */
+        $assignmentTitle = (string) ($context->item['assignment_title'] ?? 'Работа');
+        $isLast = $context->position >= $context->totalItems;
+
+        $this->view->attemptBar([
+            'remaining' => $context->remainingSeconds,
+            'formId'    => 'attempt-form',
+            'buttons'   => [
+                [
+                    'action' => $isLast ? 'finish' : 'next',
+                    'label'  => $isLast ? 'Завершить работу' : 'Далее →',
+                ],
+            ],
+        ]);
+
         return Response::html($this->view->render('variable/render', [
-            'title'      => 'Задание №' . (string) ($context->item['position'] ?? '?'),
+            'title'     => $assignmentTitle,
+            'heading'   => 'Задание №' . (string) $context->position,
             'prompt'     => VariableGenerator::substitute((string) $task['prompt'], $values),
             'values'     => $values,
             'answer'     => $answer['answer'],
@@ -101,9 +129,6 @@ final class WorkItemHandler
             'itemId'     => (int) $context->item['id'],
             'attemptId'  => $context->attemptId,
             'token'      => $context->token(),
-            'attemptUrl' => $context->attemptUrl(),
-            'nextUrl'    => $context->itemUrl(),
-            'isLast'     => $context->position >= $context->totalItems,
             'remaining'  => $context->remainingSeconds,
             'noCopy'     => $context->noCopy,
         ]));
@@ -165,7 +190,14 @@ final class WorkItemHandler
         $itemAttempt = $this->attempts->find($context->attemptId, (int) $context->item['id']);
 
         if ($itemAttempt === null) {
-            return ItemGrade::forReview($max, ['error' => 'Ученик не открывал это задание']);
+            /*
+             * Ученик задание не открывал — это пропуск, а не «ручная
+             * проверка» (решение владельца от 24.10.2026): ответа не
+             * существует, проверять нечего, и раньше такая попытка ложилась
+             * в очередь учителю с ложной отметкой. Максимум берётся обычный —
+             * он остаётся в итоге работы, и процент падает на долю пропуска.
+             */
+            return ItemGrade::skipped($max, ['error' => 'Ученик не открывал это задание']);
         }
 
         $itemAttemptId = (int) $itemAttempt['id'];
@@ -227,7 +259,7 @@ final class WorkItemHandler
         $snapshot = $grade->snapshot;
 
         return Response::html($this->view->render('variable/review', [
-            'title'    => 'Задание №' . (string) ($context->item['position'] ?? '?'),
+            'title'    => 'Задание №' . (string) $context->position,
             'position' => $context->position,
             'total'    => $context->totalItems,
             'score'    => $grade->score,
@@ -271,7 +303,7 @@ final class WorkItemHandler
         }
 
         return Response::html($this->view->render('variable/submitted', [
-            'title'      => 'Задание №' . (string) ($context->item['position'] ?? '?'),
+            'title'      => 'Задание №' . (string) $context->position,
             'answerText' => $this->grader->answerText($answer['answer'], ProblemConfig::unit($config)),
             'prompt'     => VariableGenerator::substitute(
                 (string) $task['prompt'],

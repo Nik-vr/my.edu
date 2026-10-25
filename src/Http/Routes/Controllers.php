@@ -106,7 +106,7 @@ final class Controllers
         $this->auth = new AuthController(
             $app, $view, $session, $csrf, $config,
             $app->get(AuthService::class), $app->get(AuthMailer::class),
-            $app->get(TokenRepository::class), $auth, $users, $uploads, $baseUrl
+            $app->get(TokenRepository::class), $auth, $users, $students, $uploads, $baseUrl
         );
 
         $this->portal = new PortalController(
@@ -123,7 +123,8 @@ final class Controllers
         );
 
         $this->works = new WorkController(
-            $view, $session, $csrf, $config, $auth, $db, $assignments, $plugins
+            $view, $session, $csrf, $config, $auth, $db, $assignments, $plugins,
+            $app->get(StudentRepository::class)
         );
 
         $this->assignments = new AssignmentController(

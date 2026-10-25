@@ -116,7 +116,7 @@ $view->crumbs([
  <?= $view->e($student['full_name']) ?>
  <?php if (in_array($studentId, $issued, true)): ?>
  <span class="chip"
- title="Эту работу ему уже выдавали раньше">уже выдавалось</span>
+ title="Эту работу уже выдавали данному ученику">уже выдавалось</span>
  <?php endif; ?>
  </label>
  <?php endforeach; ?>

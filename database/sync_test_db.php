@@ -215,7 +215,57 @@ try {
         echo 'Дамп:     ' . number_format($size / 1024, 0, ',', ' ') . ' КБ за '
             . round(microtime(true) - $started, 1) . " с\n";
 
-        // Цель пересоздаётся целиком: в копии не должно остаться ничего от прежней.
+        /*
+         * Цель пересоздаётся целиком: в копии не должно остаться ничего от
+         * прежней.
+         *
+         * Раньше это утверждение было неверным. Ключ `--add-drop-table` у
+         * дампа добавляет `DROP TABLE` только для тех таблиц, которые есть в
+         * источнике. Таблица, которой в рабочей базе уже нет (например,
+         * `class_students` после разделения учеников), в дамп не попадает и в
+         * цели не удаляется — фантом переживал копирование и оставался в
+         * тестовой базе с прежними строками. Такой фантом ронял засевку и
+         * наборы, а причина выглядела как поломка тестов, а не копии.
+         *
+         * Поэтому перед загрузкой дампа все таблицы цели снимаются сами, а не
+         * возлагаются на `--add-drop-table`. Удаление идёт с отключёнными
+         * проверками внешних ключей: связей между таблицами много, и они
+         * мешают снять таблицу в произвольном порядке.
+         *
+         * Соединение открывается без привязки к базе: если целевой базы ещё
+         * нет, здесь нечего снимать, и отказ при загрузке остаётся тем же
+         * понятным, что и раньше, — от утилиты, а не необработанным исключением.
+         */
+        $serverDsn = sprintf(
+            'mysql:host=%s;port=%d;charset=%s',
+            $host,
+            $port,
+            $charset
+        );
+
+        $probe = new PDO($serverDsn, $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+
+        $targetExists = (int) $probe->query(
+            'SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '
+            . $probe->quote($target)
+        )->fetchColumn() > 0;
+
+        if ($targetExists) {
+            $probe->exec('USE `' . str_replace('`', '', $target) . '`');
+            $probe->exec('SET FOREIGN_KEY_CHECKS = 0');
+
+            foreach ($probe->query(
+                'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = '
+                . $probe->quote($target)
+            )->fetchAll(PDO::FETCH_COLUMN) as $leftTable) {
+                $probe->exec('DROP TABLE `' . str_replace('`', '', (string) $leftTable) . '`');
+            }
+
+            $probe->exec('SET FOREIGN_KEY_CHECKS = 1');
+        }
+
+        unset($probe);
+
         $started = microtime(true);
 
         $loadCode = $runTool(

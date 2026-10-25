@@ -181,8 +181,7 @@ require __DIR__ . '/_page_header.php';
  <input type="date" name="birth_date" value="<?= $view->e($birthDate) ?>"
  max="<?= $view->e(date('Y-m-d')) ?>">
  <span class="form-help">
- Необязательно. Возраст считается сам и отдельно не хранится:
- сохранённый возраст завтра стал бы неверным.
+ Необязательно.
  </span>
  </label>
 

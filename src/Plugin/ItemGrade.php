@@ -26,6 +26,7 @@ final class ItemGrade
      * @param bool                 $needsReview ждёт учителя: автопроверки нет
      * @param array<string,mixed>  $snapshot    данные для разбора
      * @param float                $penalty     штраф за задание, отдельно от балла
+     * @param bool                 $skipped     ученик задание не открывал — «пропущено»
      */
     public function __construct(
         public readonly float $score,
@@ -33,7 +34,8 @@ final class ItemGrade
         public readonly ?int $grade = null,
         public readonly bool $needsReview = false,
         public readonly array $snapshot = [],
-        public readonly float $penalty = 0.0
+        public readonly float $penalty = 0.0,
+        public readonly bool $skipped = false
     ) {
         if (!is_finite($score) || !is_finite($maxScore) || $maxScore < 0.0
             || $score < 0.0 || $score > $maxScore) {
@@ -66,6 +68,33 @@ final class ItemGrade
     public static function forReview(float $maxScore, array $snapshot = []): self
     {
         return new self(0.0, $maxScore, null, true, $snapshot);
+    }
+
+    /**
+     * Задание пропущено: ученик его не открывал.
+     *
+     * Решение владельца от 24.10.2026 (волна C): нераскрытое задание — это
+     * «пропущено», а не «ждёт проверки». Раньше оно уходило в `forReview`, и
+     * попытка целиком получала отметку «ручной проверки» — интерфейс врал:
+     * проверять нечего, ответа не существует, и учитель видел чужую работу
+     * в очереди среди настоящих. Теперь:
+     *
+     *  - балл 0 из обычного максимума (максимум задания остаётся в итоге
+     *    работы, и процент ученика падает ровно на долю пропуска — так и
+     *    должно быть);
+     *  - `needsReview` не ставится, поэтому попытка не помечается как
+     *    ручная и не попадает в счётчик «ждут проверки»;
+     *  - статус позиции ядро пишет как `skipped`, и страница результата
+     *    показывает «пропущено».
+     *
+     * Ручная проверка от этого не исчезает: она остаётся там, где есть что
+     * проверять, — у текстовых вопросов со стратегией `manual`.
+     *
+     * @param array<string,mixed> $snapshot
+     */
+    public static function skipped(float $maxScore, array $snapshot = []): self
+    {
+        return new self(0.0, $maxScore, null, false, $snapshot, 0.0, true);
     }
 
     /** @param array<string,mixed> $snapshot */

@@ -381,9 +381,19 @@ final class SystemUpdate
         $latest = $this->latest(true);
 
         if (($latest['ok'] ?? false) !== true) {
+            $reason = (string) ($latest['error'] ?? 'неизвестная причина.');
+
+            /*
+             * Ошибка проверки версии пишется в журнал: раньше владелец видел
+             * её только на странице, а в логах не было ничего — диагностировать
+             * приходилось вслепую. `log()` дублирует запись в журнал PHP, куда
+             * владелец смотрит на шаред-хостинге.
+             */
+            $this->log('Проверка новой версии не удалась: ' . $reason);
+
             return [
                 'ok' => false,
-                'message' => 'Обновление не выполнено: ' . (string) ($latest['error'] ?? 'неизвестная причина.'),
+                'message' => 'Обновление не выполнено: ' . $reason,
             ];
         }
 
@@ -413,6 +423,8 @@ final class SystemUpdate
         try {
             $backup = $this->dump->take('обновление системы до версии ' . (string) $latest['version']);
         } catch (Throwable $e) {
+            $this->log('Копия базы не снята, обновление остановлено: ' . $e->getMessage());
+
             return [
                 'ok' => false,
                 'message' => 'Обновление остановлено: не снята резервная копия базы. ' . $e->getMessage(),
@@ -427,6 +439,7 @@ final class SystemUpdate
         } catch (Throwable $e) {
             $this->remove($archive);
 
+            // Причина уже записана в журнал внутри download().
             return ['ok' => false, 'message' => 'Обновление не выполнено: ' . $e->getMessage()];
         }
 
@@ -435,6 +448,8 @@ final class SystemUpdate
         $this->remove($archive);
 
         if (($result['ok'] ?? false) !== true) {
+            $this->log('Архив не применён: ' . (string) ($result['message'] ?? 'причина не указана'));
+
             return $result;
         }
 
@@ -621,24 +636,61 @@ final class SystemUpdate
 
     /**
      * Скачать архив релиза.
+     *
+     * Проверка результата — `downloadSucceeded()`, а не `is_string`: при
+     * скачивании в файл `fetch()` возвращает true (работа сделана — тело уже
+     * лежит в $target), и прежняя проверка отвергала ИМЕННО успешное
+     * скачивание: исключение «Архив не скачан: неизвестная причина»
+     * появлялось при lastError = null, то есть без единой причины. Так
+     * обновление не работало вовсе, а в журнале не было ничего, потому что
+     * запись туда стоит только на успешном конце пути.
      */
     private function download(string $url, string $target): void
     {
         $body = $this->fetch($url, 120, $target);
 
-        if (!is_string($body) || $body === '') {
-            throw new RuntimeException('Архив не скачан: ' . ($this->lastError ?? 'неизвестная причина.'));
+        if (!self::downloadSucceeded($body)) {
+            $reason = $this->lastError ?? 'причина не записана — подробности в var/log/update.log';
+
+            $this->log('Скачивание архива не удалось: ' . $reason . ' (адрес: ' . $url . ')');
+
+            throw new RuntimeException('Архив не скачан: ' . $reason . '.');
         }
 
         $size = (int) @filesize($target);
 
         if ($size <= 0) {
+            $this->log('Скачанный файл пустой: ' . $target . ' (адрес: ' . $url . ')');
+
             throw new RuntimeException('Скачанный файл пустой.');
         }
 
         if ($size > self::MAX_ASSET_BYTES) {
             throw new RuntimeException('Архив релиза слишком большой: ' . round($size / 1024 / 1024) . ' МБ.');
         }
+    }
+
+    /**
+     * Удалось ли скачивание.
+     *
+     * Разные пути `fetch()` отвечают по-разному, и это нормально:
+     *
+     *  - запись в файл (тот случай, что здесь) — true при успехе, false при
+     *    отказе, тело не возвращается вовсе, оно в файле;
+     *  - чтение в память — строка с телом, пустая строка при отказе чтения
+     *    внутри потока.
+     *
+     * Именно поэтому проверка «строка и не пустая» здесь неверна: к ней
+     * успех записи в файл не проходит. Метод вынесен отдельно, чтобы правило
+     * проверялось тестами, а не додумывалось при каждой правке.
+     */
+    public static function downloadSucceeded(mixed $result): bool
+    {
+        if ($result === true) {
+            return true;
+        }
+
+        return is_string($result) && $result !== '';
     }
 
     /**
@@ -926,8 +978,19 @@ final class SystemUpdate
         }
     }
 
+    /**
+     * Запись в журнал обновлений.
+     *
+     * Дублируется в error_log: журнал `var/log/update.log` пишется самим
+     * приложением и зависит от прав каталога, а журнал PHP на шаред-хостинге
+     * владелец видит всегда — именно туда он и смотрит, когда письма или
+     * обновление «просто не работают». Причина одной ошибки попадает в оба
+     * места и видна с двух сторон.
+     */
     private function log(string $message): void
     {
+        $line = '[' . date('Y-m-d H:i:s') . '] ' . $message;
+
         $file = $this->app->rootDir() . '/var/log/update.log';
         $directory = dirname($file);
 
@@ -935,7 +998,9 @@ final class SystemUpdate
             @mkdir($directory, 0775, true);
         }
 
-        @file_put_contents($file, '[' . date('Y-m-d H:i:s') . '] ' . $message . "\n", FILE_APPEND | LOCK_EX);
+        @file_put_contents($file, $line . "\n", FILE_APPEND | LOCK_EX);
+
+        error_log('[update] ' . $message);
     }
 
     private ?string $lastError = null;

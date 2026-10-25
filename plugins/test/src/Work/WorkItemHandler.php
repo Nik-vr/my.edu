@@ -66,7 +66,7 @@ final class WorkItemHandler
 
  if ($questions === []) {
  return Response::html($this->view->render('test/work_empty', [
- 'title' => 'Задание №' . (string) ($context->item['position'] ?? '?'),
+ 'title' => 'Задание №' . (string) $context->position,
  'position' => $context->position,
  'total' => $context->totalItems,
  'attemptUrl' => $context->attemptUrl(),
@@ -101,21 +101,61 @@ final class WorkItemHandler
   }
   }
 
- return Response::html($this->view->render('test/work_task', [
- 'title' => 'Задание №' . (string) ($context->item['position'] ?? '?'),
- 'test' => $test,
- 'questions' => $this->prepare($questions, $context, (bool) ($test['shuffle_options'] ?? 0)),
- 'drafts' => $drafts,
- 'answeredCount' => count($answered),
- 'maxScore' => $this->tests->maxScore($testId),
- 'position' => $context->position,
- 'positions' => $context->totalItems,
- 'weight' => $context->weight(),
- 'itemId' => (int) $context->item['id'],
- 'attemptId' => $context->attemptId,
- 'token' => $context->token(),
- 'attemptUrl' => $context->attemptUrl(),
- 'isLast' => $context->position >= $context->totalItems,
+        /*
+         * Шапка прохождения вместо крошек — решение владельца от 24.10.2026:
+         * на странице задания шапка показывает «имя+класс | таймер | кнопки»,
+         * а крошки не рисуются вовсе. Объявляется она объекту вида до
+         * отрисовки оболочки — той же способностью, что и крошки.
+         *
+         * Название работы кладётся ядром в саму позицию
+         * (`$context->item['assignment_title']`), а не в данные задания:
+         * раньше здесь читалось `$context->taskData['assignment_title']`, ключа
+         * в данных задания нет, и в шапке всегда стояло «Работа». Из названия
+         * теперь собирается и `<title>` вкладки браузера — там, где раньше
+         * стояло «Задание №N». Заголовок самого задания остаётся в теле
+         * страницы, отдельной строкой `heading`.
+         */
+        $assignmentTitle = (string) ($context->item['assignment_title'] ?? 'Работа');
+        $isLast = $context->position >= $context->totalItems;
+
+        /*
+         * Кнопки навигации переезжают из низа страницы в шапку: во время
+         * задания главное — текущий вопрос и оставшееся время, а список
+         * заданий и громкая панель кнопок внизу отвлекают. Кнопки те же и
+         * уходят в ту же форму: шапка рисует их с атрибутом `form`, поэтому
+         * сервер получает прежний POST с прежним токеном, и страница
+         * работает даже там, где скрипты не загрузились.
+         *
+         * «Назад» рисуется всегда, как и раньше в форме: на первой позиции
+         * сервер просто оставит ученика на месте.
+         */
+        $this->view->attemptBar([
+            'remaining' => $context->remainingSeconds,
+            'formId'    => 'attempt-form',
+            'buttons'   => [
+                ['action' => 'prev', 'label' => '← Назад'],
+                [
+                    'action' => $isLast ? 'finish' : 'next',
+                    'label'  => $isLast ? 'Завершить работу' : 'Далее →',
+                ],
+            ],
+        ]);
+
+        return Response::html($this->view->render('test/work_task', [
+            'title'   => $assignmentTitle,
+            'heading' => 'Задание №' . (string) $context->position,
+            'test' => $test,
+            'questions' => $this->prepare($questions, $context, (bool) ($test['shuffle_options'] ?? 0)),
+            'drafts' => $drafts,
+            'answeredCount' => count($answered),
+            'maxScore' => $this->tests->maxScore($testId),
+            'position' => $context->position,
+            'positions' => $context->totalItems,
+            'weight' => $context->weight(),
+            'itemId' => (int) $context->item['id'],
+            'attemptId' => $context->attemptId,
+            'token' => $context->token(),
+            'remaining' => $context->remainingSeconds,
   'remaining' => $context->remainingSeconds,
             'noCopy'    => $context->noCopy,
  ]));
@@ -175,7 +215,13 @@ $itemAttemptId = (int) $itemAttempt['id'];
  $itemAttempt = $this->items->find($context->attemptId, (int) $context->item['id']);
 
  if ($itemAttempt === null) {
- return ItemGrade::forReview($this->tests->maxScore($testId), [
+ /*
+  * Ученик задание не открывал — это пропуск, а не «ручная проверка».
+  * Решение владельца от 24.10.2026: проверять нечего, ответа не существует,
+  * и раньше такая попытка ложилась в очередь учителю с ложной отметкой.
+  * Снимок остаётся прежним ключом `error` — его показывает разбор.
+  */
+ return ItemGrade::skipped($this->tests->maxScore($testId), [
  'error' => 'Ученик не открывал это задание',
  ]);
  }
@@ -252,7 +298,7 @@ $itemAttemptId = (int) $itemAttempt['id'];
  public function renderReview(AttemptContext $context, ItemGrade $grade): Response
  {
  return Response::html($this->view->render('test/work_review', [
- 'title' => 'Задание №' . (string) ($context->item['position'] ?? '?'),
+ 'title' => 'Задание №' . (string) $context->position,
  'position' => $context->position,
  'total' => $context->totalItems,
  'result' => $this->resultFromSnapshot($grade->snapshot),
@@ -301,7 +347,7 @@ $itemAttemptId = (int) $itemAttempt['id'];
  }
 
  return Response::html($this->view->render('test/work_submitted', [
- 'title' => 'Задание №' . (string) ($context->item['position'] ?? '?'),
+ 'title' => 'Задание №' . (string) $context->position,
  'rows' => $rows,
  ], ''));
  }
@@ -353,11 +399,17 @@ $itemAttemptId = (int) $itemAttempt['id'];
 
  $prepared = [];
 
-foreach ($questions as $index => $question) {
+foreach ($questions as $question) {
  $runtime = $question->withRuntime($seed + $question->id, $shuffleOptions);
 
  $prepared[] = [
- 'number' => $index + 1,
+ // Номер в кружке — номер ЗАДАНИЯ в работе, а не вопроса (решение
+ // владельца от 24.10.2026, задача 0). Задание по устройству содержит
+ // один вопрос, и прежний порядковый номер вопроса давал на всех
+ // страницах одну и ту же цифру «1» — ученик не видел, какое задание
+ // читает. Номер берётся из контекста позиции: тот же, что в заголовке
+ // «Задание №N», и от порядка вопросов он не зависит.
+ 'number' => $context->position,
  'id' => $runtime->id,
  'type' => $runtime->type,
  'typeTitle' => $this->registry->get($runtime->type)->title(),
@@ -369,11 +421,9 @@ foreach ($questions as $index => $question) {
  }
 
  if ((bool) ($context->taskData['shuffle_questions'] ?? false)) {
+ // Перенумерация после перемешивания больше не нужна: номер задания
+ // одинаков для всех вопросов своего задания и от порядка не зависит.
  $prepared = $this->shuffle($prepared, $seed);
-
- foreach ($prepared as $index => $_) {
- $prepared[$index]['number'] = $index + 1;
- }
  }
 
  return $prepared;

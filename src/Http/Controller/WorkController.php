@@ -7,6 +7,7 @@ namespace MyEdu\Http\Controller;
 use MyEdu\Auth\Actor;
 use MyEdu\Auth\Auth;
 use MyEdu\Auth\Role;
+use MyEdu\Auth\StudentRepository;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
 use MyEdu\Core\Database;
@@ -47,7 +48,13 @@ final class WorkController
         private readonly Auth $auth,
         private readonly Database $db,
         private readonly AssignmentRepository $assignments,
-        private readonly PluginManager $plugins
+        private readonly PluginManager $plugins,
+        /**
+         * Виртуальный ученик для тестового прохождения (задача 6): его
+         * заводит и обновляет репозиторий учеников, а контроллер работы
+         * решает, под кем идёт текущая попытка.
+         */
+        private readonly StudentRepository $students
     ) {
     }
 
@@ -139,7 +146,42 @@ final class WorkController
             throw new HttpException(404, 'Работа не найдена');
         }
 
-        $attempt = $actor === null ? null : $this->assignments->findLastAttempt($id, $actor);
+        /*
+         * Тестовое прохождение: ссылка «Пройти работу» ведёт сюда с ?trial=1.
+         *
+         * Решение владельца от 24.10.2026 (задача 6): сотрудникам работы не
+         * выдаются, и их прогон идёт под виртуальным учеником — одним
+         * постоянным id без класса, которого нет в списках учеников, а имя
+         * у него — ФИО проходящего. Здесь ставится заслон на всё прохождение
+         * (session «проба этой работы»): дальше адреса пробуются уже без
+         * параметра, и сам старт читает заслон, чтобы писать попытку под
+         * виртуальным.
+         *
+         * Ученику вход закрыт: он проходит работу сам, и чужая попытка
+         * заменила бы его собственную.
+         *
+         * Прежние тестовые попытки убираются здесь же: виртуальный один на
+         * всю систему, и без уборки новый проход начинался бы с чужих
+         * остатков прошлых вкладок.
+         */
+        if ($request->queryParam('trial') !== null && $actor !== null && !$actor->isStudent()) {
+            $this->students->ensureTrial((string) ($this->auth->user()?->fullName ?? ''));
+            $this->assignments->deleteAttemptsOfStudent(StudentRepository::TRIAL_ID);
+            $this->session->set('trial_for', $id);
+        }
+
+        /*
+         * Пока заслон проба стоит, показывается попытка виртуального ученика:
+         * «Продолжить» и «Результат» должны вести в неё, а не в прежнюю
+         * самопроверку сотрудника, которая у него могла остаться.
+         */
+        $attemptActor = $actor;
+
+        if ($actor !== null && (int) ($this->session->get('trial_for') ?? 0) === $id) {
+            $attemptActor = Actor::ofStudent(StudentRepository::TRIAL_ID);
+        }
+
+        $attempt = $attemptActor === null ? null : $this->assignments->findLastAttempt($id, $attemptActor);
         $rows = $this->positionRows($assignment, $attempt);
 
         return $this->render('work/show', [
@@ -223,6 +265,24 @@ final class WorkController
         }
 
         /*
+         * Тестовое прохождение: заслон из сессии (поставлен показом с
+         * ?trial=1) подменяет актёра на виртуального ученика — ПОСЛЕ проверки
+         * видимости, которая сделана для настоящего человека, и ДО лимита:
+         * у виртуального нет выдачи, значит нет и лимита, а прежние его
+         * попытки убраны при входе в пробу.
+         *
+         * Подмена только для сотрудника: у ученика своя работа, и его вход
+         * на ?trial=1 ничего не меняет — проверка выше его уже провела мимо.
+         */
+        $isTrialStart = (int) ($this->session->get('trial_for') ?? 0) === $id
+            && !$actor->isStudent();
+
+        if ($isTrialStart) {
+            $this->session->remove('trial_for');
+            $actor = Actor::ofStudent(StudentRepository::TRIAL_ID);
+        }
+
+        /*
          * Ограничение числа попыток относится к ученикам: учитель должен
          * прогонять работу сколько угодно раз, иначе после правки задания
          * нельзя было бы проверить, что всё сошлось. Завучу и администратору
@@ -253,6 +313,16 @@ final class WorkController
 
         /** @var array<string,mixed> $attempt */
         $attempt = $started['attempt'];
+
+        /*
+         * Заслон проба превращается в адресат: дальше вся сессия прохождения
+         * (открытие заданий, сдача, результат, скрытие меню и уборка при
+         * закрытии вкладки) знает попытку по этой метке, а параметр ?trial= в
+         * адресах больше не нужен.
+         */
+        if ($isTrialStart) {
+            $this->session->set('trial_attempt', (int) $attempt['id']);
+        }
 
         /*
          * Начинаем с первой позиции — той карточки первой строки, которая
@@ -619,7 +689,8 @@ if ($this->expired($attempt)) {
                     : $this->itemStatus(
                         max(0.0, $grade->score - $grade->penalty),
                         $grade->maxScore,
-                        $grade->needsReview
+                        $grade->needsReview,
+                        $grade->skipped
                     ),
                 'needs_review' => $grade->needsReview ? 1 : 0,
                 'snapshot'     => self::encode($grade->snapshot),
@@ -692,9 +763,18 @@ if ($this->expired($attempt)) {
 
     /**
      * Статус позиции по её баллу.
+     *
+     * Пропуск проверяется первым и не зависит от балла: у нераскрытого
+     * задания балл 0 из обычного максимума, и без этой ветки оно читалось бы
+     * как «неверно» — то есть пропуск нельзя было бы отличить от попытки
+     * ответить и провалиться.
      */
-    private function itemStatus(float $score, float $maxScore, bool $needsReview): string
+    private function itemStatus(float $score, float $maxScore, bool $needsReview, bool $skipped = false): string
     {
+        if ($skipped) {
+            return 'skipped';
+        }
+
         if ($needsReview) {
             return 'pending';
         }
@@ -776,12 +856,19 @@ if ($this->expired($attempt)) {
             ? $this->prefetchedTaskData[$key]
             : $this->plugins->taskData($ref);
 
+        // Получаем название работы для крошек в шапке
+        $assignment = $this->assignments->find((int) $attempt['assignment_id']);
+        $assignmentTitle = $assignment['title'] ?? 'Работа';
+
         return new AttemptContext(
             (int) $attempt['id'],
             $ref,
             // Токен попытки кладётся в позицию: плагин рисует форму, и без
             // токена её нельзя отправить. Само значение знает только ядро.
-            $item + ['assignment_token' => (string) ($attempt['token'] ?? '')],
+            $item + [
+                'assignment_token' => (string) ($attempt['token'] ?? ''),
+                'assignment_title' => $assignmentTitle,
+            ],
             $taskData,
             /*
              * Номер задания — тот, под которым его видит ученик.
@@ -1161,15 +1248,30 @@ if ($this->expired($attempt)) {
         /*
          * Номер — тот, под которым задание видит ученик.
          *
-         * При перемешивании он не совпадает с номером в редакторе, и «дальше»
-         * обязано идти по ученическому порядку: иначе после третьего задания
-         * ученик возвращался бы к тому, что уже проходил.
+         * $item приходит из requireItem(), а там лежит строка базы, где
+         * position — номер позиции В РЕДАКТОРЕ. Складывать его со шагом и
+         * подавать в itemByStudentNumber(), который ждёт ученический номер, —
+         * разные нумерации в одном выражении. Без перемешивания они
+         * совпадают, и поломка не видна; при перемешивании «дальше» уходило
+         * на чужое задание либо за пределы списка — тогда ученика возвращало
+         * к списку позиций, оставшиеся задания он не открывал вовсе, и при
+         * сдаче они уходили учителю как «не открывал».
+         *
+         * Поэтому сначала номер позиции переводится в номер ученика, и уже
+         * к нему прибавляется шаг.
          */
-        $number = (int) $item['position'] + $step;
+        $assignmentId = (int) $attempt['assignment_id'];
+        $attemptId = (int) $attempt['id'];
+
+        $number = $this->assignments->studentNumber(
+            $assignmentId,
+            $attemptId,
+            (int) $item['position']
+        ) + $step;
 
         return $this->assignments->itemByStudentNumber(
-            (int) $attempt['assignment_id'],
-            (int) $attempt['id'],
+            $assignmentId,
+            $attemptId,
             max(1, $number)
         );
     }
@@ -1213,6 +1315,7 @@ if ($this->expired($attempt)) {
             $request->queryParam('t')
         );
 
+        $actor = $this->auth->actor();
         $assignment = $this->requireAssignment($attempt);
         $rows = $this->positionRows($assignment, $attempt);
 
@@ -1223,6 +1326,16 @@ if ($this->expired($attempt)) {
             'attempt'    => $attempt,
             'totalItems' => count($rows),
             'doneCount'  => count(array_filter($rows, static fn (array $r): bool => $r['done'])),
+            /*
+             * Остаток попыток и право на повтор нужны тому же шаблону, что и на
+             * первом экране работы: подписи под заголовком и кнопке «Пройти
+             * заново» рисуются по ним. Без них шаблон читал несуществующие
+             * переменные — на маршруте с начатой попыткой это предупреждение
+             * в лог на каждое открытие, а кнопка повтора у сотрудника
+             * решалась по пустому значению.
+             */
+            'attemptsLeft' => $this->attemptsLeft((int) $assignment['id'], $actor),
+            'mayRepeat'    => $this->auth->can(Role::TESTS_REPEAT),
             'notice'     => $this->session->pull('flash_notice'),
             'error'      => $this->session->pull('flash_error'),
         ]);
@@ -1293,11 +1406,62 @@ if ($this->expired($attempt)) {
             ? $attempt['student_id'] !== null && (int) $attempt['student_id'] === $actor->studentId
             : $attempt['staff_id'] !== null && (int) $attempt['staff_id'] === $actor->staffId;
 
+        /*
+         * Тестовая попытка (задача 6): записана она под виртуальным учеником,
+         * а открывает её настоящий сотрудник — совпадения колонок здесь не
+         * будет никогда. Владелец определяется по метке в сессии: её поставил
+         * старт, и она же снимается уборкой при закрытии вкладки.
+         *
+         * Без этого тест проходил бы только у сотрудника с правом
+         * TESTS_MANAGE, а «Пройти работу» есть и у завуча — и он получал бы
+         * 403 на первой же странице чужой ему тестовой попытки.
+         */
+        if (!$isOwner && (int) ($this->session->get('trial_attempt') ?? 0) === $attemptId) {
+            $isOwner = true;
+        }
+
         if (!$isOwner && !$this->auth->can(Role::TESTS_MANAGE)) {
             throw new HttpException(403, 'Это попытка другого ученика');
         }
 
         return $attempt;
+    }
+
+    /**
+     * Уборка тестовой попытки при закрытии вкладки.
+     *
+     * Решение владельца от 24.10.2026 (задача 6): результаты тестового
+     * прохождения существуют только, пока открыта вкладка с ним. Страницы
+     * прохождения шлют beacon на pagehide — последний пакет, который браузер
+     * успевает отправить при закрытии, — и сервер убирает попытку со всеми
+     * следами.
+     *
+     * Две страховки от потерь: уборка срабатывает и при новом тестовом
+     * старте (там же чистятся прежние попытки виртуального), и сессия в
+     * любом случае не переживает закрытия вкладки. Чистится только попытка
+     * виртуального ученика — настоящие попытки учеников и самопроверка
+     * сотрудника этим маршрутом недостижимы.
+     */
+    public function trialCleanup(Request $request): Response
+    {
+        $this->requireToken($request, $this->csrf);
+
+        $attemptId = (int) $request->postParam('attempt', '0');
+        $attempt = $attemptId > 0 ? $this->assignments->findAttempt($attemptId) : null;
+
+        if ($attempt !== null
+            && $attempt['student_id'] !== null
+            && (int) $attempt['student_id'] === StudentRepository::TRIAL_ID
+        ) {
+            $this->assignments->deleteAttemptCascade($attemptId);
+        }
+
+        if ((int) ($this->session->get('trial_attempt') ?? 0) === $attemptId) {
+            $this->session->remove('trial_attempt');
+        }
+
+        // beacon ответ не читает, но формат данных — тот, чего ждёт скрипт.
+        return Response::json(['ok' => true]);
     }
 
     /**

@@ -50,6 +50,23 @@ final class View
      */
     private array $crumbs = [];
 
+    /**
+     * Шапка прохождения работы — решение владельца от 24.10.2026.
+     *
+     * На странице задания крошки заменяются на «имя+класс | таймер | кнопки»:
+     * ученику важны он сам и оставшееся время, а навигация по разделам ему
+     * ни к чему — отвлекает от задания и ведёт к списку, который во время
+     * прохождения скрыт. Страница задания объявляет шапку тем же способом,
+     * что и крошки: она рендерится раньше оболочки, и переменная не долетит.
+     *
+     * Оболочка проверяет шапку прохождения раньше крошек: если страница
+     * заявила первую, крошки не рисуются вовсе — иначе в шапке оказались бы
+     * и имя с таймером, и следы прежней навигации.
+     *
+     * @var array{remaining:int|null,formId:string,buttons:list<array{action:string,label:string}>}|null
+     */
+    private ?array $attemptBar = null;
+
 /**
  * Где лежит корень сайта и откуда вид адреса.
  *
@@ -179,6 +196,51 @@ public function __construct(
         }
 
         return $html . '</nav>';
+    }
+
+    /**
+     * Заявить шапку прохождения работы вместо крошек.
+     *
+     * Кнопки навигации объявляются страницей, а не рисует их оболочка сама:
+     * какие кнопки нужны — решает позиция (на первой нет «назад», на последней
+     * «далее» сменяется «завершить»), а это знает только страница. Оболочка
+     * рисует их кнопками `submit` с атрибутом `form`, указывающим на форму
+     * задания: так навигация переезжает в шапку, но остаётся частью той же
+     * формы и уходит на сервер обычным POST — без скриптов и без потери
+     * токена защиты.
+     *
+     * @param array{remaining?:int|null,formId?:string,buttons?:list<array{action?:string,label?:string}>} $data
+     */
+    public function attemptBar(array $data): void
+    {
+        $buttons = [];
+
+        foreach (is_array($data['buttons'] ?? null) ? $data['buttons'] : [] as $button) {
+            $action = (string) ($button['action'] ?? '');
+            $label = (string) ($button['label'] ?? '');
+
+            if ($action !== '' && $label !== '') {
+                $buttons[] = ['action' => $action, 'label' => $label];
+            }
+        }
+
+        $remaining = $data['remaining'] ?? null;
+
+        $this->attemptBar = [
+            'remaining' => is_numeric($remaining) ? (int) $remaining : null,
+            'formId'    => (string) ($data['formId'] ?? 'attempt-form'),
+            'buttons'   => $buttons,
+        ];
+    }
+
+    /**
+     * Заявленная шапка прохождения или null, если страница крошки обычная.
+     *
+     * @return array{remaining:int|null,formId:string,buttons:list<array{action:string,label:string}>}|null
+     */
+    public function attemptBarData(): ?array
+    {
+        return $this->attemptBar;
     }
 
     /**

@@ -38,57 +38,107 @@ $mode = (string) $assignment['grade_mode'];
 
     <?php if (!$showResults): ?>
         <p class="muted">
-            Автор работы не показывает результат. Оценка появится в журнале
-            после проверки учителем.
+            Для этой работы результат не показывает. Оценка появится в журнале после проверки учителем.
         </p>
     <?php else: ?>
-        <div class="metric-row">
-            <div class="metric">
-                <span class="metric-value">
-                    <?= $view->e($total->percent === null ? '—' : $total->percent . '%') ?>
-                </span>
-                <span class="metric-label">выполнено</span>
-            </div>
-
-            <div class="metric">
-                <?php /*
-                Оценка красится тем цветом, который автор выбрал для неё в
-                шкале. Раньше под подписью стояло слово из его шкалы («отлично»),
-                и слово приходилось читать, а цвет читается сам.
-
-                Класс берётся из данных сведения, а собирается там из палитры
-                и уже приведён к одному из четырёх: подставить в разметку
-                произвольную строку из базы нельзя.
-                */
-                ?>
-                <span class="metric-value grade grade--<?= $view->e($total->color ?? 'primary') ?>">
-                    <?= $view->e($total->grade ?? '—') ?>
-                </span>
-                <span class="metric-label">оценка</span>
-            </div>
-
-            <div class="metric">
-                <span class="metric-value"><?= $view->e($total->score) ?></span>
-                <span class="metric-label">из <?= $view->e($total->maxScore) ?></span>
-            </div>
-
-            <?php if ($total->penalty > 0.0): ?>
+        <?php
+        /*
+         * Вид оценки — дуга-шкала, как показано владельцу (решение от
+         * 24.10.2026, волна D): дуга с процентом, кружок оценки цветом
+         * авторской шкалы и таблица «баллы / максимум / процент».
+         *
+         * Геометрия дуги считается здесь и попадает в атрибуты SVG
+         * (stroke-dasharray): инлайновые style= в шаблонах запрещены
+         * проверкой ui, а атрибуты — обычная разметка. Окружность r=34,
+         * её длина 2·π·34 ≈ 213.63; засчитывается доля процента.
+         *
+         * Процент может отсутствовать (у работы без максимума) — тогда дуга
+         * пустая, а в подписи стоит прочерк: выдумывать число нельзя.
+         */
+        $gaugePercent = $total->percent === null
+            ? null
+            : max(0.0, min(100.0, (float) $total->percent));
+        $gaugeRadius = 34.0;
+        $gaugeLength = round(2 * M_PI * $gaugeRadius, 2);
+        $gaugeFilled = $gaugePercent === null
+            ? 0.0
+            : round($gaugeLength * $gaugePercent / 100.0, 2);
+        $gaugeText = $gaugePercent === null ? '—' : ($total->percent . '%');
+        ?>
+        <div class="result-gauge-row">
             <?php /*
-             * Штраф показан отдельной строкой, а не вычтен из набранного молча.
-             *
-             * Ученик должен видеть, из чего сложился его результат: сколько
-             * заработано, сколько снято и сколько осталось. Иначе «8 из 11»
-             * читалось бы как «8 из 11» же, а на деле означало бы девять.
+             * Дуга: дорожка нейтральная, значение — акцентным цветом.
+             * rotate(-90) смещает начало дуги на верхнюю точку: без него
+             * шкала начиналась бы справа и читалась бы как перевёрнутая.
              */ ?>
-            <div class="metric">
-                <span class="metric-value">−<?= $view->e($total->penalty) ?></span>
-                <span class="metric-label">штраф, итого <?= $view->e($total->net()) ?></span>
+            <svg class="result-gauge" width="96" height="96" viewBox="0 0 96 96"
+                 role="img" aria-label="Выполнено: <?= $view->e($gaugeText) ?>">
+                <circle class="result-gauge__track"
+                        cx="48" cy="48" r="<?= $view->e((string) $gaugeRadius) ?>"
+                        fill="none" stroke-width="9"
+                        transform="rotate(-90 48 48)"
+                        stroke-dasharray="<?= $view->e((string) $gaugeLength) ?> <?= $view->e((string) $gaugeLength) ?>" />
+                <circle class="result-gauge__value"
+                        cx="48" cy="48" r="<?= $view->e((string) $gaugeRadius) ?>"
+                        fill="none" stroke-width="9" stroke-linecap="round"
+                        transform="rotate(-90 48 48)"
+                        stroke-dasharray="<?= $view->e((string) $gaugeFilled) ?> <?= $view->e((string) $gaugeLength) ?>" />
+                <text class="result-gauge__percent" x="48" y="48"
+                      text-anchor="middle" dy=".34em"><?= $view->e($gaugeText) ?></text>
+                <text class="result-gauge__caption" x="48" y="66"
+                      text-anchor="middle">выполнено</text>
+            </svg>
+
+            <div class="result-gauge-data">
+                <?php
+                /*
+                 * Кружок оценки: цвет берётся из шкалы автора.
+                 *
+                 * Четыре палитры дают готовый класс grade--* (приведение к ним
+                 * делает сведение), а собственный цвет автора класса не имеет и
+                 * передаётся атрибутом data-grade-color — его применяет скрипт
+                 * grade-color.js. Произвольная строка в разметку не попадает:
+                 * цвет приведён к `#rrggbb` при сохранении.
+                 */
+                $gradeColor = (string) ($total->color ?? 'primary');
+                $paletteGrade = \MyEdu\Grading\GradeScaleValidator::isPaletteColor($gradeColor);
+                ?>
+                <span class="grade-badge grade<?= $paletteGrade ? ' grade--' . $view->e($gradeColor) : '' ?>"
+                      <?= $paletteGrade ? '' : 'data-grade-color="' . $view->e($gradeColor) . '"' ?>
+                      title="Итоговая оценка"><?= $view->e($total->grade ?? '—') ?></span>
+
+                <table class="result-figures">
+                    <thead>
+                        <tr>
+                            <th scope="col">Баллы</th>
+                            <th scope="col">Максимум</th>
+                            <th scope="col">Процент</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><?= $view->e($total->score) ?></td>
+                            <td><?= $view->e($total->maxScore) ?></td>
+                            <td><?= $view->e($gaugeText) ?></td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
-            <?php endif; ?>
         </div>
 
+        <?php if ($total->penalty > 0.0): ?>
+            <?php /*
+             * Штраф показан отдельной строкой, а не вычтен из набранного молча:
+             * ученик должен видеть, из чего сложился его результат — сколько
+             * заработано, сколько снято и сколько осталось.
+             */ ?>
+            <p class="muted">
+                Штраф −<?= $view->e($total->penalty) ?> · итого <?= $view->e($total->net()) ?>
+            </p>
+        <?php endif; ?>
+
         <p class="muted">
-            Итог — среднее по весам заданий, а не по их количеству.
+            Итог. За разные задания может быть начислено разное количество баллов.
             <?= $mode === 'per_item'
                 ? 'Режим: отдельная оценка за задание, затем сведение по весам.'
                 : 'Режим: единая оценка за всю работу.' ?>

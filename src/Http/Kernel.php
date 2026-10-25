@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace MyEdu\Http;
 
 use MyEdu\Auth\Auth;
+use MyEdu\Auth\ClassRepository;
+use MyEdu\Auth\Student;
+use MyEdu\Auth\User;
 use MyEdu\Core\App;
 use MyEdu\Core\Config;
 use MyEdu\Core\Csrf;
@@ -35,6 +38,27 @@ use Throwable;
  */
 final class Kernel
 {
+    /**
+     * Имя cookie со состоянием свёрнутого бокового меню.
+     *
+     * Решение владельца от 24.10.2026 (волна E): состояние сворачивания
+     * живёт в cookie, а не в localStorage. Cookie читает сервер и сразу
+     * отрисовывает меню в нужном виде — страница не мигает развёрнутым
+     * меню, а состояние видно в отладчике браузера. Имя дублируется в
+     * `public/assets/js/panel-nav.js` (то же место, где разделяется и
+     * CSRF-токен в meta), и менять его нужно в обоих.
+     */
+    private const SIDEBAR_RAIL_COOKIE = 'myedu-sidebar-rail';
+
+    /**
+     * Префикс cookie со состоянием разделов меню: `myedu-nav-works` и так далее.
+     *
+     * Имя состоит из префикса и ключа группы (`PanelNav`: `works`, `school`,
+     * `system`), и так же оно собирается в `public/assets/js/panel-nav.js` —
+     * менять префикс нужно в обоих местах, как и у cookie свёрнутого меню.
+     */
+    private const NAV_COOKIE_PREFIX = 'myedu-nav-';
+
     private App $app;
 
     public function __construct(App $app)
@@ -105,8 +129,100 @@ final class Kernel
              * Разделять переменные на две нельзя было бы без нужды: почти
              * каждый шаблон обращается к ней, и придётся проверять обе.
              */
-            $this->view()->share('currentUser', $this->auth()->user() ?? $this->auth()->student());
+            $currentPerson = $this->auth()->user() ?? $this->auth()->student();
+
+            $this->view()->share('currentUser', $currentPerson);
             $this->view()->share('appName', $this->config()->string('app.title'));
+
+            /*
+             * Личный размер шрифта — для атрибута `data-font-size` на <html>.
+             *
+             * Значение кладётся отдельно от `$currentUser`, а не берётся из
+             * него в шаблоне: оболочка страницы должна читать одну переменную,
+             * иначе гость (у него объекта нет) заставит шаблон проверять тип
+             * на каждой странице. Гостю кладётся нормальный размер: выбирать
+             * человеку не из чего, и он видит систему как задумано.
+             *
+             * Приведение идёт здесь, а не в базе или шаблоне: мусорное значение
+             * становится нормальным раньше, чем доедет до CSS, и одна проверка
+             * обслуживает и оболочку панели, и публичную.
+             */
+            $this->view()->share('fontSize', $currentPerson?->fontSize ?? User::FONT_NORMAL);
+
+            /*
+             * Имя класса ученика — для шапки прохождения работы.
+             *
+             * Решение владельца от 24.10.2026: на странице задания вместо
+             * крошек показываются «имя+класс | таймер | кнопки». У самого
+             * ученика в объекте лежит только номер класса, а имя класса
+             * оболочке нужно текстом: шаблон не ходит в базу. Поэтому
+             * запрос делается здесь, один раз на запрос страницы и только
+             * для вошедшего ученика с классом — сотруднику и гостю он не
+             * нужен и не выполняется.
+             *
+             * Пустая строка вместо «Без класса»: подпись «, » с пустым
+             * именем выглядела бы поломкой, а отсутствие класса — норма
+             * для ученика, которого ещё не распределили.
+             */
+            $studentClassName = '';
+
+            if ($currentPerson instanceof Student && $currentPerson->classId !== null) {
+                $class = $this->app->get(ClassRepository::class)->find($currentPerson->classId);
+                $studentClassName = $class === null ? '' : (string) ($class['name'] ?? '');
+            }
+
+            $this->view()->share('studentClassName', $studentClassName);
+
+            /*
+             * Тема оформления — из профиля человека (решение владельца от
+             * 24.10.2026, волна E). Сервер ставит её в разметку до первой
+             * отрисовки, поэтому страница рисуется сразу в нужном виде и не
+             * мигает; прежний выбор в localStorage браузера больше не читается
+             * — тема перестала зависеть от состояния конкретного браузера.
+             *
+             * Гостю (вход, регистрация) кладётся тёмная: свой выбор у него
+             * нет, а в разметке оболочки стоит именно она.
+             */
+            $this->view()->share('theme', $currentPerson?->theme ?? User::THEME_DARK);
+
+            /*
+             * Свёрнутое меню — тоже сервером: cookie пишет скрипт при
+             * нажатии, а читает здесь, при отрисовке. Без этого cookie
+             * хранила бы состояние, которым никто не пользуется, а меню на
+             * каждом переходе открывалось бы заново.
+             *
+             * Значение проверяется на точное «1»: подделать cookie может
+             * кто угодно, но вреда от ложного «свёрнуто» нет — это состояние
+             * вида, а не право.
+             */
+            $this->view()->share('sidebarRail', $request->cookie(self::SIDEBAR_RAIL_COOKIE) === '1');
+
+            /*
+             * Состояние свёрнутости разделов меню (решение владельца от
+             * 24.10.2026, задача 1).
+             *
+             * Дефолт — состояние при ПЕРВОМ входе: пока человек ничего не
+             * нажимал, cookie нет, и разделы показываются так, как задумано —
+             * «Работы» открыты, «Школа» и «Система» свёрнуты. Как только
+             * разделом нажали, его cookie записывает скрипт, и дальше читается
+             * уже личный выбор. У каждой группы своя cookie: свёрнутая
+             * «Школа» не должна разворачивать «Систему».
+             *
+             * Значение «1» — свёрнута, «0» — открыта; всё прочее, включая
+             * подделку, считается дефолтом.
+             */
+            $navDefaults = ['works' => false, 'school' => true, 'system' => true];
+            $navClosed = [];
+
+            foreach ($navDefaults as $navKey => $navDefault) {
+                $navCookie = $request->cookie(self::NAV_COOKIE_PREFIX . $navKey);
+
+                $navClosed[$navKey] = $navCookie === null
+                    ? $navDefault
+                    : ($navCookie === '1' ? true : ($navCookie === '0' ? false : $navDefault));
+            }
+
+            $this->view()->share('navClosed', $navClosed);
 
             /*
              * Версия в подвале берётся из настроек, а не из константы в коде:
@@ -116,7 +232,34 @@ final class Kernel
              */
             $this->view()->share('appVersion', $this->config()->string('app.version'));
             $this->view()->share('currentPath', $this->currentPath());
-            $this->view()->share('panelNav', $this->panelNav()->items($this->currentPath()));
+
+            /*
+             * Тестовое прохождение в интерфейсе ученика — решение владельца
+             * от 24.10.2026 (задача 6).
+             *
+             * Меню не отдаётся на путях /work, когда идёт проба: либо уже
+             * начата (метка trial_attempt в сессии), либо это сам показ по
+             * ссылке «Пройти работу» (?trial=1) — на нём метки ещё нет,
+             * но сотрудник должен увидеть ту же картинку, что увидит дальше.
+             *
+             * На обычных страницах панели меню остаётся: флаг действует
+             * только на пути прохождения и снимается уборкой при закрытии
+             * вкладки. Ученика это не задевает — у него прав нет, и групп
+             * в меню и так нет.
+             *
+             * trialAttempt отдаётся оболочке для beacon-скрипта уборки: скрипт
+             * должен знать, какую попытку предложить серверу удалить.
+             */
+            $trialAttempt = (int) ($this->session()->get('trial_attempt') ?? 0);
+            $trialOpening = $request->queryParam('trial') !== null;
+            $trialRunning = ($trialAttempt > 0 || $trialOpening)
+                && str_starts_with($request->path(), '/work');
+
+            $this->view()->share('trialAttempt', $trialRunning ? $trialAttempt : 0);
+            $this->view()->share(
+                'panelNav',
+                $trialRunning ? [] : $this->panelNav()->items($this->currentPath())
+            );
 
             return $this->dispatch($request);
         } catch (RedirectSignal $redirect) {

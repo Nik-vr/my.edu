@@ -38,12 +38,53 @@
   --grade-danger:  #d63939;
 
   /*
-   * Шаблон рассчитан на 14px, у него --font-size: 0.875rem, и весь интерфейс
-   * нарисован под это. Менять нельзя: вместе с размером поедут все отступы,
-   * высота кнопок и высота полей — они заданы в пикселях и рассчитаны ровно на
-   * этот размер шрифта.
+   * Размеры шрифтов: масштаб и две ступени.
+   *
+   * Решение владельца: во всей системе нет текста мельче 14px, а из
+   * читаемого интерфейса — меню, кнопки, поля редактирования и текстовые
+   * блоки — набрано 15px. Отсюда две ступени: `--font-ui` для того, что
+   * человек читает и нажимает, и `--font-small` для вспомогательной мелочи
+   * (значки со счётчиками, инициалы в аватарах, подписи статистики),
+   * которая замышляется мелкой и не является текстом.
+   *
+   * `--font-scale` — личный выбор человека из настроек: 0.75 для мелкого,
+   * 1 для нормального, 1.25 для крупного. Все размеры умножаются на него,
+   * поэтому меняется только шрифт, а отступы и высоты остаются прежними —
+   * они заданы в пикселях и от шрифта не зависят. Значение ставится
+   * атрибутом `data-font-size` на <html> (см. templates/_shell_panel.php
+   * и templates/_shell_public.php).
+   *
+   * Нижняя граница «не мельче 14px» описывает нормальный размер: у
+   * «мелкого шрифта» человек сам просит сделать всё на четверть меньше, и
+   * это его выбор, а не недоработка интерфейса.
    */
+  --font-scale: 1;
+  --font-ui: calc(15px * var(--font-scale));
+  --font-small: calc(14px * var(--font-scale));
+
+  /*
+   * База шаблона: у сборки это `--font-size: 0.875rem`, то есть 14px, и
+   * её же наследует весь обычный текст. Здесь она поднята до 15px — ровно
+   * то, что владелец называет нормой для текстовых блоков, — и вместе с
+   * остальными размерами уходит под масштаб.
+   *
+   * Токен остаётся шаблонным, а не выдуман новым: правило `body`
+   * gentelella.css читает именно его, и переопределение здесь (файл
+   * подключается последним) перехватывает базу без правки сборки.
+   */
+  --font-size: calc(15px * var(--font-scale));
 }
+
+/*
+ * Три шага размера шрифта в настройках пользователя.
+ *
+ * Атрибут рисуется сервером из сохранённого выбора, поэтому страница
+ * отдаётся уже в нужном размере и не мигает. Правило стоит после :root и
+ * с более точным селектором, иначе `--font-scale` из обычного состояния
+ * перебило бы выбранное.
+ */
+html[data-font-size="small"] { --font-scale: .75; }
+html[data-font-size="large"] { --font-scale: 1.25; }
 
 /*
  * Тёмная тема — по умолчанию.
@@ -895,7 +936,7 @@ body { font-family: var(--font); }
   border-radius: 6px;
   background: var(--primary-lt);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-ui);
   font-weight: 600;
   line-height: 1;
   cursor: default;
@@ -936,4 +977,121 @@ body { font-family: var(--font); }
 
 .journal-penalty {
   color: var(--grade-danger);
+}
+
+/* ==========================================================================
+   Размеры шрифтов — переопределение сборки.
+
+   Здесь перебиваются размеры из `public/assets/vendor/gentelella/gentelella.css`
+   и `public/assets/vendor/quill/quill.core.css`. Сборка меняется при
+   обновлении шаблона, и вместе с ней молча уехали бы и размеры, и
+   объяснения к ним, поэтому всё, что касается шрифта, держится здесь.
+
+   Правило одно и то же для всех селекторов ниже: текст, который человек
+   читает и нажимает, набран 15px (`--font-ui`), а вспомогательная мелочь —
+   значки со счётчиками, инициалы в аватарах, подписи статистики — 14px
+   (`--font-small`). Обе ступени умножаются на масштаб личного выбора, так
+   что при «крупном шрифте» вырастает всё подряд, а пропорции сохраняются.
+
+   Селекторы скопированы из сборки посимвольно: совпадает и специфичность,
+   и порядок свойств, и тогда поздно подключённый theme.css выигрывает
+   каскад у сборки без каких-либо !important.
+   ========================================================================== */
+
+/* Читаемый текст: меню, кнопки, поля, таблицы, карточки, уведомления. */
+.brand-icon,
+.brand-name small,
+.nav-label,
+.nav-link,
+.nav-sublink,
+.sidebar-user-info .name,
+.sidebar-user-info .role,
+body.sidebar-rail .nav-link[data-rail-label]::after,
+.menu-item,
+.menu-panel .panel-title,
+.menu-panel .panel-text,
+.menu-panel .panel-from,
+.menu-panel .panel-time,
+.menu-panel .panel-link,
+.menu-panel .panel-action,
+.btn,
+.btn-sm,
+.btn-lg,
+.tb-btn.tb-docs,
+.pagination .page-btn,
+.page-link,
+.dt-container,
+.dt-search input,
+.dt-info,
+.dt-paging .dt-paging-button,
+.form-label,
+.form-control,
+.form-check,
+.form-help,
+.form-error,
+.form-hint,
+.search-box input,
+.tag-input input,
+.modal-form-row label,
+.modal-form-row select,
+.stepper input,
+.stepper .step .num,
+.stepper .step .label,
+.switch .switch-label,
+.ql-container,
+table.table,
+table.table th,
+.card-title,
+.card-subtitle,
+.breadcrumb,
+.breadcrumbs,
+.list-group-item,
+.list-group-item .meta,
+.toggle-row .label,
+.toggle-row .desc,
+.alert,
+.toast,
+.banner,
+.auth-subtitle,
+.auth-actions,
+.auth-footer,
+.auth-divider,
+.settings-row > label,
+.settings-section-desc,
+.settings-toggle-row .label,
+.settings-toggle-row .desc,
+.empty-state-desc,
+.empty-state .empty-state-text,
+.bulk-selection-count,
+.page-pretitle,
+.divider-label,
+.footer,
+code,
+.code-inline,
+pre,
+kbd,
+[data-tooltip]::after {
+  font-size: var(--font-ui);
+}
+
+/* Вспомогательная мелочь: значки, счётчики, инициалы, подписи статистики. */
+.nav-link .badge,
+.nav-sublink .badge,
+.menu-panel .panel-badge,
+.avatar,
+.avatar-xs,
+.avatar-sm,
+.avatar-md,
+.cell-avatar,
+.sidebar-user .avatar,
+.status,
+.chip,
+.role-chip,
+.stat-label,
+.stat-subtext,
+.stat-change,
+.input-affix .affix,
+.file-input-trigger,
+.file-input-name {
+  font-size: var(--font-small);
 }

@@ -16,6 +16,12 @@ declare(strict_types=1);
  * ответа (варианты, порядок, соответствие) остаются своими: это содержимое
  * вопроса, а не типовой элемент формы.
  *
+ * Кнопки навигации, таймер и подпись «кто проходит» рисует оболочка в шапке
+ * страницы: решение владельца от 24.10.2026 — во время задания главное —
+ * текущий вопрос и оставшееся время, а список заданий и панель внизу
+ * отвлекают. Ссылка на список заданий убрана совсем: список на время
+ * прохождения скрыт.
+ *
  * @var \MyEdu\Core\View $view
  * @var \MyEdu\Ui\Ui $ui
  * @var array<string,mixed> $test
@@ -28,14 +34,14 @@ declare(strict_types=1);
  * @var int $itemId
  * @var int $attemptId
  * @var string $token
- * @var string $attemptUrl
- * @var bool $isLast
  * @var float $weight
+ * @var string $title название работы — уходит в <title> вкладки браузера
+ * @var string $heading заголовок задания в теле страницы: «Задание №N»
  */
 $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($value, 1, ',', ''), '0'), ',');
 ?>
  <div class="page-header">
- <h1 class="page-title"><?= $view->e($title) ?></h1>
+ <h1 class="page-title"><?= $view->e($heading) ?></h1>
  <p class="muted">
  Задание <?= $view->e($position) ?> из <?= $view->e($positions) ?> ·
  максимум <?= $view->e($formatScore($maxScore)) ?> б. ·
@@ -43,12 +49,11 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
  </p>
  </div>
 
- <?php /*
- Таймер рисует ядро: остаток времени считает оно, а плагин его только
- показывает. Без лимита таймера нет вовсе — пустой таймер читался бы как
- «время кончилось».
- */ ?>
- <?= $view->raw($view->render('work/_timer', ['remaining' => $remaining ?? null], '')) ?>
+<?php /*
+ Таймер теперь живёт в шапке страницы (его рисует оболочка по данным
+ шапки прохождения) — тем же частичным шаблоном и с теми же
+ идентификаторами, поэтому отсчёт ведёт attempt.js как прежде.
+*/ ?>
 
 <?php /* Запрет копирования подключается ядром: решение принимает учитель. */ ?>
 <?= $view->raw($view->render('work/_no_copy', ['noCopy' => !empty($noCopy)], '')) ?>
@@ -78,40 +83,12 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
  ], '')) ?>
  <?php endforeach; ?>
 
- <div class="page-actions">
- <?= $view->raw($ui->button('← Назад', [
-     'variant' => 'btn-ghost',
-     'name'    => 'action',
-     'value'   => 'prev',
- ])) ?>
-
- <span class="actions-row__spacer"></span>
-
- <?php if ($isLast): ?>
- <?= $view->raw($ui->button('Завершить работу', [
-     'size'  => 'btn-lg',
-     'name'  => 'action',
-     'value' => 'finish',
- ])) ?>
- <?php else: ?>
- <?= $view->raw($ui->button('Далее →', [
-     'size'  => 'btn-lg',
-     'name'  => 'action',
-     'value' => 'next',
- ])) ?>
- <?php endif; ?>
- </div>
-
  <p class="muted">
  Ответы сохраняются при каждом переходе, поэтому страницу можно
  обновить и вернуться позже. Ответы на <?= $view->e($answeredCount) ?>
  из <?= $view->e(count($questions)) ?> вопросов уже сохранены.
  </p>
 </form>
-
-<p>
- <a class="btn btn-ghost" href="<?= $view->e($attemptUrl) ?>">К списку заданий работы</a>
-</p>
 
 <script src="<?= $view->e($view->asset('assets/js/vendor/sortable.min.js')) ?>" defer></script>
 <script src="<?= $view->e($view->asset('assets/js/attempt.js')) ?>" defer></script>

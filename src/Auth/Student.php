@@ -25,6 +25,21 @@ final class Student
         public readonly string $fullName,
         public readonly string $status,
         public readonly ?int $classId = null,
+        /**
+         * Личный размер шрифта: small, normal, large.
+         *
+         * Приводится к допустимым значениям тем же правилом, что и у
+         * сотрудника: всё, что не из списка, — нормальный размер.
+         */
+        public readonly string $fontSize = User::FONT_NORMAL,
+        /**
+         * Личная тема: dark, light — приводится тем же правилом, что и у
+         * сотрудника: всё, что не из списка, — тёмная тема.
+         *
+         * Хранится на сервере (решение владельца от 24.10.2026, волна E):
+         * выбор живёт в профиле ученика и не зависит от браузера.
+         */
+        public readonly string $theme = User::THEME_DARK,
         public readonly ?string $passwordStamp = null
     ) {
     }
@@ -38,6 +53,8 @@ final class Student
             fullName: (string) $row['full_name'],
             status: (string) $row['status'],
             classId: isset($row['class_id']) && $row['class_id'] !== null ? (int) $row['class_id'] : null,
+            fontSize: User::fontSizeOf($row['font_size'] ?? null),
+            theme: User::themeOf($row['theme'] ?? null),
             passwordStamp: substr(hash('sha256', (string) ($row['password_hash'] ?? '')), 0, 32)
         );
     }

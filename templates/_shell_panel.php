@@ -15,12 +15,21 @@ declare(strict_types=1);
  * вовсе без JavaScript. Скрипт нужен только для сворачивания и для темы.
  *
  * Ожидает в области видимости:
- * $view, $content, $currentUser, $appName, $panelNav
+ * $view, $content, $currentUser, $fontSize, $appName, $panelNav,
+ * $studentClassName (имя класса вошедшего ученика, пусто если нет),
+ * $theme (личная тема: dark/light, из профиля),
+ * $sidebarRail (true — меню свёрнуто по cookie),
+ * $navClosed (состояния разделов меню: ключ группы → свёрнута ли она)
  *
  * @var \MyEdu\Core\View $view
  * @var string $content
  * @var \MyEdu\Auth\User|\MyEdu\Auth\Student $currentUser
+ * @var string $fontSize
+ * @var string $theme
+ * @var bool $sidebarRail
+ * @var array<string,bool> $navClosed
  * @var string|null $appName
+ * @var string $studentClassName
  * @var list<array{title:string, items:list<array<string,mixed>>}> $panelNav
  */
 
@@ -42,7 +51,7 @@ $hasMenu = $panelNav !== [];
 
 ?>
 <!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru" data-theme="<?= $view->e($theme) ?>" data-font-size="<?= $view->e($fontSize) ?>">
 <head>
  <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -76,6 +85,16 @@ $hasMenu = $panelNav !== [];
      */ ?>
     <?php /* Токен защиты в разметке: его читают скрипты. */ ?>
     <meta name="csrf-token" content="<?= $view->e($view->csrfToken()) ?>">
+    <?php /*
+     * Метка уборки тестовой попытки: её ставит оболочка только на страницах
+     * тестового прохождения (метка есть в сессии), и по ней скрипт шлёт
+     * beacon при закрытии вкладки — решение владельца от 24.10.2026,
+     * задача 6: результаты пробы живут ровно до закрытия вкладки.
+     */ ?>
+    <?php if ((int) ($trialAttempt ?? 0) > 0): ?>
+    <meta name="trial-cleanup" content="<?= $view->e($view->url('work/trial/cleanup')) ?>"
+          data-attempt="<?= $view->e((int) $trialAttempt) ?>">
+    <?php endif; ?>
     <link rel="stylesheet" href="<?= $view->e($view->asset('assets/css/app.css')) ?>">
     <?php /*
          * Стили таблиц идут перед сборкой шаблона: шаблон переопределяет их
@@ -102,7 +121,16 @@ $hasMenu = $panelNav !== [];
  */ ?>
  <script src="<?= $view->e($view->asset('assets/js/theme-boot.js')) ?>"></script>
 </head>
-<body>
+<?php /*
+ * Свёрнутое меню ставится классом на самом сервере — по cookie, которую
+ * писал скрипт при прежнем нажатии (решение владельца от 24.10.2026, волна
+ * E). Раньше класс вешал скрипт после загрузки, и страница успевала
+ * отрисоваться развёрнутым меню и «схлопнуться» — на каждом переходе.
+ *
+ * Класс безвреден на узком экране: основные правила sidebar-rail живут в
+ * media-запросе для широких экранов, а там он лишь разрешает ширину панели.
+ */ ?>
+<body<?= $sidebarRail ? ' class="sidebar-rail"' : '' ?>>
 
 <?php if ($hasMenu): ?>
 <?php /*
@@ -120,9 +148,40 @@ $hasMenu = $panelNav !== [];
 
  <nav class="sidebar-nav">
  <?php foreach ($panelNav as $group): ?>
- <div class="nav-group">
+ <?php
+ /*
+  * Заголовок раздела — кнопка, если раздел сворачивается (решение
+  * владельца от 24.10.2026, задача 1): «Работы», «Школа» и «Система»
+  * сворачиваются по нажатию и помнят состояние каждая в своей cookie,
+  * «Главная» — обычный заголовок, сворачивать нечего.
+  *
+  * Активный пункт разворачивает свою группу всегда — и при дефолтной
+  * свёрнутости, и при личной: человек попал в раздел, и пункты раздела
+  * должны быть видны. Cookie при этом не переписывается — раскрытие не
+  * отменяет его выбора для следующего входа.
+  */
+ $groupKey = (string) ($group['key'] ?? '');
+ $groupCollapsible = !empty($group['collapsible']);
+ $groupClosed = $groupCollapsible
+     && (($navClosed[$groupKey] ?? false) && empty(array_filter(
+         $group['items'],
+         static fn (array $item): bool => !empty($item['active'])
+     )));
+ $groupId = 'nav-group-' . $groupKey;
+ ?>
+ <div class="nav-group<?= $groupClosed ? ' nav-group--closed' : '' ?>">
+ <?php if ($groupCollapsible): ?>
+ <button type="button" class="nav-label nav-label--toggle"
+ data-nav-toggle="<?= $view->e($groupKey) ?>"
+ aria-controls="<?= $view->e($groupId) ?>"
+ aria-expanded="<?= $groupClosed ? 'false' : 'true' ?>">
+ <?= $view->e($group['title']) ?>
+ </button>
+ <?php else: ?>
  <div class="nav-label"><?= $view->e($group['title']) ?></div>
+ <?php endif; ?>
 
+ <div class="nav-sublist" id="<?= $view->e($groupId) ?>">
  <?php foreach ($group['items'] as $item): ?>
  <a class="nav-link<?= !empty($item['active']) ? ' active' : '' ?>"
  href="<?= $view->e($view->url((string) $item['url'])) ?>"
@@ -135,6 +194,7 @@ $hasMenu = $panelNav !== [];
  <?php endif; ?>
  </a>
  <?php endforeach; ?>
+ </div>
  </div>
  <?php endforeach; ?>
  </nav>
@@ -193,13 +253,80 @@ $hasMenu = $panelNav !== [];
 * Если страница крошек не заявила, показывается её заголовок: пустое место в
 * шапке выглядит как ошибка вёрстки, а не как отсутствие данных.
 */
-$crumbsHtml = $view->crumbsHtml();
+$attemptBar = $view->attemptBarData();
 
-if ($crumbsHtml === '') {
-    $crumbsHtml = '<nav class="breadcrumb" aria-label="Хлебные крошки">'
-        . '<span class="current" aria-current="page">'
-        . $view->e($title ?? $appName)
-        . '</span></nav>';
+if ($attemptBar !== null) {
+    /*
+     * Страница прохождения работы: крошки заменяются шапкой прохождения —
+     * «имя+класс | таймер | кнопки». Решение владельца от 24.10.2026: во
+     * время задания навигация по разделам отвлекает и ведёт к списку
+     * заданий, который на время прохождения скрыт. Крошки не дополняются,
+     * а заменяются — иначе в шапке оказались бы и имя с таймером, и следы
+     * прежней навигации.
+     *
+     * Кто проходит: имя целиком, а не короткое — на странице работы важно
+     * видеть, под кем именно она идёт: в одном классе возможны однофамильцы.
+     * Класс дописывается только когда он есть: у ученика вне класса и у
+     * сотрудника подписи не будет, и запятая с пустотой позади читалась бы
+     * как поломка.
+     */
+    $whoLabel = (string) $currentUser->fullName;
+    $studentClassName = $studentClassName ?? '';
+
+    if ($studentClassName !== '') {
+        $whoLabel .= ', ' . $studentClassName;
+    }
+
+    /*
+     * Таймер — тот же частичный шаблон, что раньше стоял в теле задания, и
+     * с теми же идентификаторами `timer`/`timer-value`: их ищет attempt.js,
+     * и менять их при переезде в шапку нельзя — скрипт перестал бы вести
+     * отсчёт и предупреждать о конце времени.
+     *
+     * Без лимита времени таймер не рисуется вовсе: пустая пилюля читалась бы
+     * как «время кончилось» (решает сам частичный шаблон).
+     */
+    $timerHtml = $attemptBar['remaining'] === null
+        ? ''
+        : $view->raw($view->render('work/_timer', ['remaining' => $attemptBar['remaining']], ''));
+
+    /*
+     * Кнопки навигации — обычные submit-кнопки формы задания, но лежащие в
+     * шапке: атрибут `form` связывает кнопку с формой в теле страницы, и
+     * нажатие уходит на сервер тем же POST с тем же токеном защиты, что и
+     * кнопка внутри формы. Так навигация физически переезжает в шапку, а
+     * работоспособность без скриптов сохраняется: на этой странице это
+     * обязательное условие — без скриптов ученик всё равно должен уметь
+     * ответить и перейти дальше.
+     *
+     * Акцентная кнопка — та, что ведёт вперёд: «далее» и «завершить» должны
+     * читаться как главное действие, «назад» — как вспомогательное.
+     */
+    $navHtml = '';
+
+    foreach ($attemptBar['buttons'] as $button) {
+        $primary = $button['action'] !== 'prev';
+
+        $navHtml .= '<button type="submit"'
+            . ' form="' . $view->e($attemptBar['formId']) . '"'
+            . ' name="action" value="' . $view->e($button['action']) . '"'
+            . ' class="btn btn-sm' . ($primary ? ' btn-primary' : '') . '">'
+            . $view->e($button['label'])
+            . '</button>';
+    }
+
+    $crumbsHtml = '<div class="attempt__who">' . $view->e($whoLabel) . '</div>'
+        . $timerHtml
+        . ($navHtml === '' ? '' : '<div class="attempt__nav">' . $navHtml . '</div>');
+} else {
+    $crumbsHtml = $view->crumbsHtml();
+
+    if ($crumbsHtml === '') {
+        $crumbsHtml = '<nav class="breadcrumb" aria-label="Хлебные крошки">'
+            . '<span class="current" aria-current="page">'
+            . $view->e($title ?? $appName)
+            . '</span></nav>';
+    }
 }
 ?>
 <?= $view->raw($crumbsHtml) ?>
@@ -226,22 +353,12 @@ if ($crumbsHtml === '') {
  <?php endif; ?>
 
  <?php /*
- * Кнопка темы. Она переключает тёмную и светлую и помнит выбор: человек
- * возвращается на сайт и получает тот вид, который выбрал.
+ * Кнопки смены темы в шапке больше нет — решение владельца от 24.10.2026
+ * (задача 2): тема выбирается на странице профиля, в карточке «Вид
+ * интерфейса», рядом с размером шрифта. Отдельная кнопка в шапке
+ * дублировала ту же настройку в другом месте и путала: два входа к одному
+ * свойству.
  */ ?>
- <button class="tb-btn theme-toggle" type="button" data-theme-toggle
- title="Сменить тему" aria-label="Сменить тему" aria-pressed="true">
- <svg class="theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none"
- stroke="currentColor" stroke-width="1.5" aria-hidden="true">
- <circle cx="12" cy="12" r="4"/>
- <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
- </svg>
- <svg class="theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none"
- stroke="currentColor" stroke-width="1.5" aria-hidden="true">
- <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
- </svg>
- </button>
-
  <a class="tb-btn" href="<?= $view->e($view->url('profile')) ?>" title="Мои данные">
  <?php $icon = 'profile'; ?>
  <?php require __DIR__ . '/_panel_icon.php'; ?>
@@ -331,6 +448,15 @@ if ($crumbsHtml === '') {
  </main>
 
 <script src="<?= $view->e($view->asset('assets/js/panel-nav.js')) ?>" defer></script>
+<?php if ((int) ($trialAttempt ?? 0) > 0): ?>
+<script src="<?= $view->e($view->asset('assets/js/trial-cleanup.js')) ?>" defer></script>
+<?php endif; ?>
+<?php /*
+ * Собственный цвет оценки (выбор автора в палитре браузера) накладывается
+ * скриптом: четыре привычных цвета живут в CSS-классах и не требуют
+ * скриптов, а инлайновый style= в шаблонах запрещён правилами интерфейса.
+ */ ?>
+<script src="<?= $view->e($view->asset('assets/js/grade-color.js')) ?>" defer></script>
 <script src="<?= $view->e($view->asset('assets/js/confirm-modal.js')) ?>" defer></script>
 <script src="<?= $view->e($view->asset('assets/js/toast.js')) ?>" defer></script>
 <?php /*

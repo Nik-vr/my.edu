@@ -121,13 +121,14 @@ final class AssignmentController
          * пустоту — и он решил бы, что работа удалилась вся.
          */
         $requested = $request->queryParam('state');
-        $state = is_string($requested) && $requested === 'drafts' ? 'drafts' : 'published';
+        $allowedStates = ['published', 'drafts', 'issued'];
+        $state = is_string($requested) && in_array($requested, $allowedStates, true) ? $requested : 'published';
 
         if ($requested === null || $requested === '') {
             $remembered = $this->session->get('assignments_state');
 
-            if (is_string($remembered) && $remembered === 'drafts') {
-                $state = 'drafts';
+            if (is_string($remembered) && in_array($remembered, $allowedStates, true)) {
+                $state = $remembered;
             }
         }
 
@@ -135,21 +136,48 @@ final class AssignmentController
 
         $drafts = 0;
         $published = 0;
+        $issued = 0;
 
         foreach ($rows as $row) {
-            if ((string) ($row['status'] ?? 'draft') === 'draft') {
+            $status = (string) ($row['status'] ?? 'draft');
+            if ($status === 'draft') {
                 $drafts++;
             } else {
                 $published++;
+            }
+            if ((int) ($row['issued_count'] ?? 0) > 0) {
+                $issued++;
+            }
+        }
+
+        // Filter rows by state
+        $filteredRows = [];
+        foreach ($rows as $row) {
+            $status = (string) ($row['status'] ?? 'draft');
+            $issuedCount = (int) ($row['issued_count'] ?? 0);
+
+            if ($state === 'drafts') {
+                if ($status === 'draft') {
+                    $filteredRows[] = $row;
+                }
+            } elseif ($state === 'issued') {
+                if ($issuedCount > 0) {
+                    $filteredRows[] = $row;
+                }
+            } else { // published
+                if ($status !== 'draft') {
+                    $filteredRows[] = $row;
+                }
             }
         }
 
         return $this->render('panel/assignments', [
             'title'         => $seesAll ? 'Все работы' : 'Мои работы',
-            'tree'          => WorkTree::build($rows, $state),
+            'tree'          => WorkTree::build($filteredRows, $state === 'drafts' ? 'drafts' : 'published'),
             'state'         => $state,
             'drafts'        => $drafts,
             'published'     => $published,
+            'issued'        => $issued,
             'total'         => count($rows),
             'seesAll'       => $seesAll,
             // Кто автор — решает шаблон: у завуча видны чужие работы, и без
@@ -204,7 +232,7 @@ public function create(Request $request): Response
             'time_limit'   => null,
         ], ['id' => $id]);
 
-        $this->session->set('flash_notice', 'Работа создана. Задайте название и добавьте задания.');
+        $this->session->set('flash_notice', 'Работа создана. Измените название и добавьте задания.');
 
         return $this->redirect('panel/assignments/' . $id . '/edit/start');
     }
@@ -516,6 +544,105 @@ public function saveNewStart(Request $request): Response
 
         return $this->redirect(
             'panel/assignments?state=' . (is_string($state) && $state === 'drafts' ? 'drafts' : 'published')
+        );
+    }
+
+    /**
+     * Страница подтверждения отзыва выдачи работы.
+     */
+    public function confirmRecall(Request $request, array $params): Response
+    {
+        $id = $this->intParam($params, 'id');
+
+        $assignment = $this->requireOwned($id);
+
+        $issuedCount = (int) $this->assignments->countIssued($id);
+        $attemptCount = (int) $this->assignments->countAllAttempts($id);
+
+        return $this->render('panel/assignment_recall', [
+            'title'         => 'Отозвать выдачу',
+            'assignment'    => $assignment,
+            'issuedCount'   => $issuedCount,
+            'attemptCount'  => $attemptCount,
+        ]);
+    }
+
+    /**
+     * Отзыв выдачи: удаляет все выдачи (issues и issue_students),
+     * но сохраняет саму работу и результаты уже начавших учеников.
+     */
+    public function recall(Request $request, array $params): Response
+    {
+        $this->requireToken($request, $this->csrf);
+
+        $id = $this->intParam($params, 'id');
+        $this->requireOwned($id);
+
+        /*
+         * Отзыв без перезагрузки страницы.
+         *
+         * Список работ — длинная страница, и после отзыва человек
+         * оказывался в начале списка, теряя место. Теперь строка обновляется
+         * на месте, а сервер отвечает данными; без скриптов всё работает как
+         * раньше — обычная отправка формы и переход на страницу списка.
+         */
+        if ($request->wantsJson()) {
+            try {
+                $this->recallAssignmentIssues($id);
+            } catch (\Throwable $e) {
+                return Response::json(['ok' => false, 'message' => $e->getMessage()], 409);
+            }
+
+            return Response::json(['ok' => true]);
+        }
+
+        try {
+            $this->recallAssignmentIssues($id);
+        } catch (\Throwable $e) {
+            $this->session->set('flash_error', $e->getMessage());
+
+            return $this->redirect('panel/assignments/' . $id);
+        }
+
+        $this->session->set('flash_notice', 'Выдача работы отозвана. Результаты учеников сохранены.');
+
+        $state = $this->session->get('assignments_state');
+
+        return $this->redirect(
+            'panel/assignments?state=' . (is_string($state) && $state === 'drafts' ? 'drafts' : 'published')
+        );
+    }
+
+    /**
+     * Удаляет все выдачи работы (issues и issue_students).
+     *
+     * @throws \RuntimeException если удаление не удалось
+     */
+    private function recallAssignmentIssues(int $assignmentId): void
+    {
+        // Находим все issues для этой работы
+        $issues = $this->db->all(
+            'SELECT id FROM assignment_issues WHERE assignment_id = :id',
+            ['id' => $assignmentId]
+        );
+
+        if ($issues === []) {
+            return; // нет выдач — ничего не делаем
+        }
+
+        $issueIds = array_column($issues, 'id');
+
+        // Удаляем студентов выдач
+        $placeholders = implode(',', array_fill(0, count($issueIds), '?'));
+        $this->db->run(
+            "DELETE FROM assignment_issue_students WHERE issue_id IN ($placeholders)",
+            $issueIds
+        );
+
+        // Удаляем сами выдачи
+        $this->db->run(
+            "DELETE FROM assignment_issues WHERE assignment_id = :id",
+            ['id' => $assignmentId]
         );
     }
 

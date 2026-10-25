@@ -19,8 +19,69 @@ final class StudentRepository
     /** Алфавит логинов: русские буквы, как того требует формат «буква + цифры». */
     private const LOGIN_LETTERS = 'АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ';
 
+    /**
+     * Фиксированный id виртуального ученика — решение владельца от 24.10.2026
+     * (задача 6).
+     *
+     * Сотрудникам работы не выдаются, и прогон работы кнопкой «Пройти
+     * работу» идёт под отдельной учётной записью: один постоянный id на всю
+     * систему, без класса и без отображения в списках учеников. Имя у него —
+     * ФИО того, кто проходит в тестовом режиме.
+     *
+     * id за пределами обычного потока автоинкремента: он не должен совпасть
+     * с настоящим учеником, и посадка счётчика на него никого не сбивает —
+     * внешние ключи смотрят на значения, а не на непрерывность ряда.
+     */
+    public const TRIAL_ID = 910001;
+
+    /** Логин виртуального ученика: по нему его узнают в базе и исключают из форм. */
+    public const TRIAL_LOGIN = '__trial__';
+
     public function __construct(private readonly Database $db)
     {
+    }
+
+    /**
+     * Создать или обновить виртуального ученика под ФИО проходящего.
+     *
+     * Имя меняется при каждом тестовом прохождении: в журнале и разборе
+     * должно быть видно, кто именно прогонял работу. Запись одна, класса
+     * у неё нет — виртуальный не состоит ни в одном классе и не отображается
+     * в списках учеников (там они идут по классам).
+     *
+     * Пароль — хеш случайной строки: вход под виртуальным невозможен, и
+     * логин, и пароль закрыты. Строка колонки NOT NULL, и пустое значение
+     * здесь не экономия, а дыра: хеш не говорит ничего о пароле.
+     */
+    public function ensureTrial(string $fullName): void
+    {
+        $name = trim($fullName);
+        $name = $name === '' ? 'Тестовое прохождение' : $name;
+
+        $exists = $this->db->value('SELECT id FROM students WHERE id = :id', ['id' => self::TRIAL_ID]);
+
+        if ($exists === null) {
+            $this->db->run(
+                'INSERT INTO students
+                    (id, login, password_hash, full_name, status, class_id, font_size, created_at, updated_at)
+                 VALUES (:id, :login, :hash, :name, \'active\', NULL, \'normal\', NOW(), NOW())',
+                [
+                    'id'   => self::TRIAL_ID,
+                    'login' => self::TRIAL_LOGIN,
+                    'hash' => hash('sha256', bin2hex(random_bytes(32))),
+                    'name' => $name,
+                ]
+            );
+
+            return;
+        }
+
+        $this->db->run(
+            'UPDATE students
+                SET full_name = :name, class_id = NULL, status = \'active\', updated_at = NOW()
+              WHERE id = :id',
+            ['name' => $name, 'id' => self::TRIAL_ID]
+        );
     }
 
     /** Строка ученика, кроме заблокированных. */
@@ -63,10 +124,18 @@ final class StudentRepository
             return null;
         }
 
+        /*
+         * Виртуальный ученик (id TRIAL_ID) в поиск по имени не попадает: его
+         * имя — ФИО сотрудника, и импорт списка класса мог бы «найти» его и
+         * выдать работу настоящему ученику с тем же именем, а то и склеить
+         * записи. Тестовое прохождение не должно пересекаться с настоящими
+         * данными ни одним путём.
+         */
         return $this->db->one(
             "SELECT s.* FROM students s
-              WHERE LOWER(TRIM(REPLACE(REPLACE(s.full_name, '  ', ' '), 'ё', 'е'))) = :normalized"
-            . ($classId === null ? '' : ' AND s.class_id = :class') . '
+              WHERE LOWER(TRIM(REPLACE(REPLACE(s.full_name, '  ', ' '), 'ё', 'е'))) = :normalized
+                AND s.id <> " . self::TRIAL_ID . '
+            ' . ($classId === null ? '' : ' AND s.class_id = :class') . '
            ORDER BY s.id
               LIMIT 1',
             $classId === null
@@ -317,6 +386,36 @@ final class StudentRepository
     {
         $this->db->update('students', [
             'status'     => $status === 'blocked' ? 'blocked' : 'active',
+            'updated_at' => date('Y-m-d H:i:s'),
+        ], ['id' => $studentId]);
+    }
+
+    /**
+     * Личный размер шрифта: small, normal, large.
+     *
+     * Правило то же, что у сотрудника, и читается оно там же — в
+     * `User::fontSizeOf`. Две разные проверки для одного свойства разошлись бы
+     * незаметно: база приняла бы значение, которое страница отвергла.
+     */
+    public function setFontSize(int $studentId, string $fontSize): void
+    {
+        $this->db->update('students', [
+            'font_size'  => User::fontSizeOf($fontSize),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ], ['id' => $studentId]);
+    }
+
+    /**
+     * Личная тема оформления: dark, light.
+     *
+     * Правило то же, что у сотрудника, и читается оно там же — в
+     * `User::themeOf`. Две разные проверки для одного свойства разошлись бы
+     * незаметно: база приняла бы значение, которое страница отвергла.
+     */
+    public function setTheme(int $studentId, string $theme): void
+    {
+        $this->db->update('students', [
+            'theme'      => User::themeOf($theme),
             'updated_at' => date('Y-m-d H:i:s'),
         ], ['id' => $studentId]);
     }

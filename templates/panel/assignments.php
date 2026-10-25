@@ -15,14 +15,15 @@ declare(strict_types=1);
  * страницах папки назывались бы по-разному.
  *
  * Ожидает:
- * $view, $tree, $state, $drafts, $published, $total, $seesAll, $currentUserId,
+ * $view, $tree, $state, $drafts, $published, $issued, $total, $seesAll, $currentUserId,
  * $pendingReview, $hasPlugins
  *
  * @var \MyEdu\Core\View $view
  * @var list<array{parallel:int|null,label:string,items:list<array<string,mixed>>}> $tree
- * @var string $state drafts или published
+ * @var string $state drafts, published или issued
  * @var int $drafts
  * @var int $published
+ * @var int $issued
  * @var int $total
  * @var bool $seesAll
  * @var int $currentUserId
@@ -73,9 +74,8 @@ $view->crumbs([
 
  <?php if (!$hasPlugins): ?>
  <p class="form-help">
- Подключённых систем проверки нет, поэтому задания добавить будет
- нечем. Включите хотя бы одну в
- <a href="<?= $view->e($view->url('panel/plugins')) ?>">панели плагинов</a>.
+ Нет доступных типов заданий. Подключите хотя бы один плагин на
+ <a href="<?= $view->e($view->url('panel/plugins')) ?>">странице настройки</a>.
  </p>
  <?php endif; ?>
  </div>
@@ -88,9 +88,13 @@ $view->crumbs([
 <?php elseif ($tree === []): ?>
  <div class="card">
  <p class="muted">
- <?= $state === 'drafts'
- ? 'Черновиков нет. Работу начинают кнопкой «Составить работу».'
- : 'Опубликованных работ нет. Черновик становится таким после публикации.' ?>
+ <?php if ($state === 'drafts'): ?>
+ Черновиков нет. Работу начинают кнопкой «Составить работу».
+ <?php elseif ($state === 'issued'): ?>
+ Выданных работ нет. Работу можно выдать через мастер выдачи.
+ <?php else: ?>
+ Опубликованных работ нет. Опубликуйте существующий черновик, или создайте новую работу.
+ <?php endif; ?>
  </p>
  </div>
 <?php endif; ?>
@@ -110,6 +114,13 @@ $view->crumbs([
    <?= $state === 'published' ? 'aria-current="page"' : '' ?>
    href="<?= $view->e($view->url('panel/assignments?state=published')) ?>">
    Опубликованные <span class="chip"><?= $view->e($published) ?></span>
+   </a>
+  </li>
+  <li class="nav-item">
+   <a class="nav-link<?= $state === 'issued' ? ' active' : '' ?>"
+   <?= $state === 'issued' ? 'aria-current="page"' : '' ?>
+   href="<?= $view->e($view->url('panel/assignments?state=issued')) ?>">
+   Выданные <span class="chip"><?= $view->e($issued) ?></span>
    </a>
   </li>
   <li class="nav-item">
@@ -147,6 +158,7 @@ $view->crumbs([
  $selectable = false;
  $actionUrl = '';
  $pickName = '';
+ $workState = $state; // передаем состояние для кнопки отзыва
  ?>
 
  <div class="work-list__head" aria-hidden="true">

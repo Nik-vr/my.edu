@@ -55,6 +55,11 @@ final class AuthRoutes implements RouteFile
         $router->get('/profile', [$c->auth, 'profile'], Router::AUTH_REQUIRED);
         $router->post('/profile', [$c->auth, 'saveProfile'], Router::AUTH_REQUIRED);
         $router->post('/profile/avatar', [$c->auth, 'saveAvatar'], Router::AUTH_REQUIRED);
+$router->post('/profile/font-size', [$c->auth, 'saveFontSize'], Router::AUTH_REQUIRED);
+        // Тема оформления — в профиле, а не в браузере (волна E, 24.10.2026).
+        // Один адрес на двоих: форма профиля и кнопка в шапке шлют сюда один
+        // и тот же POST, а вид ответа выбирает сервер по признаку запроса.
+        $router->post('/profile/theme', [$c->auth, 'saveTheme'], Router::AUTH_REQUIRED);
         $router->post('/profile/password', [$c->auth, 'changePassword'], Router::AUTH_REQUIRED);
     }
 }

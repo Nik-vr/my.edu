@@ -3,26 +3,58 @@
 declare(strict_types=1);
 
 /**
- * Экран самой работы: список позиций с прогрессом.
+ * Экран работы: что это за работа, сколько в ней заданий и кнопки входа.
  *
- * Название позиции показывается таким, каким оно было при добавлении: если
- * автор переименует задание после выдачи, список у ученика не должен
- * меняться задним числом.
+ * Список позиций на этом экране скрыт по решению владельца от 24.10.2026:
+ * ученик видит состав работы только в редакторе у автора, а здесь — счётчик,
+ * описание, прогресс и кнопки. Изменения после выдачи на счётчик не влияют:
+ * число заданий и название берутся из самой работы, а не из снимка на момент
+ * выдачи.
  *
  * @var \MyEdu\Core\View $view
  * @var array<string,mixed> $assignment
- * @var list<array<string,mixed>> $items
+ * @var list<array<string,mixed>> $items позиции: нужны для кнопки «Продолжить»
  * @var array<string,mixed>|null $attempt
+ * @var int $totalItems
+ * @var int $doneCount
  * @var int|null $attemptsLeft
  * @var bool $mayRepeat сотруднику можно проходить работу повторно
  */
 $started = $attempt !== null && $attempt['status'] === 'in_progress';
 $token = $attempt === null ? '' : (string) $attempt['token'];
+
+// Хлебные крошки для шапки панели
+$view->crumbs([
+    ['label' => 'Работы', 'url' => 'works'],
+    ['label' => $assignment['title'], 'url' => ''],
+]);
+
+/*
+ * Шапка страницы: заголовок и подпись под ним.
+ *
+ * Счётчик набран в виде «Всего N заданий» — так решено владельцем: слово
+ * «Всего» спереди читается как обещание обзора всей работы, а не как
+ * отметка прогресса текущей попытки (для неё ниже свой счётчик «выполнено»).
+ *
+ * Предмет, лимит времени и остаток попыток остаются в той же строке: все три
+ * отвечают на вопросы, которые ученик задаёт перед нажатием «Начать»,
+ * и убирать их в отдельные блоки незачем — строка и так короткая.
+ */
+$counter = 'Всего ' . $view->count((int) $totalItems, 'задание', 'задания', 'заданий');
 ?>
 <div class="page-header">
  <h1 class="page-title"><?= $view->e($assignment['title']) ?></h1>
  <p class="muted">
-<?= $view->e($view->count((int) ($totalItems),  'задание', 'задания', 'заданий')) ?>
+ <?= $view->e($counter) ?>
+
+ <?php /*
+  Прогресс переехал сюда из таблицы заданий, которую на этом экране больше
+  нет: подпись «выполнено» отвечала на вопрос «сколько я прошёл», не
+  показывая состав работы.
+  */ ?>
+ <?php if ($attempt !== null): ?>
+ · выполнено <?= $view->e($doneCount) ?> из <?= $view->e($totalItems) ?>
+ <?php endif; ?>
 
  <?php if (!empty($assignment['subject_name'])): ?>
  · <?= $view->e($assignment['subject_name']) ?>
@@ -53,66 +85,20 @@ $token = $attempt === null ? '' : (string) $attempt['token'];
  </div>
 <?php endif; ?>
 
+<?php /*
+ * Экран прохождения: список заданий скрыт — решение владельца от 24.10.2026.
+ *
+ * Раньше здесь была таблица позиций (номер, название, вес, состояние, балл).
+ * Во время работы она отвлекала и позволяла заглянуть в состав, пока
+ * работа не начата; прогресс отдельной подписью переехал в шапку страницы
+ * («выполнено X из Y»), а кнопки остались. Сам список достижим только
+ * там, где он и нужен, — в редакторе работы у автора.
+ *
+ * Данные позиций ($items) шаблону по-прежнему нужны: по первой позиции
+ * строится кнопка «Продолжить» ниже.
+ */ ?>
+
 <div class="card">
- <h2 class="card-title">
- Задания
- <?php if ($attempt !== null): ?>
- <span class="muted">выполнено <?= $view->e($doneCount) ?> из <?= $view->e($totalItems) ?></span>
- <?php endif; ?>
- </h2>
-
- <?php if ($items === []): ?>
- <p class="muted">В работе нет заданий. Обратитесь к учителю.</p>
- <?php else: ?>
- <div class="table-responsive">
- <table class="table">
- <thead>
- <tr>
- <th scope="col">№</th>
- <th scope="col">Задание</th>
- <th scope="col">Вес</th>
- <th scope="col">Состояние</th>
- <?php if ($started && (int) $assignment['show_results'] === 1): ?>
- <th scope="col">Балл</th>
- <?php endif; ?>
- </tr>
- </thead>
- <tbody>
- <?php foreach ($items as $item): ?>
- <tr>
- <td><?= $view->e((int) $item['position']) ?></td>
- <td>
- <strong><?= $view->e($item['title']) ?></strong>
- <?php if (!$item['available']): ?>
- <br><span class="status status-red">сейчас недоступно</span>
- <?php endif; ?>
- </td>
- <td><?= $view->e($item['weight']) ?></td>
- <td>
- <?php if ($item['done']): ?>
- <span class="status status-green">выполнено</span>
- <?php else: ?>
- <span class="muted">не выполнено</span>
- <?php endif; ?>
- </td>
- <?php if ($started && (int) $assignment['show_results'] === 1): ?>
- <td>
- <?php if ($item['percent'] === null): ?>
- <span class="muted">—</span>
- <?php else: ?>
- <?= $view->e($item['score']) ?> из <?= $view->e($item['max_score']) ?>
- <?php endif; ?>
- </td>
- <?php endif; ?>
- </tr>
- <?php endforeach; ?>
- </tbody>
- </table>
- </div>
- <?php endif; ?>
-
- <hr class="sep">
-
  <div class="page-actions">
  <?php if ($attempt === null): ?>
  <form method="post"

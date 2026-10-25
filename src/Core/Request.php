@@ -29,17 +29,30 @@ final class Request
     /** @var array<string,mixed> */
     private array $files;
 
+    /**
+     * Cookie запроса.
+     *
+     * Отдельным массивом, а не через $_COOKIE в местах чтения: запрос
+     * собирается и в тестах, где суперглобального состояния нет, и тогда
+     * cookie должен приходить так же, как остальные данные.
+     *
+     * @var array<string,mixed>
+     */
+    private array $cookies;
+
     public function __construct(
         array $query = [],
         array $post = [],
         array $server = [],
         array $files = [],
-        string $basePath = ''
+        string $basePath = '',
+        array $cookies = []
     ) {
         $this->files = $files;
         $this->query = $query;
         $this->post = $post;
         $this->server = $server;
+        $this->cookies = $cookies;
 
         $this->method = strtoupper((string) ($server['REQUEST_METHOD'] ?? 'GET'));
 
@@ -52,7 +65,21 @@ final class Request
 
     public static function fromGlobals(string $basePath = ''): self
     {
-        return new self($_GET, $_POST, $_SERVER, $_FILES, $basePath);
+        return new self($_GET, $_POST, $_SERVER, $_FILES, $basePath, $_COOKIE);
+    }
+
+    /**
+     * Значение cookie запроса или null, если cookie нет.
+     *
+     * Значение cookie — строка: не строка (массив из подделанного запроса вида
+     * `name[]=x`) считается отсутствием, и приложение не начинает думать, что
+     * получило данные.
+     */
+    public function cookie(string $name): ?string
+    {
+        $value = $this->cookies[$name] ?? null;
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**

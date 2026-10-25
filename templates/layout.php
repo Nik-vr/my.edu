@@ -28,6 +28,8 @@ declare(strict_types=1);
  * @var \MyEdu\Core\View $view
  * @var string $content
  * @var \MyEdu\Auth\User|\MyEdu\Auth\Student|null $currentUser
+ * @var string $fontSize
+ * @var string $theme личная тема из профиля: dark или light
  * @var string|null $appName
  * @var string $currentPath
  * @var list<array{title:string, items:list<array<string,mixed>>}> $panelNav
@@ -41,6 +43,33 @@ $appName = $appName ?? 'Система контроля знаний';
  */
 $currentPath = $currentPath ?? '/';
 $panelNav = $panelNav ?? [];
+
+/*
+ * Тема и состояние меню — с умолчаниями по той же причине, что и путь:
+ * страница ошибки рисуется мимо dispatch, и при отказе до кладки контекста в
+ * шаблоне оказалась бы необъявленная переменная. Умолчания совпадают с
+ * разметкой оболочки: тёмная тема и развёрнутое меню.
+ */
+$theme = $theme ?? \MyEdu\Auth\User::THEME_DARK;
+$sidebarRail = $sidebarRail ?? false;
+
+/*
+ * Состояния разделов меню: пустое по умолчанию означает «ничего не свёрнуто
+ * по личному выбору», и группам остаётся их дефолт из Kernel. Пустой массив
+ * нужен только для страницы ошибки, нарисованной мимо dispatch.
+ */
+$navClosed = $navClosed ?? [];
+
+/*
+ * Размер шрифта по умолчанию — нормальный.
+ *
+ * В общей контекст его кладёт ядро, но страница ошибки рисуется мимо
+ * dispatch, и при отказе до кладки контекста в шаблоне оказалась бы пустая
+ * переменная. Собственного выбора у гостя нет, и нормальный размер — ровно
+ * то, что он увидит: страница без `data-font-size` показывает систему как
+ * задумано.
+ */
+$fontSize = $fontSize ?? \MyEdu\Auth\User::FONT_NORMAL;
 
 /*
  * Новый стиль — всему, кто вошёл. Гостю остаётся старая вёрстка: она и

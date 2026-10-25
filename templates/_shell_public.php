@@ -18,13 +18,14 @@ declare(strict_types=1);
  *
  * @var \MyEdu\Core\View $view
  * @var string $content
- * @var \MyEdu\Auth\User|null $currentUser
+ * @var \MyEdu\Auth\User|\MyEdu\Auth\Student|null $currentUser
+ * @var string $fontSize
  * @var string|null $appName
  * @var string $currentPath
  */
 ?>
 <!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru" data-theme="<?= $view->e($theme) ?>" data-font-size="<?= $view->e($fontSize) ?>">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">

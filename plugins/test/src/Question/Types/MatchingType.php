@@ -84,14 +84,60 @@ final class MatchingType implements QuestionTypeInterface
 
     public function payload(Question $question): array
     {
-        $column = static fn (string $kind): array => array_map(
+        $left = $question->optionsOfKind(Question::KIND_LEFT);
+
+        /*
+         * «Показать N вариантов» действует только на правую колонку.
+         *
+         * Левая колонка остаётся полной: она и есть условие, и урезать её —
+         * значит сделать часть вопроса неразрешимой. Зато правая колонка
+         * состоит из ответов и отвлекающих вариантов, и урезать её можно —
+         * при одном условии: верные партнёры видимых левых элементов
+         * показываются в любом случае. Без них пару составить было бы
+         * нечем, а лишние (отвлекающие) как раз и отсекаются.
+         *
+         * Раньше настройка для этого типа вообще не читалась: автор видел
+         * поле в настройках, а ученик получал все варианты подряд.
+         */
+        $pairs = $question->configValue('pairs', []);
+
+        if (!is_array($pairs)) {
+            $pairs = [];
+        }
+
+        $partners = [];
+
+        foreach ($left as $option) {
+            $right = $pairs[(string) ($option['value_key'] ?? '')] ?? null;
+
+            if ($right !== null) {
+                $partners[] = (string) $right;
+            }
+        }
+
+        $right = $question->visibleOptionsOfKind(Question::KIND_RIGHT, $partners);
+
+        /*
+         * Перемешиваются варианты ответа, то есть правая колонка.
+         *
+         * Левая колонка — условие, а не ответ: её порядок задаёт автор и
+         * может нести смысл (перечисление, нумерация), и трогать его
+         * настройка «перемешивать варианты ответа» не должна. Раньше эта
+         * настройка для соответствия не применялась вовсе, и галочка в
+         * редакторе ничего не меняла.
+         */
+        if ($question->shouldShuffleOptions()) {
+            $right = $question->shuffled($right);
+        }
+
+        $column = static fn (array $options): array => array_map(
             static fn (array $o): array => ['value' => (string) $o['value_key'], 'text' => (string) $o['text']],
-            $question->optionsOfKind($kind)
+            $options
         );
 
         return [
-            'left'  => $column(Question::KIND_LEFT),
-            'right' => $column(Question::KIND_RIGHT),
+            'left'  => $column($left),
+            'right' => $column($right),
         ];
     }
 

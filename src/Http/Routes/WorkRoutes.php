@@ -25,6 +25,14 @@ final class WorkRoutes implements RouteFile
          * работать.
          */
         $router->get('/works', [$c->works, 'index'], Role::TESTS_TAKE);
+
+        /*
+         * Уборка тестовой попытки — литерал до шаблонов с {id}: иначе
+         * «trial» читалось бы как номер работы. Право то же, что на всё
+         * прохождение: уборка шлётся из самих страниц прохождения.
+         */
+        $router->post('/work/trial/cleanup', [$c->works, 'trialCleanup'], Role::TESTS_TAKE);
+
         $router->get('/work/{id}', [$c->works, 'show'], Role::TESTS_TAKE);
         $router->post('/work/{id}/start', [$c->works, 'start'], Role::TESTS_TAKE);
         $router->get('/work/attempt/{attemptId}', [$c->works, 'attempt'], Role::TESTS_TAKE);

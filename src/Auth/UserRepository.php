@@ -332,6 +332,36 @@ $this->db->transaction(function (Database $db) use ($userId, $role, $grantedBy):
     }
 
     /**
+     * Личный размер шрифта: small, normal, large.
+     *
+     * Значение приводится здесь же, а не в месте вызова: в базе всегда
+     * оказывается слово из списка, и чтение обратно не требует защиты от
+     * мусора — она уже сделана.
+     */
+    public function setFontSize(int $userId, string $fontSize): void
+    {
+        $this->db->update('users', [
+            'font_size'  => User::fontSizeOf($fontSize),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ], ['id' => $userId]);
+    }
+
+    /**
+     * Личная тема оформления: dark, light.
+     *
+     * Приведение — то же, что и при чтении (`User::themeOf`): в базу
+     * попадает только слово из списка, и оболочка страницы при отрисовке не
+     * нуждается в защите от мусора — защита уже сделана при сохранении.
+     */
+    public function setTheme(int $userId, string $theme): void
+    {
+        $this->db->update('users', [
+            'theme'      => User::themeOf($theme),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ], ['id' => $userId]);
+    }
+
+    /**
      * Сводка по сотрудникам для верхних блоков страницы пользователей.
      *
      * «Активен» здесь и в колонке статуса значит одно и то же: человек

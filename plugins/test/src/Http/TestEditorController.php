@@ -854,6 +854,14 @@ return [$config, []];
 
  $partial = $this->checkedFlag($request, 'partial');
 
+ /*
+  * Сколько вариантов показывать — читается и здесь, а не только у выбора
+  * ответа. У соответствия урезается правая колонка (см. MatchingType::
+  * payload()), и без этого чтения поле в настройках было бы обещанием,
+  * которое не выполняется: автор ставил N, а ученик видел все варианты.
+  */
+ $this->readRandomOptions($request, $config, $options, []);
+
  return [['pairs' => $pairs, 'partial' => $partial], $options];
  }
 
