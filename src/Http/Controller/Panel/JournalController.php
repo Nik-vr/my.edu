@@ -13,6 +13,7 @@ use MyEdu\Core\View;
 use MyEdu\Http\Controller\ControllerHelpers;
 use MyEdu\Plugin\PluginManager;
 use MyEdu\Repository\AssignmentRepository;
+use MyEdu\Repository\JournalRepository;
 
 /**
  * Результаты: что сдали ученики и с каким результатом.
@@ -40,6 +41,7 @@ final class JournalController
         private readonly Session $session,
         private readonly Auth $auth,
         private readonly AssignmentRepository $assignments,
+        private readonly JournalRepository $journals,
         private readonly PluginManager $plugins
     ) {
     }
@@ -56,7 +58,7 @@ final class JournalController
     {
         $groups = [];
 
-        foreach ($this->assignments->journalIssuedWorks($this->auth->journalAuthorId()) as $row) {
+        foreach ($this->journals->journalIssuedWorks($this->auth->journalAuthorId()) as $row) {
             $classId = (int) $row['class_id'];
 
             $groups[$classId] ??= [
@@ -107,7 +109,7 @@ final class JournalController
             throw new HttpException(403, 'Это работа другого автора');
         }
 
-        $classes = $this->assignments->journalWorkClasses($assignmentId);
+        $classes = $this->journals->journalWorkClasses($assignmentId);
 
         if ($classes === []) {
             throw new HttpException(404, 'Работа никому не выдавалась');
@@ -126,9 +128,9 @@ final class JournalController
         // осмысленным, а не пустой таблицей.
         $current ??= $classes[0];
 
-        $students = $this->assignments->journalWorkStudents($assignmentId, (int) $current['id']);
-        $deadlines = $this->assignments->journalWorkDeadlines($assignmentId);
-        $items = $this->assignments->journalWorkItems($assignmentId);
+        $students = $this->journals->journalWorkStudents($assignmentId, (int) $current['id']);
+        $deadlines = $this->journals->journalWorkDeadlines($assignmentId);
+        $items = $this->journals->journalWorkItems($assignmentId);
 
         $attemptIds = [];
 
@@ -138,7 +140,7 @@ final class JournalController
             }
         }
 
-        $results = $this->assignments->journalItemResults($attemptIds);
+        $results = $this->journals->journalItemResults($attemptIds);
 
         $rows = $this->rows($students, $deadlines, $items, $results);
 

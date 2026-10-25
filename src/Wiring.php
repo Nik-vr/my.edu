@@ -22,6 +22,7 @@ use MyEdu\Http\Presenter\PanelNav;
 use MyEdu\Plugin\PluginManager;
 use MyEdu\Repository\AssignmentRepository;
 use MyEdu\Repository\AssignmentDraftRepository;
+use MyEdu\Repository\JournalRepository;
 use MyEdu\Repository\RatingRepository;
 
 /**
@@ -76,6 +77,9 @@ final class Wiring
 
         $app->define(RatingRepository::class, static fn (App $a): RatingRepository
             => new RatingRepository($a->get(Database::class)));
+
+        $app->define(JournalRepository::class, static fn (App $a): JournalRepository
+            => new JournalRepository($a->get(Database::class)));
 
         /*
          * Сессия проверяет пароль по хешу, и хеш ей передаётся из того же

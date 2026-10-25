@@ -43,6 +43,7 @@ use MyEdu\Http\Controller\PortalController;
 use MyEdu\Http\Controller\WorkController;
 use MyEdu\Plugin\PluginManager;
 use MyEdu\Repository\AssignmentRepository;
+use MyEdu\Repository\JournalRepository;
 use MyEdu\Repository\AssignmentDraftRepository;
 use MyEdu\Repository\RatingRepository;
 
@@ -153,7 +154,8 @@ final class Controllers
         );
 
         $this->journal = new JournalController(
-            $view, $session, $auth, $assignments, $app->get(PluginManager::class)
+            $view, $session, $auth, $assignments, $app->get(JournalRepository::class),
+            $app->get(PluginManager::class)
         );
 
         $this->ratings = new RatingController($view, $auth, $app->get(RatingRepository::class));
