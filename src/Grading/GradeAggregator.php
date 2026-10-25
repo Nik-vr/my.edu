@@ -329,6 +329,12 @@ final class GradeAggregator
 
     /**
      * Цвет оценки — по шкале автора.
+     *
+     * Оценки может не оказаться в шкале: авторская шкала не обязана покрывать
+     * все пять оценок, а среднее по оценкам позиций (режим «отдельная оценка
+     * за задание») округляется до любой из них. Здесь возвращался null, хотя
+     * метод объявлен строкой, — и результат работы падал TypeError'ом вместо
+     * страницы. Запасной цвет тот же, что у оценки ниже всех границ шкалы.
      */
     public function colorFor(int $grade): string
     {
@@ -338,7 +344,7 @@ final class GradeAggregator
             }
         }
 
-        return null;
+        return GradeScaleValidator::normalizeColor(null, $grade);
     }
 
     /** @return list<array{grade:int,min_percent:float,color:string}> */
