@@ -9989,10 +9989,17 @@ $db->run(
     ['s' => date('Y-m-d H:i:s', time() - 7200), 'id' => $expiredAttemptId]
 );
 
+/*
+ * Форма берётся такой, какой её успел загрузить браузер ДО истечения:
+ * защитное поле сессии одно на всю сессию, и в реальном сценарии таймер
+ * отправляет форму, открытую раньше срока. Экран задания истёкшей попытки
+ * здесь не открывается намеренно: сервер закрывает такую попытку при
+ * открытии (проверка того — в группе «Автосдача истёкшей попытки»), и
+ * открыв её, тест проверял бы уже не отправку на истечении.
+ */
 $expiredItemPath = '/work/' . $expiredAttemptId . '/item/' . $expiredItemId;
-$expiredItemPage = $student->get($expiredItemPath . '?t=' . $expiredToken);
 $expiredSave = $student->post($expiredItemPath, [
-    '_token' => $student->tokenFrom($expiredItemPage) ?? '',
+    '_token' => $student->tokenFrom($expiredStartPage) ?? '',
     't'      => $expiredToken,
     ['answer_present[' . $expiredQuestionId . ']', '1'],
     ['answers[' . $expiredQuestionId . ']', 'a'],
@@ -11415,5 +11422,99 @@ $ratingsAfterTrial = $teacher->get('/panel/ratings');
 $t->is($ratingsAfterTrial['status'] === 200, 'страница среднего балла открыта');
 $t->notContains((string) $ratingsAfterTrial['body'], 'Иванова Мария Петровна',
     'виртуальный не попал в статистику среднего балла');
+
+// ------------------------------------------------ автосдача по таймеру сервера
+
+/*
+ * Таймер на странице — это скрипт в браузере: вкладку закрыли, скрипт не
+ * выполнился, и попытка оставалась бы «в процессе» навсегда. Сервер обязан
+ * закрывать истёкшую попытку сам при любом заходе к ней.
+ *
+ * Время «вышло» отодвиганием started_at в базе: полчаса назад при лимите
+ * 25 минут. Такой ход не зависит от скорости прогона.
+ */
+$t->group('Автосдача истёкшей попытки');
+
+$savedTimeLimit = (int) $db->value('SELECT time_limit FROM assignments WHERE id = :id', ['id' => $assignmentId]);
+$db->run('UPDATE assignments SET time_limit = 25 WHERE id = :id', ['id' => $assignmentId]);
+
+$backdate = static function (int $attemptId) use ($db): void {
+    $db->run(
+        'UPDATE assignment_attempts SET started_at = :started WHERE id = :id',
+        ['started' => date('Y-m-d H:i:s', time() - 30 * 60), 'id' => $attemptId]
+    );
+};
+
+/*
+ * Выдача своя: страховка от отзыва или правок в прежних группах — работа
+ * должна быть видна ученику независимо от того, что случилось выше.
+ */
+$autoIssue = (int) $db->insert('assignment_issues', [
+    'assignment_id'   => $assignmentId,
+    'author_id'       => $teacherId,
+    'available_from'  => null,
+    'available_until' => null,
+    'max_attempts'    => 0,
+    'created_at'      => date('Y-m-d H:i:s'),
+]);
+$db->run(
+    'INSERT INTO assignment_issue_students (issue_id, student_id, class_id, assigned_at)'
+    . ' VALUES (:i, :s, :c, :t)',
+    ['i' => $autoIssue, 's' => $studentId, 'c' => $classId, 't' => date('Y-m-d H:i:s')]
+);
+
+$autoWorkPage = $student->get('/work/' . $assignmentId);
+$autoStart = $student->post('/work/' . $assignmentId . '/start', [
+    '_token' => $student->tokenFrom($autoWorkPage) ?? '',
+]);
+
+$t->is(preg_match('#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#', $autoStart['location'], $autoM) === 1,
+    'попытка для автосдачи начата');
+
+$autoAttemptId = (int) $autoM[1];
+$autoToken = (string) $autoM[3];
+
+$backdate($autoAttemptId);
+
+/*
+ * Путь страницы работы: попытка закрыта без формы и без скрипта, об этом
+ * сказано словами, и результат открывается без 404.
+ */
+$autoShow = $student->get('/work/' . $assignmentId);
+
+$t->contains($autoShow['body'], 'Время вышло', 'об автосдаче сказано прямо на странице работы');
+$t->equals('finished', (string) $db->value('SELECT status FROM assignment_attempts WHERE id = :id', ['id' => $autoAttemptId]),
+    'попытка закрыта сервером');
+$t->is((int) $db->value(
+    'SELECT COUNT(*) FROM assignment_item_results WHERE attempt_id = :a',
+    ['a' => $autoAttemptId]
+) > 0, 'все позиции попытки проверены — «ждущих» позиций без ответа не осталось');
+
+$autoResult = $student->get('/work/' . $autoAttemptId . '/result?t=' . $autoToken);
+
+$t->is($autoResult['status'] === 200, 'результат автосданной попытки открывается');
+
+/*
+ * Путь экрана задания: открытие истёкшей попытки по прямой ссылке уводит
+ * на результат, а не показывает форму, в которую уже нельзя отвечать.
+ */
+$autoStart2 = $student->post('/work/' . $assignmentId . '/start', [
+    '_token' => $student->tokenFrom($autoShow) ?? '',
+]);
+
+preg_match('#/work/(\d+)/item/(\d+)\?t=([a-f0-9]{64})#', $autoStart2['location'], $autoM2);
+
+$autoAttempt2 = (int) $autoM2[1];
+$backdate($autoAttempt2);
+
+$autoItem = $student->get('/work/' . $autoAttempt2 . '/item/' . (int) $autoM2[2] . '?t=' . (string) $autoM2[3]);
+
+$t->is($autoItem['status'] === 302 && str_contains($autoItem['location'], '/result'),
+    'экран задания истёкшей попытки ведёт на результат');
+$t->equals('finished', (string) $db->value('SELECT status FROM assignment_attempts WHERE id = :id', ['id' => $autoAttempt2]),
+    'и на этом пути попытка закрыта сервером');
+
+$db->run('UPDATE assignments SET time_limit = :limit WHERE id = :id',
+    ['limit' => $savedTimeLimit, 'id' => $assignmentId]);
 
 exit($t->report());

@@ -182,6 +182,7 @@ final class WorkController
         }
 
         $attempt = $attemptActor === null ? null : $this->assignments->findLastAttempt($id, $attemptActor);
+        $attempt = $attempt === null ? null : $this->completeIfExpired($attempt);
         $rows = $this->positionRows($assignment, $attempt);
 
         return $this->render('work/show', [
@@ -355,6 +356,13 @@ final class WorkController
         $itemId = $this->intParam($params, 'itemId');
 
         $attempt = $this->requireOwnAttempt($attemptId, $request->queryParam('t'));
+
+        /*
+         * Время могло выйти, пока вкладка была закрыта: попытка закрывается
+         * здесь же, и проверка ниже уводит на результат вместо формы.
+         */
+        $attempt = $this->completeIfExpired($attempt);
+
         $item = $this->requireItem($attempt, $itemId);
 
         if ($this->isFinished($attempt)) {
@@ -511,6 +519,23 @@ if ($this->expired($attempt)) {
             return $this->resultRedirect($attempt);
         }
 
+        $attempt = $this->completeAttempt($attempt);
+
+        return $this->resultRedirect($attempt);
+    }
+
+    /**
+     * Завершить попытку: штраф, проверка всех позиций, свежая строка попытки.
+     *
+     * Общая часть кнопки «Сдать» и автосдачи по таймеру: оба пути обязаны
+     * закрывать попытку одинаково, иначе один из них рано или поздно
+     * потерял бы штраф или проверку.
+     *
+     * @param array<string,mixed> $attempt
+     * @return array<string,mixed> попытка после пересчёта
+     */
+    private function completeAttempt(array $attempt): array
+    {
         /*
          * Штраф за опоздание фиксируется до подсчёта итога: он должен попасть
          * в тот же пересчёт, что и баллы, иначе сводка показала бы «набрано»
@@ -520,7 +545,46 @@ if ($this->expired($attempt)) {
 
         $this->gradeAttempt($attempt);
 
-        return $this->resultRedirect($this->assignments->findAttempt($attemptId) ?? $attempt);
+        return $this->assignments->findAttempt((int) $attempt['id']) ?? $attempt;
+    }
+
+    /**
+     * Автосдача истёкшей попытки на стороне сервера.
+     *
+     * Таймер на странице сдаёт работу сам, но он живёт в браузере: вкладку
+     * закрыли, скрипт не выполнился, отключён — и попытка оставалась бы
+     * «в процессе» навсегда, занимая лимит попыток и не попадая в результаты.
+     * Теперь любой заход к попытке, у которой время вышло, закрывает её тем
+     * же путём, что и кнопка «Сдать»: со штрафом за опоздание и проверкой
+     * всех позиций.
+     *
+     * Ответ текущего задания при этом не сохраняется: запрос читающий, и
+     * формы с ответом в нём нет. Это совпадает с тем, что делает таймер,
+     * отправляя форму без нового ответа.
+     *
+     * @param array<string,mixed> $attempt
+     * @return array<string,mixed> попытка после возможного завершения
+     */
+    private function completeIfExpired(array $attempt): array
+    {
+        /*
+         * Лимит живёт в работе, и не каждая выборка попытки его приносит:
+         * findLastAttempt() читает только таблицу попыток. Без этой строки
+         * автосдача на странице работы молча не срабатывала бы — ноль вместо
+         * отсутствующего ключа означает «ограничения нет».
+         */
+        if (!array_key_exists('time_limit', $attempt)) {
+            $assignment = $this->assignments->find((int) $attempt['assignment_id']);
+            $attempt['time_limit'] = (int) ($assignment['time_limit'] ?? 0);
+        }
+
+        if ($this->isFinished($attempt) || !$this->expired($attempt)) {
+            return $attempt;
+        }
+
+        $this->session->set('flash_notice', 'Время вышло. Работа отправлена на проверку.');
+
+        return $this->completeAttempt($attempt);
     }
 
     /**
@@ -577,6 +641,10 @@ if ($this->expired($attempt)) {
             $this->intParam($params, 'attemptId'),
             $request->queryParam('t')
         );
+
+        // Закладка на результат открытой попытки: время вышло — попытка
+        // закрывается, и результат открывается, а не отвечает отказом.
+        $attempt = $this->completeIfExpired($attempt);
 
         if (!$this->isFinished($attempt)) {
             throw new HttpException(404, 'Работа ещё не завершена');
@@ -1314,6 +1382,10 @@ if ($this->expired($attempt)) {
             $this->intParam($params, 'attemptId'),
             $request->queryParam('t')
         );
+
+        // Истёкшая попытка закрывается и здесь: экран списка — обычный путь
+        // возвращения к работе, и он обязан её завершить так же, как задание.
+        $attempt = $this->completeIfExpired($attempt);
 
         $actor = $this->auth->actor();
         $assignment = $this->requireAssignment($attempt);
