@@ -27,9 +27,6 @@ $view->crumbs([
         ['label' => 'Пользователи'],
     ]);
 
-$plural = static fn (int $n, string $one, string $few, string $many): string
-    => $view->e($view->plural($n, $one, $few, $many));
-
 /*
  * Статус в таблице — состояние записи: активна, ждёт подтверждения или
  * заблокирована. Раньше здесь была «заходил за последний год», и ручная
@@ -65,7 +62,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Всего пользователей</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['total'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= $plural((int) $stats['total_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год') ?>
+                    <?= $view->e($view->plural((int) $stats['total_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год')) ?>
                 </div>
             </div>
         </div>
@@ -82,7 +79,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Учителей</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['teachers'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= $plural((int) $stats['teachers_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год') ?>
+                    <?= $view->e($view->plural((int) $stats['teachers_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год')) ?>
                 </div>
             </div>
         </div>
@@ -99,7 +96,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Завучей</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['head_teachers'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= $plural((int) $stats['head_teachers_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год') ?>
+                    <?= $view->e($view->plural((int) $stats['head_teachers_active'], 'заходил за последний год', 'заходили за последний год', 'заходили за последний год')) ?>
                 </div>
             </div>
         </div>
@@ -116,7 +113,7 @@ $plural = static fn (int $n, string $one, string $few, string $many): string
                 <div class="stat-label">Без должности</div>
                 <div class="stat-value-row"><span class="stat-value"><?= (int) $stats['without_role'] ?></span></div>
                 <div class="stat-subtext">
-                    <?= $plural((int) $stats['without_role'], 'требует внимания', 'требуют внимания', 'требуют внимания') ?>
+                    <?= $view->e($view->plural((int) $stats['without_role'], 'требует внимания', 'требуют внимания', 'требуют внимания')) ?>
                 </div>
             </div>
         </div>
@@ -219,7 +216,7 @@ require __DIR__ . '/_page_header.php';
                                         <form method="post"
                                               action="<?= $view->e($view->url('panel/users/role')) ?>">
                                             <?= $view->raw($view->csrfField()) ?>
-                                            <input type="hidden" name="user_id" value="<?= $userId ?>">
+                                            <input type="hidden" name="user_id" value="<?= (int) $userId ?>">
 
                                             <?php foreach (Role::assignable() as $option): ?>
                                                 <button type="submit"
@@ -281,7 +278,7 @@ require __DIR__ . '/_page_header.php';
                                         <form method="post"
                                               action="<?= $view->e($view->url('panel/users/status')) ?>">
                                             <?= $view->raw($view->csrfField()) ?>
-                                            <input type="hidden" name="user_id" value="<?= $userId ?>">
+                                            <input type="hidden" name="user_id" value="<?= (int) $userId ?>">
                                             <input type="hidden" name="status" value="active">
                                             <button type="submit" class="menu-item" role="menuitem">
                                                 Разблокировать
@@ -292,7 +289,7 @@ require __DIR__ . '/_page_header.php';
                                         <form method="post"
                                               action="<?= $view->e($view->url('panel/users/status')) ?>">
                                             <?= $view->raw($view->csrfField()) ?>
-                                            <input type="hidden" name="user_id" value="<?= $userId ?>">
+                                            <input type="hidden" name="user_id" value="<?= (int) $userId ?>">
                                             <input type="hidden" name="status" value="blocked">
                                             <button type="submit" class="menu-item menu-item--danger"
                                                     role="menuitem"

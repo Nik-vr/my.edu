@@ -54,6 +54,22 @@ final class AssignmentRepository
      */
     private array $shuffleFlags = [];
 
+    /**
+     * Порядок заданий у ученика — по работе и попытке.
+     *
+     * Список позиций пересобирается с сортировкой и запросом позиций на каждый
+     * вызов, а вызывают его часто: список позиций попытки, номер задания в
+     * шапке каждого задания, переход «дальше». На результате работы с двадцатью
+     * заданиями без кэша это двадцать одинаковых выборок и сортировок.
+     *
+     * Жизнь кэша совпадает с жизнью репозитория — один запрос. Посреди запроса
+     * порядок меняют только правки редактора, и они сбрасывают его целиком
+     * (see forgetPositionOrders()).
+     *
+     * @var array<string,list<int>>
+     */
+    private array $positionOrders = [];
+
     public function __construct(Database $db)
     {
         $this->db = $db;
@@ -618,9 +634,43 @@ final class AssignmentRepository
      * считается от номера попытки, поэтому задания не ездят при переходе туда-
      * обратно, а у разных учеников и у разных попыток порядок разный.
      *
+     * Считается один раз на запрос и запоминается: сборка читает все позиции
+     * работы и сортирует их, а вызывают метод по разу на каждое задание
+     * страницы.
+     *
      * @return list<int> номера позиций по порядку для ученика
      */
     public function positionOrder(int $assignmentId, int $attemptId): array
+    {
+        $key = $assignmentId . ':' . $attemptId;
+
+        if (!array_key_exists($key, $this->positionOrders)) {
+            $this->positionOrders[$key] = $this->buildPositionOrder($assignmentId, $attemptId);
+        }
+
+        return $this->positionOrders[$key];
+    }
+
+    /**
+     * Сбросить запомненный порядок.
+     *
+     * Нужен правкам редактора: они меняют позиции, и прочитанный до правки
+     * порядок был бы устаревшим. Сбрасывается целиком, а не по работе: правки
+     * приходят по одной, и точечная инвалидация не стоит лишнего места
+     * для ошибки.
+     */
+    private function forgetPositionOrders(): void
+    {
+        $this->positionOrders = [];
+    }
+
+    /**
+     * Сборка порядка ученика: позиции работы плюс перемешивание, если оно
+     * включено.
+     *
+     * @return list<int>
+     */
+    private function buildPositionOrder(int $assignmentId, int $attemptId): array
     {
         $positions = array_map(
             static fn (array $row): int => (int) $row['position'],
@@ -890,6 +940,8 @@ final class AssignmentRepository
         // ними не осталось пустого места.
         $this->normalizeRow($assignmentId, $position);
 
+        $this->forgetPositionOrders();
+
         return $itemId;
     }
 
@@ -951,6 +1003,8 @@ final class AssignmentRepository
                   WHERE assignment_id = :id AND position = :parked',
                 ['new' => $toRow, 'id' => $assignmentId, 'parked' => $parked]
             );
+
+            $this->forgetPositionOrders();
 
             return true;
         });
@@ -1024,6 +1078,8 @@ final class AssignmentRepository
                     ['new' => $index + 1, 'id' => $assignmentId, 'parked' => $parked + $index]
                 );
             }
+
+            $this->forgetPositionOrders();
 
             return array_map(
                 static fn (array $row): int => (int) $row['position'],
@@ -1180,6 +1236,8 @@ final class AssignmentRepository
 
             $this->normalizeRow($assignmentId, $targetRow);
 
+            $this->forgetPositionOrders();
+
             return true;
         });
     }
@@ -1264,10 +1322,14 @@ final class AssignmentRepository
                     ['id' => $assignmentId, 'pos' => $position]
                 );
 
+                $this->forgetPositionOrders();
+
                 return true;
             }
 
             $this->normalizeRow($assignmentId, $position);
+
+            $this->forgetPositionOrders();
 
             return true;
         });

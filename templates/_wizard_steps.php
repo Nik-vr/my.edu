@@ -31,8 +31,7 @@ declare(strict_types=1);
         <ol class="stepper">
             <?php $steps = $wizard['steps']; ?>
             <?php foreach ($steps as $i => $step): ?>
-                <?php $state = $step['current'] ? ' active' : ($step['done'] ? ' done' : ''); ?>
-                <li class="step<?= $state ?>">
+                <li class="step<?= $step['current'] ? ' active' : ($step['done'] ? ' done' : '') ?>">
                     <a class="step__link"
                        href="<?= $view->e($view->url($step['url'])) ?>"
                        <?= $step['current'] ? 'aria-current="step"' : '' ?>>

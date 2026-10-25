@@ -206,6 +206,280 @@ function describeHits(array $hits): string
     );
 }
 
+/**
+ * Убрать строковые литералы из выражения.
+ *
+ * Нужно числовой проверке: содержимое кавычек на безопасность вывода не
+ * влияет, а без этого шага кавычки мешают искать конкатенацию.
+ */
+function stripQuotedStrings(string $expr): string
+{
+    return (string) preg_replace("/'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"/", "''", $expr);
+}
+
+/**
+ * Разбить выражение по символу на верхнем уровне.
+ *
+ * Учитываются кавычки, круглые и квадратные скобки: разделитель внутри строки
+ * или внутри вызова функции разбивкой не считается.
+ *
+ * @return list<string>
+ */
+function topLevelSplit(string $expr, string $separator): array
+{
+    $parts = [];
+    $depth = 0;
+    $quote = '';
+    $current = '';
+
+    $length = strlen($expr);
+
+    for ($i = 0; $i < $length; $i++) {
+        $char = $expr[$i];
+
+        if ($quote !== '') {
+            $current .= $char;
+
+            if ($char === $quote && ($i === 0 || $expr[$i - 1] !== '\\')) {
+                $quote = '';
+            }
+
+            continue;
+        }
+
+        if ($char === "'" || $char === '"') {
+            $quote = $char;
+            $current .= $char;
+
+            continue;
+        }
+
+        if ($char === '(' || $char === '[') {
+            $depth++;
+        } elseif ($char === ')' || $char === ']') {
+            $depth--;
+        }
+
+        if ($char === $separator && $depth === 0) {
+            $parts[] = $current;
+            $current = '';
+
+            continue;
+        }
+
+        $current .= $char;
+    }
+
+    $parts[] = $current;
+
+    return $parts;
+}
+
+/**
+ * Числовой вывод: переменные съедены приведением, счётчиком или инкрементом.
+ *
+ * После удаления литералов в выражении не должно остаться переменной, до
+ * которой не дотягивается `(int)`, `(float)`, `count()` или `++`, — и не
+ * должно быть конкатенации, где рядом с приведённой переменной стоит что-то
+ * ещё живое.
+ */
+function echoIsNumeric(string $expr): bool
+{
+    $bare = stripQuotedStrings($expr);
+
+    if (preg_match('/\(int\)|\(float\)|count\s*\(|\+\+/', $bare) !== 1) {
+        return false;
+    }
+
+    // count(...) заменяется числом вместе со своей переменной.
+    $previous = '';
+
+    while ($previous !== $bare) {
+        $previous = $bare;
+        $bare = (string) preg_replace('/count\s*\([^()]*\)/', '0', $bare);
+    }
+
+    if (!str_contains($bare, '$')) {
+        return true;
+    }
+
+    // Инкремент счётчика — число по определению.
+    if (preg_match('/^\s*\$\w+\s*\+\+\s*$/', $bare) === 1) {
+        return true;
+    }
+
+    /*
+     * Приведение, покрывающее всё выражение: `(int) $var[...]`, `(int)(…)`.
+     * После приведения не должно остаться верхнеуровневой конкатенации или
+     * тернарника — иначе приведение относится лишь к части вывода.
+     */
+    if (preg_match('/^\s*\((?:int|float)\)\s*(.+)$/s', $bare, $m) === 1) {
+        $rest = trim((string) $m[1]);
+
+        if (count(topLevelSplit($rest, '.')) === 1 && count(topLevelSplit($rest, '?')) === 1) {
+            return true;
+        }
+    }
+
+    /*
+     * Конкатенация: каждая верхнеуровневая часть — приведённая переменная,
+     * число, литерал или инкремент.
+     */
+    foreach (topLevelSplit($bare, '.') as $part) {
+        $part = trim($part);
+
+        if ($part === '' || $part === "''" || $part === '0' || preg_match('/^\d+(\.\d+)?$/', $part) === 1) {
+            continue;
+        }
+
+        if (preg_match('/^\((?:int|float)\)\s*\$\w+(\[[^\]]*\]|->\w+)*$/', $part) === 1) {
+            continue;
+        }
+
+        if (preg_match('/^\$\w+\s*\+\+\s*$/', $part) === 1) {
+            continue;
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Ветка тернарника — литерал, число или такой же проверенный тернарник.
+ */
+function echoBranchSafe(string $expr): bool
+{
+    $trimmed = trim($expr);
+
+    if ($trimmed === '') {
+        return false;
+    }
+
+    // Литерал или склейка литералов и чисел.
+    if (preg_match("/^(?:\s*(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|\d+(?:\.\d+)?)\s*(?:\.\s*)?)+$/s", $trimmed) === 1) {
+        return true;
+    }
+
+    if (echoIsNumeric($trimmed)) {
+        return true;
+    }
+
+    // Ветка в скобках — вложенный тернарник; проверяется тем же правилом.
+    if (str_starts_with($trimmed, '(') && str_ends_with($trimmed, ')')) {
+        $inner = trim(substr($trimmed, 1, -1));
+
+        if (echoTernaryBranches($inner) !== null) {
+            [$then, $else] = echoTernaryBranches($inner);
+
+            return echoBranchSafe($then) && echoBranchSafe($else);
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Ветви тернарника на верхнем уровне выражения.
+ *
+ * Возвращается null, если верхнеуровневого тернарника нет: условие может
+ * содержать `??` и `?->`, и они тернарником не считаются.
+ *
+ * @return array{0:string,1:string}|null
+ */
+function echoTernaryBranches(string $expr): ?array
+{
+    $depth = 0;
+    $quote = '';
+    $questionAt = -1;
+    $colonAt = -1;
+
+    $length = strlen($expr);
+
+    for ($i = 0; $i < $length; $i++) {
+        $char = $expr[$i];
+
+        if ($quote !== '') {
+            if ($char === $quote && ($i === 0 || $expr[$i - 1] !== '\\')) {
+                $quote = '';
+            }
+
+            continue;
+        }
+
+        if ($char === "'" || $char === '"') {
+            $quote = $char;
+
+            continue;
+        }
+
+        if ($char === '(' || $char === '[') {
+            $depth++;
+
+            continue;
+        }
+
+        if ($char === ')' || $char === ']') {
+            $depth--;
+
+            continue;
+        }
+
+        if ($depth !== 0) {
+            continue;
+        }
+
+        if ($char === '?' && $questionAt === -1) {
+            // `??` и `?->` тернарником не считаются.
+            if (($i + 1 < $length && $expr[$i + 1] === '?')
+                || ($i + 1 < $length && $expr[$i + 1] === '>')) {
+                $i++;
+
+                continue;
+            }
+
+            $questionAt = $i;
+
+            continue;
+        }
+
+        if ($char === ':' && $questionAt !== -1 && $colonAt === -1) {
+            $colonAt = $i;
+
+            break;
+        }
+    }
+
+    if ($questionAt === -1 || $colonAt === -1) {
+        return null;
+    }
+
+    return [
+        substr($expr, $questionAt + 1, $colonAt - $questionAt - 1),
+        substr($expr, $colonAt + 1),
+    ];
+}
+
+/**
+ * Вывод в шаблоне назван: экранирован, помечен сырым осознанно, собран
+ * компонентом или является числом/литеральной развилкой.
+ */
+function echoIsGuarded(string $expr): bool
+{
+    if (preg_match('/\$view->e\(|\$this->e\(|\$view->raw\(|\$this->raw\(|\$ui->|Html::/', $expr) === 1) {
+        return true;
+    }
+
+    $branches = echoTernaryBranches($expr);
+
+    if ($branches !== null && echoBranchSafe($branches[0]) && echoBranchSafe($branches[1])) {
+        return true;
+    }
+
+    return echoIsNumeric($expr);
+}
+
 $js = readFiles($root, ['public/assets/js'], ['js']);
 $jsCode = array_map(static fn (string $src): string => stripJsComments($src), $js);
 $templates = readFiles($root, ['templates', 'plugins'], ['php']);
@@ -314,6 +588,46 @@ $runner->group('Правила интерфейса: разметка');
 
 $inline = findAll($templates, '/\sstyle="[^"]{1,200}"/');
 $runner->equals([], $inline, 'инлайновых style= в шаблонах нет: ' . describeHits($inline));
+
+/*
+ * Каждый вывод в шаблоне называет свой выход.
+ *
+ * Экранирование в виде ручное: вид не превращает данные в безопасные сам, он
+ * даёт для этого e(). Значит, строка `<?= $something ?>` в шаблоне — это не
+ * «пока работает», а дыра, которую никто не заметил. Правило требует, чтобы
+ * в каждом выводе было одно из:
+ *
+ *   $view->e( / $this->e(  — данные экранированы;
+ *   $view->raw( / $this->raw( — помечено сырым осознанно (компоненты);
+ *   $ui-> / Html::         — виджет или санитайзер;
+ *   тернарник с литеральными ветками — условие любое, в вывод попадает
+ *                            только заранее написанный текст;
+ *   числовой вывод         — (int), (float), count(), ++.
+ *
+ * Комментарии убираются до разбора: они рассказывают о правиле словами и
+ * вправе упоминать сам синтаксис.
+ */
+$unguarded = [];
+
+foreach ($templates as $path => $src) {
+    $body = (string) preg_replace('/<\?php\s*\/\*.*?\*\/\s*\?>/s', '', $src);
+
+    if (preg_match_all('/<\?=\s*(.*?)\?>/s', $body, $m, PREG_OFFSET_CAPTURE) === 0) {
+        continue;
+    }
+
+    foreach ($m[1] as $hit) {
+        $expr = preg_replace('/\s+/u', ' ', trim((string) $hit[0]));
+        $line = substr_count(substr($body, 0, (int) $hit[1]), "\n") + 1;
+
+        if (!echoIsGuarded((string) $expr)) {
+            $unguarded[] = str_replace($root . '/', '', $path) . ':' . $line . ' — ' . $expr;
+        }
+    }
+}
+
+$runner->equals([], $unguarded, 'каждый вывод в шаблонах экранирован, помечен сырым или числовой'
+    . ($unguarded === [] ? '' : "\n      " . implode("\n      ", array_slice($unguarded, 0, 10))));
 
 /*
  * Теги в шаблоне закрыты все.

@@ -177,7 +177,7 @@ $editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
   action="<?= $view->e($view->url($publishUrl)) ?>">
   <?= $view->raw($view->csrfField()) ?>
   <input type="hidden" name="action" value="publish" data-publish-action>
-  <input type="hidden" name="return_to" value="panel/assignments/<?= $assignmentId ?>/edit">
+  <input type="hidden" name="return_to" value="panel/assignments/<?= (int) $assignmentId ?>/edit">
   <label class="switch" title="Опубликована ли работа">
   <input type="checkbox" data-publish-toggle
   <?= $isPublished ? 'checked' : '' ?>
@@ -192,7 +192,7 @@ $editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
   <form method="post" action="<?= $view->e($view->url($publishUrl)) ?>">
   <?= $view->raw($view->csrfField()) ?>
   <input type="hidden" name="action" value="<?= $isPublished ? 'draft' : 'publish' ?>">
-  <input type="hidden" name="return_to" value="panel/assignments/<?= $assignmentId ?>/edit">
+  <input type="hidden" name="return_to" value="panel/assignments/<?= (int) $assignmentId ?>/edit">
   <button type="submit" class="btn btn-sm"><?= $isPublished ? 'Снять с публикации' : 'Опубликовать' ?></button>
   </form>
   </noscript>

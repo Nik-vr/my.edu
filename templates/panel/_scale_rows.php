@@ -153,7 +153,7 @@ $pointsText = static function (?float $points) use ($total): string {
      * верхняя граница там и вводится руками.
      */
     ?>
-    <input type="hidden" name="<?= $scaleMode ?>_min[]"
+    <input type="hidden" name="<?= $view->e($scaleMode) ?>_min[]"
     value="<?= $view->e($bottomKeepsValue ? $row['from'] : 0) ?>">
     <div class="scale-field scale-field--auto">
      <span class="form-label scale-field__label">Минимальное значение</span>
@@ -168,7 +168,7 @@ $pointsText = static function (?float $points) use ($total): string {
       глаз. Единица названа один раз в подписи над набором.
       */ ?>
      <span class="form-label scale-field__label">Минимальное значение</span>
-     <input type="number" name="<?= $scaleMode ?>_min[]" min="0" step="<?= $view->e($boundaryStep) ?>"
+     <input type="number" name="<?= $view->e($scaleMode) ?>_min[]" min="0" step="<?= $view->e($boundaryStep) ?>"
      <?= $byScore ? '' : 'max="100"' ?>
      value="<?= $view->e($row['from']) ?>"
      <?= $fromBad ? 'aria-invalid="true"' : '' ?>
@@ -194,7 +194,7 @@ $pointsText = static function (?float $points) use ($total): string {
    <?php if ($byScore): ?>
    <label class="scale-field<?= $toBad ? ' field--error' : '' ?>">
     <span class="form-label scale-field__label">Максимальное значение</span>
-    <input type="number" name="<?= $scaleMode ?>_max[]" min="0" step="<?= $view->e($boundaryStep) ?>"
+    <input type="number" name="<?= $view->e($scaleMode) ?>_max[]" min="0" step="<?= $view->e($boundaryStep) ?>"
     value="<?= $view->e($row['to']) ?>"
     <?= $toBad ? 'aria-invalid="true"' : '' ?>>
    </label>

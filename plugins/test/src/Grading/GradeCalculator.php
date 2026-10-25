@@ -5,27 +5,45 @@ declare(strict_types=1);
 namespace MyEduPlugin\Test\Grading;
 
 use MyEdu\Core\Config;
+use MyEdu\Grading\GradeAggregator;
 
 /**
  * Перевод процента выполнения в оценку по критериям автора.
  *
+ * Решение об оценке принимает ядро: класс держит `GradeAggregator` с теми же
+ * критериями и спрашивает у него. Раньше здесь жила вторая копия правила —
+ * сортировка шкалы, порог «минимального проходного», запасная двойка, — и
+ * любое изменение правил оценивания приходилось вносить в два места: в ядро
+ * и сюда. Разошлись бы они тихо: работа в журнале и оценка в разборе задания
+ * считались бы по-разному.
+ *
+ * Подпись оценки — остаток прежнего показа, который заменил цвет. В разборе
+ * она больше не показывается, но поле снимка сохраняется; когда-нибудь поле
+ * уйдёт из снимка вместе с подписью, и тогда метод вернёт только оценку.
+ *
  * Критерии задаёт автор теста; если он их не задал, берётся шкала из
- * конфигурации. Решение принимает первая подходящая строка отсортированной
- * шкалы, поэтому строки могут идти в любом порядке.
+ * конфигурации.
  */
 final class GradeCalculator
 {
+    private GradeAggregator $aggregator;
+
     /** @var list<array{grade:int,min_percent:float,label:?string}> */
     private array $scale;
 
     private float $minimumPassPercent;
 
     /**
-     * @param list<array{grade:int,min_percent:float,label:?string}> $scale
+     * @param list<array{grade:int,min_percent:float,label:?string}> $rows
      */
-    private function __construct(array $scale, float $minimumPassPercent)
-    {
-        $this->scale = $scale;
+    private function __construct(
+        Config $config,
+        ?array $criteria,
+        array $rows,
+        float $minimumPassPercent
+    ) {
+        $this->aggregator = GradeAggregator::create($config, $criteria);
+        $this->scale = $rows;
         $this->minimumPassPercent = $minimumPassPercent;
     }
 
@@ -43,42 +61,47 @@ final class GradeCalculator
 
         usort($rows, static fn (array $a, array $b): int => $b['min_percent'] <=> $a['min_percent']);
 
-        return new self($rows, (float) $config->float('grading.minimum_pass_percent', 0.0));
+        return new self($config, $criteria, $rows, (float) $config->float('grading.minimum_pass_percent', 0.0));
     }
 
     /**
      * Оценка и подпись для процента выполнения.
      *
+     * Оценка приходит из ядра — то же правило, что сводит работу в журнале.
+     * Подпись ищется в своих критериях по той же границе, ниже которой ядро
+     * ставит двойку: подпись и оценка расходиться не должны даже тогда, когда
+     * подпись никем не показана.
+     *
      * @return array{grade:int,label:?string}
      */
     public function gradeFor(float $percent): array
     {
-        // Ниже минимального процента оценка двойка ставится принудительно:
-        // иначе работа с почти пустыми ответами могла бы получить тройку
-        // по критерию, который автор писал под другой случай.
         if ($percent < $this->minimumPassPercent) {
             return ['grade' => 2, 'label' => null];
         }
 
         foreach ($this->scale as $row) {
             if ($percent >= $row['min_percent']) {
-                return ['grade' => $row['grade'], 'label' => $row['label']];
+                return [
+                    'grade' => $this->aggregator->gradeFor($percent)['grade'],
+                    'label' => $row['label'],
+                ];
             }
         }
 
         // Ни один критерий не покрыл процент — работа не сдана.
-        return ['grade' => 2, 'label' => null];
+        return ['grade' => $this->aggregator->gradeFor($percent)['grade'], 'label' => null];
     }
 
     /**
      * Балл с округлением до сотых.
      *
-     * Эпсилон перед округлением спасает от 1,9999999999 → 1.99: сложение
-     * дробей даёт такое значение почти всегда.
+     * Правило одно на проект и живёт в ядре; вызов отсюда оставлен, чтобы
+     * плагин не тянул класс ядра в каждый свой файл.
      */
     public static function roundScore(float $value): float
     {
-        return round($value + 1e-9, 2);
+        return GradeAggregator::roundScore($value);
     }
 
     /**
