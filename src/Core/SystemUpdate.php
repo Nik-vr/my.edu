@@ -23,8 +23,10 @@ use Throwable;
  *    применяет `SchemaGate` при первом же заходе на страницу, и копия должна
  *    быть уже снята к этому моменту.
  * 2. Архив скачивается и проверяется до того, как что-либо распаковывается:
- *    размер, состав, контрольные суммы. Архив бомбы должен отклониться, не
- *    оставив систему в полусломанном виде.
+ *    размер, состав, контрольная сумма. Сумма приходит от GitHub вместе со
+ *    сведениями о релизе (поле `digest` у приложенного архива, `sha256:…`) и
+ *    сверяется со скачанным файлом; у архива без суммы целостность держится
+ *    только на TLS-соединении, и об этом журнал говорит прямо.
  * 3. Файлы кладутся поверх прежних. Файлы, которых в новой версии нет, остаются
  *    на месте: живой сайт не должен зависеть от того, что кто-то удалил файл
  *    из новой сборки, — решение об этом у владельца.
@@ -53,11 +55,18 @@ final class SystemUpdate
      * то, что в него налили. Остальное — то, что не должно попадать в корень
      * сайта ни при каких условиях.
      *
+     * Установщик (`public/install.php`) в этом списке не случайно: свежую
+     * установку он обслуживает и в релизном архиве остаётся, но обновляемому
+     * серверу не нужен — там база уже работает, а установщик умеет только
+     * создавать её на пустой базе, и точка входа на живом сервере ему ни к
+     * чему. Релиз, пришедший обновлением, установщиком не распаковывается.
+     *
      * @var list<string>
      */
     private const FORBIDDEN = [
         'var/',
         'config/config.local.php',
+        'public/install.php',
         'public/uploads/',
         'resources/',
         '.git/',
@@ -189,6 +198,12 @@ final class SystemUpdate
             'tag' => $tag,
             'asset' => true,
             'url' => $url,
+            /*
+             * Контрольная сумма приложенного архива, как её отдал GitHub:
+             * «sha256:…». У исходного архива тега суммы нет — он собирается
+             * сервером GitHub на лету, и сверять его не с чем.
+             */
+            'digest' => $asset !== null ? (string) ($asset['digest'] ?? '') : '',
             'published' => (string) ($release['published_at'] ?? ''),
             'error' => '',
             /*
@@ -320,6 +335,19 @@ final class SystemUpdate
     }
 
     /**
+     * Выключена ли проверка сертификата GitHub.
+     *
+     * Проверка выключается решением владельца, когда сервер не может проверить
+     * сертификат. Обновление кладёт на сервер файлы, из которых работает весь
+     * сайт, поэтому страница настроек обязана напоминать о выключенной
+     * проверке, пока та выключена, — а не молча обновляться без неё.
+     */
+    public function tlsCheckDisabled(): bool
+    {
+        return $this->config->bool('app.update.allow_insecure_tls', false);
+    }
+
+    /**
      * Старше ли найденный на GitHub релиз установленной версии.
      *
      * Отдельный вопрос, а не следствие `hasUpdate()`. «Обновлений нет» и
@@ -435,7 +463,7 @@ final class SystemUpdate
         $archive = $directory . '/release.zip';
 
         try {
-            $this->download($url, $archive);
+            $this->download($url, $archive, (string) ($latest['digest'] ?? ''));
         } catch (Throwable $e) {
             $this->remove($archive);
 
@@ -608,6 +636,13 @@ final class SystemUpdate
      * Путь внутри проекта, безопасный для записи.
      *
      * null — путь запрещён: он ведёт наружу или туда, куда писать нельзя.
+     *
+     * Запрещённые префиксы сверяются без учёта регистра. На Linux файловые
+     * имена различают буквы, и `VAR/log` был бы другим каталогом; на Windows —
+     * нет, а архивы приезжают и туда (локальная разработка, тестовые машины).
+     * Одинаковое правило на обеих системах стоит того, что гипотетический файл
+     * проекта с заглавной буквы в запрещённом каталоге будет пропущен — таких
+     * путей в проекте нет.
      */
     public static function safePath(string $name): ?string
     {
@@ -625,8 +660,10 @@ final class SystemUpdate
             return null;
         }
 
+        $lowered = strtolower($normalized);
+
         foreach (self::FORBIDDEN as $forbidden) {
-            if (str_starts_with($normalized, $forbidden)) {
+            if (str_starts_with($lowered, strtolower($forbidden))) {
                 return null;
             }
         }
@@ -645,7 +682,7 @@ final class SystemUpdate
      * обновление не работало вовсе, а в журнале не было ничего, потому что
      * запись туда стоит только на успешном конце пути.
      */
-    private function download(string $url, string $target): void
+    private function download(string $url, string $target, string $digest = ''): void
     {
         $body = $this->fetch($url, 120, $target);
 
@@ -668,6 +705,83 @@ final class SystemUpdate
         if ($size > self::MAX_ASSET_BYTES) {
             throw new RuntimeException('Архив релиза слишком большой: ' . round($size / 1024 / 1024) . ' МБ.');
         }
+
+        /*
+         * Контрольная сумма — до распаковки.
+         *
+         * Сумму отдал GitHub вместе со сведениями о релизе, и сверяется она с
+         * тем, что реально легло на диск: обрыв загрузки, подмена файла другим
+         * ассетом или байт в середине потока — всё это отказ, а не обновление.
+         * Распаковки при отказе не будет вовсе: проверка стоит раньше неё.
+         *
+         * Суммы может не быть (исходный архив тега, старый формат ответа):
+         * тогда остаётся только TLS, и об этом сказано в журнале, а не
+         * промолчано.
+         */
+        if ($digest !== '') {
+            if (!self::fileMatchesDigest($target, $digest)) {
+                $this->log('Контрольная сумма архива не совпала с релизом: файл отвергнут'
+                    . ' (адрес: ' . $url . ', ждали: ' . $digest . ')');
+
+                throw new RuntimeException(
+                    'Скачанный архив не совпал с контрольной суммой релиза. Обновление не выполнено: '
+                    . 'файл мог повредиться при передаче. Повторите обновление; если отказ повторяется, '
+                    . 'сверьте выпуск на GitHub.'
+                );
+            }
+        } else {
+            $this->log('У архива релиза нет контрольной суммы: целостность держится'
+                . ' только на TLS-соединении (адрес: ' . $url . ')');
+        }
+    }
+
+    /**
+     * Алгоритм контрольной суммы в записи «sha256:hex…».
+     *
+     * null — запись не разобрана: нет двоеточия, алгоритма нет в этой сборке
+     * PHP или шестнадцатеричная часть не той длины. Проверка длины по самому
+     * алгоритму, а не по списку известных: единое правило для любого алгоритма.
+     */
+    public static function digestAlgorithm(string $digest): ?string
+    {
+        $colon = strpos($digest, ':');
+
+        if ($colon === false) {
+            return null;
+        }
+
+        $algo = strtolower(substr($digest, 0, $colon));
+        $value = substr($digest, $colon + 1);
+
+        if (!in_array($algo, hash_algos(), true)) {
+            return null;
+        }
+
+        return is_string($value)
+            && ctype_xdigit($value)
+            && strlen($value) === strlen(hash($algo, ''))
+            ? $algo
+            : null;
+    }
+
+    /**
+     * Совпадает ли файл с контрольной суммой вида «sha256:hex…».
+     *
+     * Сравнение через hash_equals: одинаковая длина и одинаковое время на
+     * совпадение и на расхождение, чтобы время проверки ничего не подсказывало.
+     */
+    public static function fileMatchesDigest(string $file, string $digest): bool
+    {
+        $algo = self::digestAlgorithm($digest);
+
+        if ($algo === null || !is_file($file)) {
+            return false;
+        }
+
+        $actual = hash_file($algo, $file);
+        $expected = substr($digest, strpos($digest, ':') + 1);
+
+        return is_string($actual) && hash_equals($expected, $actual);
     }
 
     /**
@@ -907,8 +1021,13 @@ final class SystemUpdate
     /**
      * Найти в релизе готовый архив.
      *
+     * Контрольная сумма берётся рядом с адресом: GitHub отдаёт её в поле
+     * `digest` того же ассета. Старые ответы GitHub и исходные архивы тега
+     * поля могут не иметь — пустая строка означает «сверять не с чем», и это
+     * не повод отказываться от обновления.
+     *
      * @param list<mixed> $assets
-     * @return array{url:string,name:string}|null
+     * @return array{url:string,name:string,digest:string}|null
      */
     private function releaseAsset(array $assets): ?array
     {
@@ -928,7 +1047,11 @@ final class SystemUpdate
                 continue;
             }
 
-            return ['url' => $url, 'name' => $name];
+            return [
+                'url'    => $url,
+                'name'   => $name,
+                'digest' => (string) ($asset['digest'] ?? ''),
+            ];
         }
 
         return null;

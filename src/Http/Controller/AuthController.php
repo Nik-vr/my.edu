@@ -22,6 +22,7 @@ use MyEdu\Core\Request;
 use MyEdu\Core\Response;
 use MyEdu\Core\Session;
 use MyEdu\Core\View;
+use MyEdu\Http\Controller\Panel\StudentController;
 use MyEdu\Ui\Messages;
 
 /**
@@ -284,6 +285,13 @@ public function showLogin(Request $request): Response
         }
 
         $this->session->remove('last_identifier');
+        /*
+         * Выданные пароли — собственность прежней личности: сессия при входе
+         * не разрушается, а перерождается с тем же содержимым, и без этой
+         * строки пароли, напечатанные сотрудником на общем компьютере, дожили
+         * бы до ученической сессии того же браузера.
+         */
+        $this->session->remove(StudentController::ISSUED_PASSWORDS_KEY);
         $intended = $this->session->pull('_intended');
 
         return $this->redirect(is_string($intended) && $intended !== '' ? $intended : 'portal');
@@ -309,6 +317,8 @@ public function showLogin(Request $request): Response
             return $this->redirect('login');
         }
 
+        // См. studentLogin(): смена личности уносит выданные пароли с собой.
+        $this->session->remove(StudentController::ISSUED_PASSWORDS_KEY);
         $intended = $this->session->pull('_intended');
 
         return $this->redirect(is_string($intended) && $intended !== '' ? $intended : 'portal');

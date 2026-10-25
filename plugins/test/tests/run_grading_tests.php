@@ -771,6 +771,66 @@ $t->equals(0.0, $empty->maxScore, 'пустой тест даёт нулевой
 $t->equals(0.0, $empty->percent, 'нулевой максимум не вызывает деления на ноль');
 $t->equals(2, $empty->grade, 'пустой тест даёт оценку 2, а не исключение');
 
+$t->group('Вырожденный вопрос не делит на ноль');
+
+/*
+ * Вес и правильный ответ живут в базе, куда может дотянуться и правка руками.
+ * Доли и штрафы считаются делением на вес и на число правильных вариантов,
+ * поэтому вырожденный вопрос обязан отвечать «не отвечено», а не ронять
+ * проверку попытки целиком.
+ */
+$zeroWeight = $makeQuestion('multiple_choice', ['correct' => ['a', 'c'], 'partial' => true], $opts(['a', 'b', 'c', 'd']), 0.0);
+
+$t->is(!$registry->get('multiple_choice')->grade($zeroWeight, ['a', 'b'])->isCorrect, 'несколько ответов при нулевом весе — не отвечено, а не сбой');
+$t->equals(0.0, $registry->get('multiple_choice')->grade($zeroWeight, ['a', 'b'])->score, 'нулевому весу отвечает нулевой балл');
+
+$noCorrect = $makeQuestion('multiple_choice', ['correct' => [], 'partial' => true], $opts(['a', 'b', 'c']));
+
+$t->is(!$registry->get('multiple_choice')->grade($noCorrect, ['a'])->isCorrect, 'несколько ответов без правильных — не отвечено, а не сбой');
+
+$zeroWeightMatching = $makeQuestion('matching', ['pairs' => ['l1' => 'r1', 'l2' => 'r2'], 'partial' => true],
+    array_merge($opts(['l1', 'l2'], 'left'), $opts(['r1', 'r2'], 'right')), 0.0);
+
+$t->is(!$registry->get('matching')->grade($zeroWeightMatching, ['l1' => 'r1', 'l2' => 'r2'])->isCorrect,
+    'соответствие при нулевом весе — не отвечено, а не сбой');
+
+$emptyMatching = $makeQuestion('matching', ['pairs' => []], $opts(['l1', 'l2'], 'left'));
+
+$t->is(!$registry->get('matching')->grade($emptyMatching, ['l1' => 'r1'])->isCorrect, 'соответствие без пар — не отвечено, а не сбой');
+
+$t->group('Перемешивание вариантов');
+
+/*
+ * Порядок закреплён за попыткой: тот же вопрос при том же seed даёт тот же
+ * порядок, а два разных вопроса одной попытки с одинаковым числом вариантов —
+ * разные. Раньше генератор сеялся одним и тем же числом на каждый вопрос, и
+ * одинаковые по длине списки перемешивались одинаково: на доске из трёх
+ * вопросов с четырьмя вариантами каждый стоял в одном и том же «случайном»
+ * порядке.
+ */
+$shuffleFirst = $makeQuestion('single_choice', ['correct' => 'a'], $opts(['a', 'b', 'c', 'd', 'e']), 1.0, 1);
+$shuffleSecond = $makeQuestion('single_choice', ['correct' => 'a'], $opts(['a', 'b', 'c', 'd', 'e']), 1.0, 2);
+
+$seed = 424242;
+
+$firstOrder = array_map(
+    static fn (array $o): string => (string) $o['value'],
+    $shuffleFirst->withRuntime($seed, true)->payload()['options']
+);
+$secondOrder = array_map(
+    static fn (array $o): string => (string) $o['value'],
+    $shuffleSecond->withRuntime($seed, true)->payload()['options']
+);
+
+$t->is($firstOrder !== $secondOrder, 'два вопроса одной попытки перемешаны по-разному');
+
+$firstAgain = array_map(
+    static fn (array $o): string => (string) $o['value'],
+    $shuffleFirst->withRuntime($seed, true)->payload()['options']
+);
+
+$t->equals($firstOrder, $firstAgain, 'тот же вопрос при том же seed даёт тот же порядок');
+
 $t->group('Округление баллов');
 
 $t->equals(1.23, GradeCalculator::roundScore(1.2345), 'округление до сотых');

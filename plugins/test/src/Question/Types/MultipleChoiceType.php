@@ -116,6 +116,16 @@ final class MultipleChoiceType implements QuestionTypeInterface
         $correctKeys = $this->correctKeys($question);
         $chosen = is_array($answer) ? $answer : [];
 
+        /*
+         * Вырожденный вопрос не делится: вес нулевой (база правлена руками)
+         * или правильные варианты не заданы. Доли и штрафы считаются делением
+         * на вес и на число правильных — без этой строки ответ уронил бы
+         * проверку попытки вместо честного «не отвечено».
+         */
+        if ($max <= 0.0 || $correctKeys === []) {
+            return QuestionGrade::wrong($max, $expected);
+        }
+
         $hits = array_values(array_intersect($chosen, $correctKeys));
         $misses = array_values(array_diff($chosen, $correctKeys));
         $missed = array_values(array_diff($correctKeys, $chosen));

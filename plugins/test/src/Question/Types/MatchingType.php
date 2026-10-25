@@ -176,6 +176,15 @@ final class MatchingType implements QuestionTypeInterface
         $correct = $this->pairs($question);
         $chosen = is_array($answer) ? $answer : [];
 
+        /*
+         * Вырожденный вопрос не делится: вес нулевой или пары не заданы
+         * (сломанный конфиг). Доля считается делением на число пар — без этой
+         * строки ответ уронил бы проверку попытки вместо честного «не отвечено».
+         */
+        if ($max <= 0.0 || $correct === []) {
+            return QuestionGrade::wrong($max, $expected);
+        }
+
         // Считаем, сколько раз каждый элемент правой колонки использован:
         // один и тот же элемент дважды не считается за две верные пары.
         $usage = array_count_values(array_map('strval', array_values($chosen)));

@@ -488,6 +488,14 @@ final class Kernel
         '/confirm/resend'  => 'auth',
         '/auth/forgot'     => 'password_reset',
         '/panel/editor/image' => 'image_upload',
+        /*
+         * Загрузка архива переноса — до 64 МБ на запрос, и чтение идёт в
+         * память, когда расширения zip на сервере нет. Право tests.manage
+         * ограничивает круг, но не поведение одного зациклившегося скрипта:
+         * счётчик останавливает поток, а не работу.
+         */
+        '/panel/assignments/import/upload'    => 'transfer_upload',
+        '/panel/assignments/import/otp/upload' => 'transfer_upload',
     ];
 
     /**

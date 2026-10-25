@@ -32,6 +32,14 @@ final class StudentController
 {
     use ControllerHelpers;
 
+    /**
+     * Ключ сессии, где живут выданные пароли до печати.
+     *
+     * Пароли лежат в открытом виде, и ключ нужен не только здесь, но и при
+     * входе: смена личности обязана унести их с собой. Одно имя — одно место.
+     */
+    public const ISSUED_PASSWORDS_KEY = 'issued_passwords';
+
     public function __construct(
         private readonly App $app,
         private readonly Database $db,
@@ -664,13 +672,13 @@ private function rememberIssuedPassword(int $studentId, string $password): void
         return;
     }
 
-    $shown = $this->session->get('issued_passwords', []);
+    $shown = $this->session->get(self::ISSUED_PASSWORDS_KEY, []);
     $shown[(string) $studentId] = [
         'id'       => $studentId,
         'password' => $password,
     ];
 
-    $this->session->set('issued_passwords', array_slice($shown, -200, null, true));
+    $this->session->set(self::ISSUED_PASSWORDS_KEY, array_slice($shown, -200, null, true));
 }
 
 private function credentialsSheet(array $class, array $rows): Response

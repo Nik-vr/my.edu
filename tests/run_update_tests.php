@@ -208,6 +208,26 @@ $t->equals(null, MyEdu\Core\SystemUpdate::safePath('var/backup/dump.sql'), 'ко
 $t->equals(null, MyEdu\Core\SystemUpdate::safePath('config/config.local.php'), 'настройки с доступами к базе не трогаются');
 $t->equals(null, MyEdu\Core\SystemUpdate::safePath('public/uploads/picture.png'), 'загруженные картинки не трогаются');
 $t->equals(null, MyEdu\Core\SystemUpdate::safePath('.git/config'), 'каталог git не трогается');
+/*
+ * Регистр в запрещённых путях.
+ *
+ * Сверка без учёта регистра: на Windows каталоги не различают буквы, и
+ * `VAR\log` с проверкой в одном регистре прошёл бы мимо списка, а на диске
+ * оказался бы журналом школы. Файлов проекта с заглавных букв в этих каталогах
+ * нет, поэтому единое правило ничего честного не отрезает.
+ */
+$t->equals(null, MyEdu\Core\SystemUpdate::safePath('VAR/log/error.log'), 'журналы не трогаются и в другом регистре');
+$t->equals(null, MyEdu\Core\SystemUpdate::safePath('CONFIG/config.local.php'), 'настройки не трогаются и в другом регистре');
+/*
+ * Установщик на обновлённом сервере не нужен.
+ *
+ * Свежую установку он обслуживает и в релизном архиве остаётся, но база
+ * обновляемого сервера уже работает, а установщик умеет только создавать её
+ * на пустой. Без этого правила каждое обновление прикладывало бы точку входа
+ * к живому серверу — закрытую ключом, но лишнюю.
+ */
+$t->equals(null, MyEdu\Core\SystemUpdate::safePath('public/install.php'), 'установщик не распаковывается обновлением');
+$t->equals(null, MyEdu\Core\SystemUpdate::safePath('PUBLIC/INSTALL.PHP'), 'установщик не распаковывается и в другом регистре');
 
 /*
  * Результат скачивания архива: успех — это true, а не строка.
@@ -304,6 +324,48 @@ $t->is(is_file($target . '-tag/templates/panel/settings.php'), 'вложенны
 $t->is(!is_file($target . '-tag/config/config.local.php'), 'настройки с доступами к базе не записаны');
 
 /*
+ * Установщик пропускается распаковкой, а не записывается и удаляется.
+ *
+ * В архиве релиза он есть (свежая установка без него не обойдётся), но
+ * обновляемому серверу не нужен: проверка safePath выше отвергает путь,
+ * и здесь видно то же самое на живом пути распаковки.
+ */
+$withInstaller = Zip::write([
+    'src/Core/Version.php' => '<?php // версия',
+    'public/install.php'   => '<?php // установщик',
+]);
+
+$withInstallerResult = MyEdu\Core\SystemUpdate::install($withInstaller, $target . '-installer');
+
+$t->is(($withInstallerResult['ok'] ?? false) === true, 'архив с установщиком разложен частично');
+$t->equals(1, (int) ($withInstallerResult['files'] ?? 0), 'установщик не попал в разложенные файлы');
+$t->is(!is_file($target . '-installer/public/install.php'), 'установщика на обновлённом сервере нет');
+$t->is(is_file($target . '-installer/src/Core/Version.php'), 'остальные файлы разложены');
+
+/*
+ * Контрольная сумма архива релиза.
+ *
+ * Сумма приходит от GitHub вместе со сведениями о релизе и сверяется со
+ * скачанным файлом до распаковки: обрыв, подмена или байт в середине потока —
+ * отказ, а не обновление.
+ */
+$t->group('Контрольная сумма архива');
+
+$digestFile = (string) tempnam(sys_get_temp_dir(), 'myedu-digest-');
+file_put_contents($digestFile, 'hello');
+$goodDigest = 'sha256:' . hash('sha256', 'hello');
+$badDigest = 'sha256:' . str_repeat('0', 64);
+
+$t->equals('sha256', MyEdu\Core\SystemUpdate::digestAlgorithm($goodDigest), 'сумма разбирается: алгоритм узнаан');
+$t->equals(null, MyEdu\Core\SystemUpdate::digestAlgorithm('sha256:abc'), 'обрезанная сумма не разбирается');
+$t->equals(null, MyEdu\Core\SystemUpdate::digestAlgorithm('не-сумма'), 'запись без двоеточия не разбирается');
+$t->equals(null, MyEdu\Core\SystemUpdate::digestAlgorithm('crc-unknown:0123456789'), 'неизвестный алгоритм не разбирается');
+$t->is(MyEdu\Core\SystemUpdate::fileMatchesDigest($digestFile, $goodDigest), 'скачанный файл совпадает с суммой релиза');
+$t->is(!MyEdu\Core\SystemUpdate::fileMatchesDigest($digestFile, $badDigest), 'подменённый или обрывшийся файл отвергнут');
+$t->is(!MyEdu\Core\SystemUpdate::fileMatchesDigest($digestFile . '-нет', $goodDigest), 'несуществующий файл отвергнут');
+@unlink($digestFile);
+
+/*
  * Кнопка обновления и её подтверждение.
  *
  * Окно подтверждения без своей подписи показывает в кнопке слово «Удалить» —
@@ -348,6 +410,22 @@ $t->is(
 $t->is(
     str_contains($settingsTemplate, 'Установлена последняя версия'),
     'обычная формулировка про последнюю версию осталась на месте'
+);
+
+/*
+ * Выключенная проверка сертификата GitHub не молчит.
+ *
+ * Настройка живёт в config.local.php, который страница не читает, — о ней
+ * говорит контроллер, а шаблон обязан показать напоминание, пока проверка
+ * выключена: обновление кладёт на сервер файлы всего сайта.
+ */
+$t->is(
+    str_contains($settingsTemplate, 'Проверка сертификата GitHub выключена'),
+    'о выключенной проверке сертификата сказано в блоке обновления'
+);
+$t->is(
+    str_contains($settingsTemplate, '$tlsCheckDisabled'),
+    'шаблон читает состояние проверки из контроллера, а не угадывает'
 );
 
 /*

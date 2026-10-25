@@ -79,6 +79,14 @@ final class UserController
             'version'     => $this->update->currentVersion(),
             'hasUpdate'   => $this->update->hasUpdate($release),
             'releaseOlder' => $this->update->isReleaseOlder($release),
+            /*
+             * Проверка сертификата GitHub выключается решением владельца и
+             * живёт в конфиге, о котором страница ничего не знает. Сказать о
+             * выключенной проверке должен тот, кто видит блок обновления:
+             * иначе она остаётся выключенной ровно тогда, когда проверять
+             * важнее всего.
+             */
+            'tlsCheckDisabled' => $this->update->tlsCheckDisabled(),
             'mail'        => $this->mailSetupReport(),
             'notice'      => $this->session->pull('flash_notice'),
             'error'       => $this->session->pull('flash_error'),
