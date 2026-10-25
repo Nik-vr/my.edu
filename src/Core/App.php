@@ -323,7 +323,15 @@ if ($id === MailerFactory::class) {
         }
 
         return match ($id) {
-            Database::class => new Database($this->config->array('database')),
+            Database::class => new Database(
+                $this->config->array('database'),
+                /*
+                 * Пояс едет вместе с базой, а не читается в Database самом:
+                 * NOW() в запросах и date() в коде обязаны идти по одним
+                 * часам, и решает это одно место — здесь.
+                 */
+                $this->config->string('app.timezone', 'UTC')
+            ),
             Session::class  => new Session(
                 $this->config->bool('session.secure_cookies'),
                 $this->config->string('session.save_path'),

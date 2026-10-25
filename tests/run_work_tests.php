@@ -49,6 +49,13 @@ $app = App::boot($rootDir);
 /** @var Database $db */
 $db = $app->get(Database::class);
 
+/*
+ * Пояс приложения ставится здесь тем же вызовом, что и в ядре HTTP:
+ * без него strtotime() ниже разбирал бы NOW() в поясе CLI (UTC), и часы
+ * базы и PHP расходились бы на три часа даже при верной настройке.
+ */
+date_default_timezone_set($app->config()->string('app.timezone', 'UTC'));
+
 assertTestDatabase($db);
 
 /*
@@ -118,6 +125,39 @@ $t = new TestRunner();
 
 echo "База: " . $db->value('SELECT DATABASE()') . "\n";
 echo "\033[33mСкрипт очищает работы и попытки.\033[0m\n\n";
+
+// ------------------------------------------------------ часы соединения
+
+/*
+ * Часы базы и PHP — в одном поясе.
+ *
+ * Приложение пишет даты через date() по app.timezone, а окна доступности
+ * выдач и штампы базы считают NOW(). Пояс MySQL на хостинге свой (чаще UTC),
+ * и без синхронизации окна сдвигались на несколько часов. Форматтер
+ * проверяется на поясах без перехода на летнее время — ожидания постоянны
+ * в любой день прогона.
+ */
+$t->group('Часовой пояс соединения с базой');
+
+$t->equals('+03:00', Database::timezoneOffsetSql('Europe/Moscow'),
+    'Москва даёт смещение +03:00');
+$t->equals('+05:45', Database::timezoneOffsetSql('Asia/Kathmandu'),
+    'полуторачасовое смещение укладывается в формат MySQL');
+$t->equals('-07:00', Database::timezoneOffsetSql('America/Phoenix'),
+    'западное смещение пишется со знаком минус');
+$t->equals('+00:00', Database::timezoneOffsetSql('UTC'), 'UTC даёт +00:00');
+$t->equals(null, Database::timezoneOffsetSql(''), 'пустой пояс — не задан');
+$t->equals(null, Database::timezoneOffsetSql('Nowhere/Broken'),
+    'несуществующий пояс не роняет соединение');
+
+$expectedOffset = Database::timezoneOffsetSql($app->config()->string('app.timezone', 'UTC'));
+
+$t->equals($expectedOffset, $db->value('SELECT @@session.time_zone'),
+    'сессия базы живёт в поясе приложения, а не в поясе сервера');
+$t->is(
+    abs((int) strtotime((string) $db->value('SELECT NOW()')) - time()) < 120,
+    'NOW() базы и time() PHP идут по одним часам'
+);
 
 // --------------------------------------------------------------- очистка
 

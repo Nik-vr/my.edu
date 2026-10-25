@@ -23,8 +23,12 @@ final class Database
 
     private int $savepointCounter = 0;
 
-    public function __construct(array $config)
+    /** Пояс приложения из app.timezone: пустая строка — не задан, базу не трогаем. */
+    private readonly string $timezone;
+
+    public function __construct(array $config, string $timezone = '')
     {
+        $this->timezone = trim($timezone);
         $charset = (string) ($config['charset'] ?? 'utf8mb4');
         $name = (string) ($config['name'] ?? '');
         $user = (string) ($config['user'] ?? 'root');
@@ -129,6 +133,27 @@ final class Database
 
         // Единый формат дат и чисел во всём приложении.
         $this->pdo->exec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'");
+
+        /*
+         * Часы базы — в поясе приложения.
+         *
+         * Приложение пишет все даты функцией date() по app.timezone, а окна
+         * доступности выдач и штампы базы считают свои NOW(). Пояс MySQL на
+         * хостинге свой и чаще всего UTC — без этой строки окна «с 1 по 10
+         * число» сдвигались на несколько часов, а сравнение со сроком сдачи
+         * шло по двум разным часам.
+         *
+         * Смещением, а не именем пояса: именованные пояса требуют таблиц
+         * часовых поясов в MySQL, которых на шаред-хостинге обычно нет, а
+         * смещение '+03:00' понимает любой сервер. Смещение считается на
+         * момент соединения, сессия живёт один запрос — смена сезона в течение
+         * дня не успевает сделать его неверным.
+         */
+        $offset = self::timezoneOffsetSql($this->timezone);
+
+        if ($offset !== null) {
+            $this->pdo->exec("SET SESSION time_zone = '" . $offset . "'");
+        }
     }
 
     /**
@@ -445,5 +470,37 @@ final class Database
     private function quoteIdent(string $identifier): string
     {
         return '`' . str_replace('`', '', $identifier) . '`';
+    }
+
+    /**
+     * Смещение часового пояса в виде, который понимает MySQL: '+03:00'.
+     *
+     * null — пояс не задан или не существует. Несуществующий пояс не роняет
+     * соединение: тем же значением приложение уже вызывало
+     * date_default_timezone_set(), предупредило и осталось в UTC — база
+     * подстраивается под то же решение, а не решает заново.
+     *
+     * Пояса без перехода на летнее время дают постоянное смещение; пояса с
+     * переходом дают смещение текущего момента — см. комментарий в connect().
+     */
+    public static function timezoneOffsetSql(string $timezone): ?string
+    {
+        $timezone = trim($timezone);
+
+        if ($timezone === '') {
+            return null;
+        }
+
+        try {
+            $zone = new \DateTimeZone($timezone);
+            $seconds = $zone->getOffset(new \DateTimeImmutable('now', $zone));
+        } catch (\Exception) {
+            return null;
+        }
+
+        $sign = $seconds < 0 ? '-' : '+';
+        $abs = abs($seconds);
+
+        return sprintf('%s%02d:%02d', $sign, intdiv($abs, 3600), intdiv($abs % 3600, 60));
     }
 }
