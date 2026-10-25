@@ -14,6 +14,7 @@ use MyEdu\Core\Response;
 use MyEdu\Core\TextFragment;
 use MyEdu\Core\View;
 use MyEdu\Plugin\AssessmentPlugin;
+use MyEdu\Plugin\AttemptAwarePlugin;
 use MyEdu\Plugin\AttemptContext;
 use MyEdu\Plugin\EditorContext;
 use MyEdu\Plugin\ItemGrade;
@@ -39,7 +40,7 @@ use RuntimeException;
  * Ядро о вариативной задаче не знает: оно видит объявленный вид задания и
  * результат проверки.
  */
-final class VariablePlugin implements AssessmentPlugin, PortablePlugin
+final class VariablePlugin implements AssessmentPlugin, PortablePlugin, AttemptAwarePlugin
 {
     /** Вид задания, который видит учитель в списке типов. */
     public const KIND = 'generated';
@@ -425,6 +426,17 @@ public function taskPreview(TaskRef $task): string
     /**
      * Позиция работы снята — прохождение по ней больше не нужно.
      */
+    /**
+     * Попытка работы удалена: убрать свои прохождения.
+     *
+     * Таблица прохождений не ссылается на попытку ядра внешним ключом, и без
+     * этой уборки каждая проба оставляла бы здесь мёртвые строки.
+     */
+    public function deleteAttemptData(int $assignmentAttemptId): void
+    {
+        $this->attemptRepository()->deleteForAttempt($assignmentAttemptId);
+    }
+
     public function deleteItem(TaskRef $task, int $itemId): void
     {
         $this->attemptRepository()->deleteForItem($itemId);

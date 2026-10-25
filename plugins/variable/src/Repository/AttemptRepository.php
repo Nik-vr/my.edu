@@ -146,4 +146,18 @@ final class AttemptRepository
             ['t' => $taskId]
         );
     }
+
+    /**
+     * Удаление прохождений попытки работы.
+     *
+     * Таблица не ссылается на попытку ядра внешним ключом, и при удалении
+     * попытки (тестовое прохождение) строки обязан убрать сам плагин.
+     */
+    public function deleteForAttempt(int $assignmentAttemptId): void
+    {
+        $this->db->run(
+            'DELETE FROM variable_item_attempts WHERE assignment_attempt_id = :attempt',
+            ['attempt' => $assignmentAttemptId]
+        );
+    }
 }

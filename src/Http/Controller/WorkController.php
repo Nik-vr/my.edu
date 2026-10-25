@@ -19,6 +19,7 @@ use MyEdu\Core\View;
 use MyEdu\Grading\GradeAggregator;
 use MyEdu\Http\Controller\ControllerHelpers;
 use MyEdu\Plugin\AssessmentPlugin;
+use MyEdu\Plugin\AttemptAwarePlugin;
 use MyEdu\Plugin\AttemptContext;
 use MyEdu\Plugin\PluginManager;
 use MyEdu\Plugin\TaskRef;
@@ -166,7 +167,7 @@ final class WorkController
          */
         if ($request->queryParam('trial') !== null && $actor !== null && !$actor->isStudent()) {
             $this->students->ensureTrial((string) ($this->auth->user()?->fullName ?? ''));
-            $this->assignments->deleteAttemptsOfStudent(StudentRepository::TRIAL_ID);
+            $this->deleteAttemptsOfStudent(StudentRepository::TRIAL_ID);
             $this->session->set('trial_for', $id);
         }
 
@@ -1525,7 +1526,7 @@ if ($this->expired($attempt)) {
             && $attempt['student_id'] !== null
             && (int) $attempt['student_id'] === StudentRepository::TRIAL_ID
         ) {
-            $this->assignments->deleteAttemptCascade($attemptId);
+            $this->deleteAttemptWithPluginData($attemptId);
         }
 
         if ((int) ($this->session->get('trial_attempt') ?? 0) === $attemptId) {
@@ -1534,6 +1535,55 @@ if ($this->expired($attempt)) {
 
         // beacon ответ не читает, но формат данных — тот, чего ждёт скрипт.
         return Response::json(['ok' => true]);
+    }
+
+    /**
+     * Удалить попытку со всеми следами, включая данные плагинов.
+     *
+     * Результаты позиций уходят каскадом по внешнему ключу вместе с попыткой,
+     * а таблицы плагинов на попытку ядра не ссылаются: их чистит сам плагин
+     * через AttemptAwarePlugin, и ядро здесь только передаёт номер. Плагин,
+     * реализующий интерфейс, обязан убирать строки по нему — раньше имя его
+     * таблицы было вписано в репозиторий ядра, и каждый новый плагин со своими
+     * прохождениями оставлял бы сирот, пока кто-нибудь не вспомнил про строку
+     * DELETE в ядре.
+     *
+     * Отказ плагина попытку не отменяет: она должна исчезнуть. Причина уходит
+     * в журнал плагинов, а строки плагина в этом случае остаются сиротами —
+     * та же цена, что и у забытой строки DELETE, но теперь видная в журнале.
+     *
+     * @param int $attemptId
+     */
+    private function deleteAttemptWithPluginData(int $attemptId): void
+    {
+        foreach ($this->plugins->all() as $plugin) {
+            if (!$plugin instanceof AttemptAwarePlugin) {
+                continue;
+            }
+
+            try {
+                $plugin->deleteAttemptData($attemptId);
+            } catch (\Throwable $e) {
+                $this->plugins->recordItemFailure($plugin->id(), $e);
+            }
+        }
+
+        $this->assignments->deleteAttempt($attemptId);
+    }
+
+    /**
+     * Удалить все попытки ученика — страховка перед новым тестовым проходом.
+     *
+     * Виртуальный ученик один на всю систему, и прежние его попытки
+     * принадлежат прошлым проходам (возможно, уже закрытым вкладкам).
+     *
+     * @param int $studentId
+     */
+    private function deleteAttemptsOfStudent(int $studentId): void
+    {
+        foreach ($this->assignments->attemptIdsOfStudent($studentId) as $attemptId) {
+            $this->deleteAttemptWithPluginData($attemptId);
+        }
     }
 
     /**

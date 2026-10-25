@@ -312,6 +312,22 @@ final class WorkItemRepository
         );
     }
 
+    /**
+     * Удаление прохождений попытки работы.
+     *
+     * Вызывается при удалении самой попытки (тестовое прохождение): таблица
+     * не ссылается на попытку ядра внешним ключом, и без этой уборки каждая
+     * проба оставляла бы здесь мёртвые строки. Ответы уходят каскадом по
+     * внешнему ключу на прохождение.
+     */
+    public function deleteForAttempt(int $assignmentAttemptId): void
+    {
+        $this->db->run(
+            'DELETE FROM test_item_attempts WHERE assignment_attempt_id = :attempt',
+            ['attempt' => $assignmentAttemptId]
+        );
+    }
+
     private static function encode(mixed $value): ?string
     {
         $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

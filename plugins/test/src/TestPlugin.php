@@ -26,6 +26,7 @@ use MyEduPlugin\Test\Repository\TestRepository;
 use MyEduPlugin\Test\Repository\WorkItemRepository;
 use MyEduPlugin\Test\Work\WorkItemHandler;
 use MyEdu\Plugin\AssessmentPlugin;
+use MyEdu\Plugin\AttemptAwarePlugin;
 use MyEdu\Plugin\ClassAwarePlugin;
 use MyEdu\Plugin\AttemptContext;
 use MyEdu\Plugin\EditorContext;
@@ -48,7 +49,7 @@ use Throwable;
  * тестов и попыток, экраны учителя и ученика. Ядро о тесте не знает — оно
  * видит только объявленные виды заданий и результат проверки.
  */
-final class TestPlugin implements AssessmentPlugin, PortablePlugin, ClassAwarePlugin
+final class TestPlugin implements AssessmentPlugin, PortablePlugin, ClassAwarePlugin, AttemptAwarePlugin
 {
     /** Вид задания, который видит учитель в списке типов. */
     public const KIND = 'test';
@@ -672,6 +673,18 @@ public function canManageTask(TaskRef $task, int $userId): bool
      * повторном использовании того же номера позиции ученик увидел бы старые
      * ответы.
      */
+    /**
+     * Попытка работы удалена: убрать свои прохождения.
+     *
+     * Таблица прохождений не ссылается на попытку ядра внешним ключом, и без
+     * этой уборки каждое тестовое прохождение оставляло бы здесь мёртвые
+     * строки. Ответы уходят каскадом по внешнему ключу на прохождение.
+     */
+    public function deleteAttemptData(int $assignmentAttemptId): void
+    {
+        $this->workItemsRepository()->deleteForAttempt($assignmentAttemptId);
+    }
+
     public function deleteItem(TaskRef $task, int $itemId): void
     {
         $this->workItemsRepository()->deleteForItem($itemId);
