@@ -181,6 +181,13 @@ $total = (float) ($assignment['max_score_total'] ?? 0);
  <legend class="form-label">Что видит ученик</legend>
 
  <label class="check">
+ <?php /*
+  * Скрытый спутник перед чекбоксом: без него сервер не отличил бы форму,
+  * где галочки вовсе нет, от формы с снятой галочкой, — и любое сохранение
+  * шага мастера молча скрывало бы результат ученику (задача 2, 24.10.2026).
+  * Отмеченная галочка приходит второй и перекрывает ноль, снятая — одним нулём.
+  */ ?>
+ <input type="hidden" name="show_results" value="0">
  <input type="checkbox" name="show_results" <?= !empty($assignment['show_results']) ? 'checked' : '' ?>>
  Показывать разбор и оценку после сдачи
  </label>

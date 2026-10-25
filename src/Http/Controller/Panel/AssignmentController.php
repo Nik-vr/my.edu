@@ -222,13 +222,18 @@ public function create(Request $request): Response
          * Иначе новая работа отличалась бы от созданной прежним путём: у неё
          * были бы другие значения по умолчанию, и учитель увидел бы на
          * вкладке «Начало» то, чего не видел никогда.
+         *
+         * Показ результата здесь не перечислен намеренно: у нового черновика
+         * он берётся из настройки таблицы (1 — показывать). Раньше здесь стоял
+         * явный 0, и работы, созданные через «Составить работу», скрывали
+         * результат ученику, пока автор не заметил и не включил галочку на
+         * вкладке «Результат» — симптом владелец 24.10.2026 (задача 2).
          */
         $this->assignments->update([
             'title'        => 'Новая работа',
             'description'  => '',
             'subject_id'   => null,
             'parallel'     => null,
-            'show_results' => 0,
             'time_limit'   => null,
         ], ['id' => $id]);
 
@@ -411,7 +416,6 @@ public function saveNewStart(Request $request): Response
             'subject_id'   => $this->subjectId($request->postParam('subject_id')),
             'parallel'     => $this->parallel($request->postParam('parallel')),
             'grade_mode'   => $this->gradeMode($request->postParam('grade_mode')),
-            'show_results' => $request->postParam('show_results') === null ? 0 : 1,
             'time_limit'   => $this->timeLimit($request->postParam('time_limit')),
             /*
              * Шкалы оценок здесь нет намеренно. Поля границ живут только в
@@ -1190,7 +1194,7 @@ public function saveNewStart(Request $request): Response
             return $this->renderEdit($request, $id, 'result', [
                 'mode'         => $submission['mode'],
                 'values'       => $submission['values'],
-                'show_results' => $request->postParam('show_results') !== null,
+                'show_results' => $request->postParam('show_results') === '1',
                 'bad_from'     => $submission['check']['badFrom'],
                 'bad_to'       => $submission['check']['badTo'],
                 'messages'     => $submission['check']['messages'],
@@ -1261,7 +1265,6 @@ public function saveNewStart(Request $request): Response
             'description'  => trim((string) $request->postParam('description', '')),
             'subject_id'   => $this->subjectId($request->postParam('subject_id')),
             'parallel'     => $this->parallel($request->postParam('parallel')),
-            'show_results' => $request->postParam('show_results') === null ? 0 : 1,
             'time_limit'   => $this->timeLimit($request->postParam('time_limit')),
             /*
              * Порядок заданий для ученика.
@@ -1299,6 +1302,22 @@ public function saveNewStart(Request $request): Response
 
         if ($title !== null && trim((string) $title) !== '') {
             $data['title'] = $this->limit(trim((string) $title), 191);
+        }
+
+        /*
+         * Показ результата пишется только когда поле прислало само.
+         *
+         * У галочки на вкладке «Результат» есть скрытый спутник с нулём, и в
+         * общей форме редактора поле приходит всегда — отмеченная галочка
+         * перекрывает ноль, снятая остаётся нулём. А формы, где галочки вовсе
+         * нет (первый шаг мастера), поле не присылают вовсе — и раньше они
+         * молча писали сюда 0: работа, выставленная автором с показом
+         * результата, скрывала его от ученика после любого сохранения шага
+         * мастера. Такой случай поле не трогаем вовсе (владелец, 24.10.2026,
+         * задача 2: ученик не видел результат работы с порогами оценок).
+         */
+        if ($request->postParam('show_results') !== null) {
+            $data['show_results'] = $request->postParam('show_results') === '1' ? 1 : 0;
         }
 
         $this->assignments->update($data, ['id' => $assignmentId]);
@@ -2105,8 +2124,11 @@ public function moveRowInWork(Request $request, array $params): Response
                 $submission['check'],
                 // Отметка «показывать результат» переносится с формы: при
                 // ошибке границ форма возвращается, и галочка иначе сбросилась
-                // бы молча, будто автор её и не ставил.
-                $request->postParam('show_results') !== null
+                // бы молча, будто автор её и не ставил. `=== '1'`, а не
+                // `!== null`: у галочки есть скрытый спутник, и поле приходит
+                // всегда — по одному наличию снятая галочка читалась бы
+                // отмеченной.
+                $request->postParam('show_results') === '1'
             );
         }
 
@@ -2212,12 +2234,23 @@ public function moveRowInWork(Request $request, array $params): Response
      */
     private function saveCriteria(Request $request, array $submission, int $assignmentId): void
     {
-        $this->assignments->update([
+        $data = [
             'criteria_mode' => $submission['mode'],
             'grade_mode'    => $this->gradeMode($request->postParam('grade_mode')),
-            'show_results'  => $request->postParam('show_results') === null ? 0 : 1,
             'criteria'      => $this->criteria($request, $submission['mode']),
-        ], ['id' => $assignmentId]);
+        ];
+
+        /*
+         * Показ результата — та же правило, что в `applyStartFields`: поле
+         * пишется только когда прислало само. Форма этой вкладки несёт
+         * скрытого спутника галочки, поэтому в обычном сохранении значение
+         * приходит всегда, а форма без галочки поле не трогает.
+         */
+        if ($request->postParam('show_results') !== null) {
+            $data['show_results'] = $request->postParam('show_results') === '1' ? 1 : 0;
+        }
+
+        $this->assignments->update($data, ['id' => $assignmentId]);
     }
 
     /**

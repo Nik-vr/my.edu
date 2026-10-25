@@ -32,4 +32,5 @@ return [
     'cancel' => '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8"/></svg>',
     'more' => '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="3" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="8" cy="13" r="1.2"/></svg>',
     'close' => '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    'question' => '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M8.1 7.9a2 2 0 1 1 2.6 1.9c-.5.25-.7.6-.7 1.1v.3"/><circle cx="10" cy="14.2" r=".7" fill="currentColor" stroke="none"/></svg>',
 ];
