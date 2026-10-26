@@ -255,6 +255,16 @@ $editTitleUrl = 'panel/assignments/' . $assignmentId . '/edit?edit=title';
 <form method="post" id="work-editor-form" class="work-editor-form" data-scale-switch
  action="<?= $view->e($view->url($saveUrl)) ?>">
 <?= $view->raw($view->csrfField()) ?>
+<?php /*
+ Намерение переключателя «Опубликовать» из шапки.
+
+ Переключатель стоит в отдельной форме и сам отправить ничего не может, а
+ общая форма — единственная, где лежат настройки вкладок. Поэтому публикация
+ идёт этой формой с этим полем: настройки пишутся до того, как сервер решит,
+ можно ли публиковать, и отказ не стоит автору введённых значений (задача 2
+ ручного тестирования, 26.10.2026). Пустое значение — обычное сохранение.
+*/ ?>
+<input type="hidden" name="publish_intent" value="">
 
 <section class="work-tabs__pane<?= $workTab === 'start' ? ' active' : '' ?>"
  id="work-pane-start" role="tabpanel" aria-labelledby="work-tab-start">

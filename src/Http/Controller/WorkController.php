@@ -71,12 +71,85 @@ final class WorkController
      */
     private array $itemCountCache = [];
 
+    /**
+     * Видимость комментария по номерам попыток этого запроса.
+     *
+     * Тот же приём, что и с числом позиций: контекст собирается на каждое
+     * задание, а решение об одном и том же — одно на всю страницу.
+     *
+     * @var array<int,bool>
+     */
+    private array $explanationCache = [];
+
     private function itemCount(int $assignmentId): int
     {
         $id = (int) $assignmentId;
 
         return $this->itemCountCache[$id]
             ??= $this->assignments->countItems($id);
+    }
+
+    /**
+     * Показывать ли в разборе этой попытки комментарий автора.
+     *
+     * Правило (задача 1 ручного тестирования, 26.10.2026): комментарий
+     * открывается только после последней попытки, а при неограниченном числе
+     * попыток — никогда. Комментарий объясняет, почему ответ верный, и
+     * до последней попытки это готовый ответ: его прочитают, поймут и возьмут
+     * следующую попытку с преимуществом, которого у одноклассников нет.
+     *
+     * Лимит принадлежит выдаче, а не работе, — и спрашивается он у той же
+     * выдачи, по которой ученик работу получил (`attemptLimit`). Сотрудник
+     * лимитом не ограничен вовсе, и для него комментарий открыт сразу:
+     * проверять работу учителя, спрятав от него объяснение, бессмысленно.
+     *
+     * @param array<string,mixed> $attempt
+     */
+    private function explanationsVisible(array $attempt): bool
+    {
+        $attemptId = (int) ($attempt['id'] ?? 0);
+
+        if (array_key_exists($attemptId, $this->explanationCache)) {
+            return $this->explanationCache[$attemptId];
+        }
+
+        return $this->explanationCache[$attemptId] = $this->computeExplanationsVisible($attempt);
+    }
+
+    /** @param array<string,mixed> $attempt */
+    private function computeExplanationsVisible(array $attempt): bool
+    {
+        $actor = $this->auth->actor();
+
+        if ($actor === null || !$actor->isStudent() || $this->auth->can(Role::TESTS_REPEAT)) {
+            return true;
+        }
+
+        /*
+         * Пробное прохождение (`?trial=1`) идёт под виртуальным учеником,
+         * у которого своей выдачи нет, а значит нет и лимита. Для учителя,
+         * проверяющего работу на себе, это выглядело бы как «неограниченное
+         * число попыток», то есть комментарий пропал бы ровно там, где его
+         * ждут больше всего — при отладке задания.
+         */
+        if ((int) ($attempt['student_id'] ?? 0) === StudentRepository::TRIAL_ID) {
+            return true;
+        }
+
+        $assignmentId = (int) $attempt['assignment_id'];
+        $limit = $this->assignments->attemptLimit($assignmentId, $actor);
+
+        // Число попыток не ограничено: ждать последней нечего.
+        if ($limit === null) {
+            return false;
+        }
+
+        /*
+         * Последняя попытка — та, после которой другой уже не будет: лимит
+         * исчерпан. Счётчик включает и текущую, поэтому на результате
+         * последней попытки равенство достигается ровно на ней.
+         */
+        return $this->assignments->countAttempts($assignmentId, $actor) >= $limit;
     }
 
     /**
@@ -958,7 +1031,8 @@ if ($this->expired($attempt)) {
             $this->auth,
             $includeSubmittedInput ? $this->failedAnswer($attempt, $item) : [],
             $this->remainingSeconds($attempt),
-            (int) ($attempt['no_copy'] ?? 0) === 1
+            (int) ($attempt['no_copy'] ?? 0) === 1,
+            $this->explanationsVisible($attempt)
         );
     }
 

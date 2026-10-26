@@ -388,14 +388,47 @@ function dependentFields(form, name) {
 
     /*
      * Поля, которые проверяем: не скрытые, не отключённые и не вне формы.
+     *
+     * Второй набор шкалы на вкладке «Результат» проверке не подлежит. Режимов
+     * два — «по проценту» и «по баллам», — и виден всегда только тот, который
+     * выбран, а второй остаётся в разметке, чтобы введённое в него не
+     * пропадало при переключении. Проверять его значило бы: выбрал человек
+     * проценты, а блокирует сохранение пустая колонка баллов, которой он и не
+     * касался, причём блокирует ошибкой у поля, которого не видно. Правило
+     * шкалы одно и у сервера — он читает поля выбранного режима (`criteriaSubmission`
+     * в редакторе работы), и клиентская проверка здесь не отстаёт от него.
      */
     function fieldsOf(form) {
         return Array.prototype.filter.call(
             form.querySelectorAll('input, select, textarea'),
             function (field) {
-                return field.type !== 'hidden' && !field.disabled && field.name !== '_token';
+                if (field.type === 'hidden' || field.disabled || field.name === '_token') {
+                    return false;
+                }
+
+                return !outsideChosenScale(form, field);
             }
         );
+    }
+
+    /**
+     * Поле лежит в наборе шкалы, который автор сейчас не выбирал.
+     *
+     * Режим читается из самой формы, а не из CSS: правило вида
+     * `:has(:checked)` показывает набор на экране, но браузерная проверка о
+     * нём не знает, и сверяться пришлось бы с вычисленным стилем — то есть с
+     * оформлением вместо смысла.
+     */
+    function outsideChosenScale(form, field) {
+        var set = field.closest('[data-scale-set]');
+
+        if (!set) {
+            return false;
+        }
+
+        var picked = form.querySelector('input[name="criteria_mode"]:checked');
+
+        return picked !== null && set.getAttribute('data-scale-set') !== picked.value;
     }
 
     /*

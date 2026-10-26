@@ -306,6 +306,12 @@ $itemAttemptId = (int) $itemAttempt['id'];
  'maxScore' => $grade->maxScore,
  'needsReview' => $grade->needsReview,
  'error' => is_string($grade->snapshot['error'] ?? null) ? $grade->snapshot['error'] : null,
+ /*
+ * Комментарий автора открывается не всегда: решение за ядром, оно знает
+ * лимит попыток и выдачу. Плагину отдаётся готовый ответ — «показывать
+ * или нет», и спорить о нём здесь не о чем.
+ */
+ 'showExplanation' => $context->showExplanations,
  ], ''));
  }
 

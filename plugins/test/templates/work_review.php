@@ -18,6 +18,7 @@ declare(strict_types=1);
  * @var float $maxScore
  * @var bool $needsReview
  * @var ?string $error
+ * @var bool $showExplanation комментарий автора: только после последней попытки
  */
 $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($value, 1, ',', ''), '0'), ',');
 ?>
@@ -67,7 +68,16 @@ $formatScore = static fn (float $value): string => rtrim(rtrim(number_format($va
  <dd><?= $view->e($item['expected_text'] ?? '—') ?></dd>
  </div>
 
- <?php if (!empty($item['explanation'])): ?>
+ <?php /*
+  * Комментарий автора к правильному ответу — только после последней попытки.
+  *
+  * До неё комментарий превращает разбор в подсказку: ученик прочитал, почему
+  * ответ верный, и берёт следующую попытку уже с готовым ключом. При
+  * неограниченном числе попыток комментарий не показывается вовсе — иначе
+  * первой же попыткой ограничение перестаёт быть ограничением. Решение
+  * приходит из ядра (`AttemptContext::showExplanations`), плагин читает.
+  */ ?>
+ <?php if (!empty($showExplanation) && !empty($item['explanation'])): ?>
  <div class="work-review__row">
  <dt>Комментарий</dt>
  <dd><?= $view->e($item['explanation']) ?></dd>

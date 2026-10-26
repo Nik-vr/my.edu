@@ -6,7 +6,6 @@ use MyEdu\Ui\Ui;
 use MyEduPlugin\Test\Question\Question;
 use MyEduPlugin\Test\Question\Types\NumericType;
 use MyEduPlugin\Test\Question\Types\OrderingType;
-use MyEduPlugin\Test\Question\Types\TextAnswerType;
 
 /**
  * Поля вопроса.
@@ -325,43 +324,40 @@ $optionRows = max(3, count($texts));
 <?= $view->raw($ui->group(
     ['label' => 'Текстовый ответ', 'attrs' => ['data-type' => 'text']],
     (static function () use ($ui, $config): string {
-        return $ui->select('strategy', array_map(
-            static fn (string $strategy): array => [
-                'value' => $strategy,
-                'label' => TextAnswerType::strategyTitle($strategy),
-            ],
-            TextAnswerType::strategies()
-        ), ['label' => 'Как проверять', 'value' => $config['strategy'] ?? TextAnswerType::STRATEGY_KEYWORDS])
-        . $ui->field('required_keywords', [
-            'label'        => 'Ключевые слова через запятую',
-            'value'        => implode(', ', (array) ($config['required_keywords'] ?? [])),
-            'id'           => 'text-required-keywords',
-            'wrapperAttrs' => ['data-when' => 'keywords'],
+        /*
+         * Один список вместо выбора способа проверки.
+         *
+         * Комбобокс «Как проверять» убран (задача 4 ручного тестирования,
+         * 26.10.2026): под каждый способ нужны были свои поля — ключевые
+         * слова, эталон, допуск содержания, — и форма спрашивала, как именно
+         * проверять, вместо того чтобы показать, что считается верным.
+         * Теперь проверка одна: ответ сверяется со списком допустимых
+         * вариантов, по одному в строке.
+         *
+         * Список подхватывает и прежний эталон: у вопросов, сохранённых до
+         * этой правки, верный ответ лежал в отдельном поле, и не показать
+         * его значило бы заставить автора вспоминать, что он там писал.
+         */
+        $lines = array_map('strval', (array) ($config['variants'] ?? []));
+        $filled = array_filter($lines, static fn (string $line): bool => trim($line) !== '');
+
+        if ($filled === []) {
+            $expected = trim((string) ($config['expected'] ?? ''));
+            $lines = $expected === '' ? [] : [$expected];
+        }
+
+        return $ui->textarea('variants[]', [
+            'label'       => 'Допустимые ответы, по одному в строке',
+            'value'       => implode("\n", $lines),
+            'rows'        => 4,
+            'id'          => 'text-variants',
+            'placeholder' => "Солнечный свет\nУглекислый газ",
+            'help'        => 'Ответ засчитывается, если он совпадает с любой строкой списка: '
+                . 'регистр, лишние пробелы и знаки препинания не учитываются.',
         ])
-        . $ui->field('forbidden_keywords', [
-            'label'        => 'Запрещённые слова через запятую',
-            'value'        => implode(', ', (array) ($config['forbidden_keywords'] ?? [])),
-            'help'         => 'Если ученик напишет такое слово, балл снимается.',
-            'id'           => 'text-forbidden-keywords',
-            'wrapperAttrs' => ['data-when' => 'keywords'],
-        ])
-        . $ui->field('expected', [
-            'label'        => 'Ожидаемый ответ',
-            'value'        => $config['expected'] ?? '',
-            'id'           => 'text-expected',
-            'wrapperAttrs' => ['data-when' => 'exact contains'],
-        ])
-        . $ui->textarea('variants[]', [
-            'label'        => 'Другие допустимые ответы, по одному в строке',
-            'value'        => implode("\n", (array) ($config['variants'] ?? [])),
-            'rows'         => 3,
-            'id'           => 'text-variants',
-            'wrapperAttrs' => ['data-when' => 'exact'],
-        ])
-        . '<div data-when="keywords exact contains">'
-        . $ui->checkbox('partial', ['label' => 'Ставить частичный балл за неполный ответ', 'checked' => (bool) ($config['partial'] ?? true), 'id' => 'text-partial'])
+        . '<div class="split">'
         . $ui->checkbox('ignore_case', ['label' => 'Не учитывать регистр', 'checked' => (bool) ($config['ignore_case'] ?? true), 'id' => 'text-ignore-case'])
-        . $ui->checkbox('ignore_order', ['label' => 'Не учитывать порядок ключевых слов', 'checked' => (bool) ($config['ignore_order'] ?? false), 'id' => 'text-ignore-order'])
+        . $ui->checkbox('ignore_order', ['label' => 'Не учитывать порядок слов', 'checked' => (bool) ($config['ignore_order'] ?? false), 'id' => 'text-ignore-order'])
         . '</div>'
         . '<div class="split">'
         . $ui->field('rows', ['label' => 'Строк в поле ответа', 'type' => 'number', 'value' => $config['rows'] ?? 3, 'min' => '1', 'max' => '20', 'size' => 3, 'id' => 'text-rows'])
@@ -380,8 +376,8 @@ $optionRows = max(3, count($texts));
 )) ?>
 
 <p class="form-help">
- При проверке учителем ключевые слова и эталонный ответ не нужны: оценивание
- целиком делает учитель.
+ Пустые строки списка не участвуют в проверке. Если ответа нет в списке,
+ балл всё равно можно выставить вручную при проверке работы.
 </p>
 <?php endif; ?>
 
@@ -416,12 +412,6 @@ $optionRows = max(3, count($texts));
                     'value' => $rightText,
                     'id'    => 'match-right-' . $i,
                 ])
-                . $ui->checkbox('correct_pair[]', [
-                    'label'   => 'верная пара',
-                    'value'   => $leftKey,
-                    'checked' => array_key_exists($leftKey, $pairs),
-                    'id'      => 'match-pair-' . $i,
-                ])
                 . '</div>';
         }
 
@@ -434,7 +424,8 @@ $optionRows = max(3, count($texts));
 )) ?>
 
 <p class="form-help">
- В каждой строке — понятие слева и его определение справа. Отметьте верные пары:
- обычно это все строки, если порядок не важен.
+ В каждой строке — понятие слева и его определение справа. Такая строка и есть
+ верная пара: ученику два списка выдаются в случайном порядке, и нужно
+ соотнести их так же, как связали вы. Пустые строки внизу не участвуют.
 </p>
 <?php endif; ?>

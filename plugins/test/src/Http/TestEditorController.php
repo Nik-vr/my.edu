@@ -296,7 +296,15 @@ try {
   if (in_array($type, self::TYPES_WITH_OPTIONS, true)) {
   try {
   $this->editor->updateTest($testId, [
-  'shuffle_options' => $this->checkedFlag($request, 'shuffle_options') ? 1 : 0,
+ /*
+ * У соответствия порядок всегда случайный — читается из вида задания,
+ * а не из галочки: строка автора есть верная пара, и запомнить их порядок
+ * значило бы отвечать по памяти, а не сопоставлять. Галочка в настройках
+ * для этого типа показана отмеченной и неактивной, то есть прислать 0
+ * она не может; сервер это проверяет сам — иначе выключить перемешивание
+ * можно было бы прямым запросом.
+ */
+ 'shuffle_options' => ($type === 'matching' || $this->checkedFlag($request, 'shuffle_options')) ? 1 : 0,
   ]);
   } catch (\Throwable $e) {
   return $this->respond($request, false, 'Не удалось сохранить настройки: ' . $e->getMessage(), false);
@@ -743,21 +751,27 @@ throw new InvalidAnswerException(
  /**
  * Текстовый ответ.
  *
- * Стратегия «ручная проверка» специально вынесена в отдельную ветку: для
- * неё не нужны ни ключевые слова, ни эталонный ответ, и требовать их было
- * бы ошибкой — именно этот режим и означает «проверит учитель».
+ * Способ проверки не выбирается (задача 4 ручного тестирования, 26.10.2026):
+ * ответ ученика сверяется со списком допустимых вариантов, по одному в
+ * строке. Комбобокс «Как проверять» убран из формы, и с ним ушли поля
+ * ключевых слов и отдельный эталон — вместо них одно поле со списком.
+ *
+ * Прежние вопросы со старыми способами проверки продолжают работать: тип
+ * читает сохранённый `strategy`, пока автор не пересохранит карточку.
  *
  * @return array{0:array<string,mixed>,1:list<array<string,mixed>>}
  */
  private function readText(Request $request): array
  {
- $strategy = (string) $request->postParam('strategy', TextAnswerType::STRATEGY_KEYWORDS);
+ $variants = $this->lineList($request->postArray('variants'));
 
- if (!in_array($strategy, TextAnswerType::strategies(), true)) {
- $strategy = TextAnswerType::STRATEGY_KEYWORDS;
+ if ($variants === []) {
+ throw new InvalidAnswerException(
+ 'Добавьте хотя бы один допустимый ответ — по одному в строке',
+ 'variants[]'
+ );
  }
 
- $partial = $this->checkedFlag($request, 'partial');
  $ignoreCase = $this->checkedFlag($request, 'ignore_case');
  $ignoreOrder = $this->checkedFlag($request, 'ignore_order');
 
@@ -765,104 +779,110 @@ throw new InvalidAnswerException(
  $maxLength = $this->number($request->postParam('max_length')) ?? 0.0;
  $minLength = $this->number($request->postParam('min_length')) ?? 0.0;
 
- $config = [
- 'strategy' => $strategy,
- 'partial' => $partial,
+ return [[
+ /*
+ * `expected` пишется пустым, а всё, что автор ввёл, ложится в
+ * `variants`: поле в форме одно, и половинить его на «эталон» и «остальные
+ * варианты» значило бы снова спрашивать два раза об одном и том же.
+ * Частичного балла у сравнения со списком нет — ответ либо совпал, либо нет.
+ */
+ 'strategy' => TextAnswerType::STRATEGY_EXACT,
+ 'expected' => '',
+ 'variants' => $variants,
  'ignore_case' => $ignoreCase,
  'ignore_order' => $ignoreOrder,
+ 'partial' => false,
  'rows' => (int) max(1, min(20, $rows)),
  'max_length' => (int) max(0, $maxLength),
  'min_length' => (int) max(0, $minLength),
- 'required_keywords' => $this->wordList($request->postArray('required_keywords')),
- 'forbidden_keywords' => $this->wordList($request->postArray('forbidden_keywords')),
- 'variants' => $this->lineList($request->postArray('variants')),
- ];
-
- if ($strategy === TextAnswerType::STRATEGY_MANUAL) {
- /*
- * Ручная проверка не имеет эталона: ключевые слова и варианты для
- * неё бессмысленны и только мешали бы учителю при проверке.
- */
- $config['expected'] = '';
- $config['required_keywords'] = [];
- $config['forbidden_keywords'] = [];
- $config['variants'] = [];
- $config['partial'] = true;
-
-return [$config, []];
- }
-
- $expected = trim((string) $request->postParam('expected', ''));
- $config['expected'] = $expected;
-
- if ($strategy === TextAnswerType::STRATEGY_KEYWORDS && $config['required_keywords'] === []) {
- throw new InvalidAnswerException('Укажите ключевые слова или выберите другой способ проверки', 'required_keywords');
- }
-
- if ($strategy !== TextAnswerType::STRATEGY_KEYWORDS && $expected === '' && $config['variants'] === []) {
- throw new InvalidAnswerException('Укажите ожидаемый ответ или его варианты', 'expected');
- }
-
- return [$config, []];
+ ], []];
  }
 
  /**
  * Соответствие: автор расставляет пары «понятие — определение».
  *
+ * Строка целиком и есть верная пара: левое значение и правое, набранные в
+ * одной строке, связал сам автор. Отдельной отметки «верная пара» больше
+ * нет — она спрашивала ровно то, что уже видно в строке, и часть пар
+ * оставалась неотмеченной по забывчивости.
+ *
  * @return array{0:array<string,mixed>,1:list<array<string,mixed>>}
  */
  private function readMatching(Request $request): array
  {
- $lefts = $this->readOptionRows($request, 'left_text');
- $rights = $this->readOptionRows($request, 'right_text');
- $selected = $this->codeList($request->postArray('correct_pair'));
+ /*
+ * Пары сопоставляются по номеру строки в форме, а не по порядку в списке:
+ * пустые строки выкидываются из двух списков по-разному, и сведение по
+ * позиции связало бы понятие с чужим определением — верной стала бы пара,
+ * которую автор не писал.
+ */
+ $lefts = [];
+ $rights = [];
 
- if (count($lefts) < 2) {
+ foreach ($this->readOptionRows($request, 'left_text') as $row) {
+ $lefts[$row['index']] = $row['text'];
+ }
+
+ foreach ($this->readOptionRows($request, 'right_text') as $row) {
+ $rights[$row['index']] = $row['text'];
+ }
+
+ $rows = array_unique(array_merge(array_keys($lefts), array_keys($rights)));
+ sort($rows);
+
+ if (count($rows) < 2) {
  throw new InvalidAnswerException('Нужно хотя бы две пары для соответствия', 'left_text[]');
  }
 
  $options = [];
  $pairs = [];
 
- foreach ($lefts as $index => $left) {
- $key = 'l' . ($index + 1);
+ foreach ($rows as $position) {
+ $left = $lefts[$position] ?? '';
+ $right = $rights[$position] ?? '';
+ $number = $position + 1;
+
+ if ($left === '' || $right === '') {
+ throw new InvalidAnswerException(
+ 'Строка ' . $number . ': заполните и понятие слева, и его определение справа — '
+ . 'строка целиком означает верную пару',
+ $left === '' ? 'left_text[]' : 'right_text[]'
+ );
+ }
+
+ $key = 'l' . $number;
 
  $options[] = [
  'kind' => Question::KIND_LEFT,
  'value_key' => $key,
- 'text' => $left['text'],
+ 'text' => $left,
  ];
-
- $right = $rights[$index] ?? null;
-
- if ($right !== null) {
  $options[] = [
  'kind' => Question::KIND_RIGHT,
- 'value_key' => 'r' . ($index + 1),
- 'text' => $right['text'],
+ 'value_key' => 'r' . $number,
+ 'text' => $right,
  ];
- }
 
- if (in_array($key, $selected, true) && $right !== null) {
- $pairs[$key] = 'r' . ($index + 1);
- }
- }
-
- if ($pairs === []) {
- throw new InvalidAnswerException('Отметьте хотя бы одну верную пару', 'correct_pair[]');
+ $pairs[$key] = 'r' . $number;
  }
 
  $partial = $this->checkedFlag($request, 'partial');
 
  /*
-  * Сколько вариантов показывать — читается и здесь, а не только у выбора
-  * ответа. У соответствия урезается правая колонка (см. MatchingType::
-  * payload()), и без этого чтения поле в настройках было бы обещанием,
-  * которое не выполняется: автор ставил N, а ученик видел все варианты.
-  */
+ * Сколько вариантов показывать — читается и здесь, а не только у выбора
+ * ответа. У соответствия урезается правая колонка (см. MatchingType::
+ * payload()), и без этого чтения поле в настройках было бы обещанием,
+ * которое не выполняется: автор ставил N, а ученик видел все варианты.
+ *
+ * Раньше здесь была ошибка: переменной `$config` в функции не было, и
+ * сохранение соответствия падало 500, а считанное значение пропадало —
+ * возврат отдавал только пары и частичный балл. Набор заводится здесь и
+ * подмешивается к паре: лимит пишется в ту же настройку вопроса.
+ */
+ $config = [];
  $this->readRandomOptions($request, $config, $options, []);
 
- return [['pairs' => $pairs, 'partial' => $partial], $options];
+ return [['pairs' => $pairs, 'partial' => $partial] + $config, $options];
  }
 
  /**
@@ -1130,38 +1150,6 @@ private function codeList(array $values): array
  }
 
  return $items;
- }
-
- /**
- * @return list<string>
- */
- private function wordList(array $values): array
- {
- $items = [];
-
- foreach ($values as $value) {
- if (!is_scalar($value)) {
- continue;
- }
-
- $text = trim((string) $value);
-
- if ($text === '') {
- continue;
- }
-
- // Автор пишет ключевые слова через запятую или по одному в строке —
- // оба варианта одинаково привычны.
- foreach (preg_split('/[\s,;]+/u', $text) ?: [] as $word) {
- $word = trim($word);
-
- if ($word !== '') {
- $items[] = $word;
- }
- }
- }
-
- return array_values(array_unique($items));
  }
 
  /**

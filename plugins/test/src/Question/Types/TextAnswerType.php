@@ -13,17 +13,17 @@ use MyEduPlugin\Test\Question\TextNormalizer;
 /**
  * Задание с текстовым ответом.
  *
- * Проверка свободного текста — самая спорная часть системы, поэтому стратегию
- * выбирает автор, а не алгоритм:
+ * Проверка одна: ответ сверяется со списком допустимых вариантов, по одному
+ * в строке, с нормализацией регистра, пробелов и знаков препинания
+ * (`ignore_case`, `ignore_order`). Редактор больше не спрашивает способ
+ * проверки (задача 4 ручного тестирования, 26.10.2026) и сохраняет
+ * `strategy = exact`.
  *
- *   exact    — нормализованное совпадение с одним из вариантов ответа.
- *              Устойчиво к регистру, «ё/е», пунктуации и лишним пробелам.
- *              ignore_order разрешает перестановку слов.
- *   contains — ответ содержит одну из заданных фраз. Для коротких
- *              ответов вида «что?», где ученик пишет предложение.
- *   keywords — все обязательные ключевые слова есть и нет запрещённых.
- *              Самая устойчивая к переформулировкам стратегия.
- *   manual   — автопроверки нет, вопрос уходит учителю на ручную оценку.
+ * Прежние способы проверки из карточек, сохранённых до этой правки, тип
+ * продолжает читать: ключевые слова, содержание и ручная оценка учителем
+ * живут в старых вопросах, и пересчитать их молча — значило бы выдать
+ * ученику не тот балл. Как только автор пересохранит карточку, вопрос
+ * перейдёт на сравнение со списком.
  *
  * Числовой ответ вынесен в отдельный тип NumericType: смешивать число и текст
  * в одном типе неудобно — для числа нужны свои правила разбора и допуск, а
@@ -31,11 +31,10 @@ use MyEduPlugin\Test\Question\TextNormalizer;
  *
  * config:
  *   {
- *     "strategy": "keywords",
- *     "expected": "Солнечный свет, углекислый газ, хлорофилл",
- *     "variants": ["..."], "required_keywords": ["..."], "forbidden_keywords": ["..."],
+ *     "strategy": "exact",
+ *     "variants": ["Солнечный свет", "Углекислый газ"],
  *     "ignore_case": true, "ignore_order": false,
- *     "partial": true, "min_length": 0, "max_length": 0, "rows": 3
+ *     "min_length": 0, "max_length": 0, "rows": 3
  *   }
  */
 final class TextAnswerType implements QuestionTypeInterface
@@ -58,14 +57,14 @@ final class TextAnswerType implements QuestionTypeInterface
     public function defaultConfig(): array
     {
         return [
-            'strategy'          => self::STRATEGY_KEYWORDS,
+            'strategy'          => self::STRATEGY_EXACT,
             'expected'          => '',
             'variants'          => [],
             'required_keywords' => [],
             'forbidden_keywords'=> [],
             'ignore_case'       => true,
             'ignore_order'      => false,
-            'partial'           => true,
+            'partial'           => false,
             'min_length'        => 0,
             'max_length'        => 0,
             'rows'              => 3,
@@ -81,17 +80,6 @@ final class TextAnswerType implements QuestionTypeInterface
             self::STRATEGY_CONTAINS,
             self::STRATEGY_MANUAL,
         ];
-    }
-
-    public static function strategyTitle(string $strategy): string
-    {
-        return match ($strategy) {
-            self::STRATEGY_EXACT    => 'точное совпадение (с вариантами)',
-            self::STRATEGY_CONTAINS => 'ответ содержит фразу',
-            self::STRATEGY_KEYWORDS => 'по ключевым словам',
-            self::STRATEGY_MANUAL   => 'ручная проверка учителем',
-            default                 => $strategy,
-        };
     }
 
     public function validateConfig(array $config, array $options): void
@@ -116,14 +104,14 @@ final class TextAnswerType implements QuestionTypeInterface
 
         $variants = $this->stringList($config['variants'] ?? []);
         if ($variants === [] && trim((string) ($config['expected'] ?? '')) === '') {
-            throw new InvalidAnswerException('Нужно указать эталонный ответ');
+            throw new InvalidAnswerException('Нужно указать хотя бы один допустимый ответ');
         }
     }
 
     public function payload(Question $question): array
     {
         return [
-            'strategy'   => (string) $question->configValue('strategy', self::STRATEGY_KEYWORDS),
+            'strategy'   => (string) $question->configValue('strategy', self::STRATEGY_EXACT),
             'rows'       => max(1, (int) $question->configFloat('rows', 3)),
             'max_length' => (int) $question->configFloat('max_length', 0),
             'min_length' => (int) $question->configFloat('min_length', 0),
@@ -161,7 +149,7 @@ final class TextAnswerType implements QuestionTypeInterface
     public function grade(Question $question, mixed $answer): QuestionGrade
     {
         $max = $question->maxScore();
-        $strategy = (string) $question->configValue('strategy', self::STRATEGY_KEYWORDS);
+        $strategy = (string) $question->configValue('strategy', self::STRATEGY_EXACT);
         $text = is_string($answer) ? trim($answer) : '';
 
         if ($strategy === self::STRATEGY_MANUAL) {
@@ -188,7 +176,7 @@ final class TextAnswerType implements QuestionTypeInterface
 
     public function expectedText(Question $question): string
     {
-        $strategy = (string) $question->configValue('strategy', self::STRATEGY_KEYWORDS);
+        $strategy = (string) $question->configValue('strategy', self::STRATEGY_EXACT);
         $expected = trim((string) $question->configValue('expected', ''));
 
         if ($strategy === self::STRATEGY_KEYWORDS) {
@@ -374,7 +362,7 @@ final class TextAnswerType implements QuestionTypeInterface
 
     private function placeholder(Question $question): string
     {
-        $strategy = (string) $question->configValue('strategy', self::STRATEGY_KEYWORDS);
+        $strategy = (string) $question->configValue('strategy', self::STRATEGY_EXACT);
 
         return match ($strategy) {
             self::STRATEGY_EXACT    => 'Краткий ответ',

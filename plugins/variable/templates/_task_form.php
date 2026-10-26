@@ -6,6 +6,7 @@ use MyEdu\Ui\Ui;
 use MyEduPlugin\Variable\Http\TaskEditorController;
 use MyEduPlugin\Variable\ProblemConfig;
 use MyEduPlugin\Variable\VariableGenerator;
+use MyEduPlugin\Variable\VariablePlugin;
 
 /**
  * Форма редактора вариативной задачи.
@@ -16,8 +17,11 @@ use MyEduPlugin\Variable\VariableGenerator;
  *
  * Вся разметка — хуками ядра (`$ui`), как и у плагина с вопросами: поля,
  * редактор, сообщения, строка переменной. Разница в том, что здесь ещё есть
- * скрипт плагина: `variable-task.js` строит строки переменных по условию, и он
- * не подключается оболочкой.
+ * скрипт плагина: `variable-task.js` строит строки переменных по условию и
+ * переключает их режим. Оболочка его не подключает — окно редактора подключает
+ * сама скрипты, приехавшие вместе с формой, и зовёт их через `MyEduFormInits`
+ * после своей настройки. Форма при этом помечена `data-fixed-type`, иначе
+ * скрипт ядра не находит её и визуальный редактор условия не заводится.
  *
  * Строка переменной рисуется сервером и кладётся в `<template>`: скрипт её
  * копирует. Собственная разметка строки в скрипте выглядела иначе, чем
@@ -148,8 +152,18 @@ $variableRow = static function (array $variable, bool $empty = false) use ($ui, 
    пол-экрана.
    */ ?>
 
+ <?php /*
+  data-fixed-type — метка для скрипта редактора (`editor.js`), что форма
+  задания уже здесь и её надо настроить: без неё скрипт не находит форму и
+  выходит целиком, визуальный редактор условия остаётся обычным пустым блоком
+  и не принимает ввод — то есть поле выглядит рабочим и молча не работает.
+  Селектора типа здесь нет: вид задания выбрал автор при добавлении и не
+  меняет его. Значение — вид задания, у блоков `data-type` здесь нет, и
+  сверять нечего.
+ */ ?>
  <form method="post" action="<?= $view->e($view->url($prefix . '/task/' . $taskId)) ?>"
- data-ajax-save>
+ data-ajax-save
+ data-fixed-type="<?= $view->e(VariablePlugin::KIND) ?>">
  <?= $view->raw($view->csrfField()) ?>
  <?= $view->raw($ui->hidden('action', 'save_task')) ?>
  <?= $view->raw($ui->hidden('back', $backUrl)) ?><?php /*

@@ -60,6 +60,20 @@ function myEduEditorInit(root) {
         });
 
         form.querySelectorAll('[data-when]').forEach(function (field) {
+            /*
+             * Поля вне блока типа этот скрипт не трогает.
+             *
+             * У таблицы переменных вариативной задачи режим свой — переключатель
+             * «перечислением / диапазоном» внутри строки, — и ведёт его скрипт
+             * плагина. Здесь для него режима не существует (`currentMode()`
+             * вернул бы пустую строку), и поле оказалось бы спрятанным в обоих
+             * состояниях: автор выбирал бы способ задания, а колонка значений
+             * оставалась бы пустой.
+             */
+            if (!field.closest('[data-type]')) {
+                return;
+            }
+
             var modes = field.getAttribute('data-when').split(/\s+/);
 
             field.hidden = modes.indexOf(currentMode(field)) === -1;

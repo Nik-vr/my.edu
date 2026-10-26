@@ -264,14 +264,38 @@ a { color: var(--accent-link); }
 
 .generated-table th { font-size: var(--font-ui); color: var(--text-muted, #5a6472); font-weight: 600; }
 
+/*
+ * Заголовок переносится, а не вылезает на соседний столбец.
+ *
+ * Шапку этой таблицы рисует вендор (`table.table th`): заглавными и отступом в
+ * 16 пикселей, а кегль подставляет theme.css — все эти правила идут после
+ * нашего файла. Столбец первый узкий, и слово «Переменная» не укладывалось
+ * в него: оно заезжало на «Как задать значения», и оба заголовка читались
+ * как одно слитное. Перенос остаётся страховкой — в другом окне ширина
+ * другая, и наезда не должно быть ни при какой.
+ */
+.generated-table th { overflow-wrap: anywhere; }
+
+/*
+ * Отступ ячейки свой, а не из gentelella.
+ *
+ * Шапке отступ в 16 пикселей задаёт вендорское `table.table th`: оно идёт
+ * после нашего файла и специфичнее простого `.generated-table th`. Слово
+ * «Переменная» при таком отступе не укладывалось в узкий первый столбец и
+ * переносилось посреди слова. Здесь класс продублирован — правило получает
+ * больше классов и выигрывает у вендора по специфичности, а не по порядку
+ * файлов: пересборка стилей не вернула бы отступ обратно.
+ */
+.generated-table.table th { padding: 8px 10px; }
+
 /* Имя: короткое, поэтому колонка узкая и не забирает место у значений. */
-.generated-table th:nth-child(1), .generated-table td:nth-child(1) { width: 15%; }
+.generated-table th:nth-child(1), .generated-table td:nth-child(1) { width: 24%; }
 
 .generated-table th:nth-child(2), .generated-table td:nth-child(2) { width: 20%; }
 
-.generated-table th:nth-child(3), .generated-table td:nth-child(3) { width: 38%; }
+.generated-table th:nth-child(3), .generated-table td:nth-child(3) { width: 34%; }
 
-.generated-table th:nth-child(4), .generated-table td:nth-child(4) { width: 27%; }
+.generated-table th:nth-child(4), .generated-table td:nth-child(4) { width: 22%; }
 
 /*
  * Полям задан min-width: 0 — иначе длинное перечисление распирало бы ячейку,
@@ -281,7 +305,14 @@ a { color: var(--accent-link); }
 
 .generated-table__name code {
     font-weight: 600;
-    white-space: nowrap;
+    /*
+     * Имя пишется в одну строку, но не любой ценой: у переменной до
+     * шестнадцати знаков, и такое имя с фигурными скобками шире своей
+     * колонки. Раньше оно оставалось nowrap и заезжало на переключатели
+     * соседнего столбца — теперь ложится на вторую строку.
+     */
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .generated-table__mode { width: 20%; }
@@ -455,9 +486,26 @@ code {
  * оставить без стилей — значит оставить страницу без галочек. Алиас закрывает
  * и то и другое.
  */
-.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+/*
+ * Подпись по ширине содержимого, а не строки.
+ *
+ * Как блок, label занимал всю ширину контейнера — в сетке `.check-list` это
+ * ячейку целиком, — и щелчок справа от текста, в пустом месте, попадал в
+ * подпись и переключал кнопку. Для человека это неожиданно: он целится в
+ * кнопку или в слово, а срабатывает где угодно. `max-width` оставляет на
+ * случай длинной подписи возможность переноса, не выпуская её за ячейку.
+ */
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; width: fit-content; max-width: 100%; }
 
 .check input { width: auto; margin: 0; }
+
+/*
+ * То же для флажков: их подпись рисует не app.css, а gentelella, и грузится
+ * она позже — правило ниже держится на большей специфичности (`label.class`),
+ * а не на порядке файлов, иначе первая же пересборка стилей вернула бы
+ * щелчки по всей строке.
+ */
+label.form-check { width: fit-content; max-width: 100%; }
 
 .stack { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 

@@ -15,6 +15,14 @@
  *
  * Условие читается из скрытого поля, а не из содержимого редактора: именно в
  * поле уедет текст при отправке, и смотреть надо на него.
+ *
+ * Окно редактора открывается двумя путями. При перезагрузке страницы с `?edit=`
+ * форма лежит в разметке и скрипт запускается сам, когда документ готов. При
+ * щелчке по карандашу форму приносит fetch и вставляет через innerHTML — такие
+ * скрипты браузер не выполняет, и настройку формы берёт на себя ядро,
+ * вызывая `MyEduVariableTask.init()` там же, где настраивает остальные формы
+ * (`initEditorForms` в assignment-items.js). Отсюда функция, а не сразу
+ * привязки: одна и та же форма могла бы подписаться дважды.
  */
 (function () {
     'use strict';
@@ -30,20 +38,32 @@
      */
     var TaskEditorPrefixPlaceholder = 'var_N';
 
-    function blocks() {
-        return Array.prototype.slice.call(document.querySelectorAll('[data-generated-vars]'));
-    }
+    /** Форма уже настроена: повторный вызов ничего не подписывает заново. */
+    var READY_FLAG = 'data-variable-ready';
+
+    /*
+     * К визуальному редактору привязка под отдельной пометкой, а не под той же,
+     * что у формы: порядок скриптов в двух способах открытия разный, и форма
+     * бывает настроена раньше, чем создан Quill.
+     */
+    var QUILL_FLAG = 'data-quill-ready';
 
     /*
      * Скрытое поле условия ищется рядом с редактором, а не по идентификатору:
      * разметку рисует ядро, и имя поля задаёт плагин. Привязка к `prompt-field`
      * работала только потому, что оба плагина так называли это поле, и молча
      * ломалась при переименовании — условие переставало уезжать в форму.
+     *
+     * Поиск идёт от формы, а не от документа: в окне редактора такая форма
+     * одна, но на странице их может быть несколько, и брать чужую — значит
+     * строить таблицу переменных по условию соседнего задания.
      */
-    function promptField() {
-        var host = document.querySelector('.ql-editor-host');
+    function promptField(form) {
+        var host = form.querySelector('.ql-editor-host');
 
-        return host ? host.parentNode.querySelector('input[type="hidden"][name]') : null;
+        return host && host.parentNode
+            ? host.parentNode.querySelector('input[type="hidden"][name]')
+            : null;
     }
 
     /*
@@ -139,6 +159,10 @@
     }
 
     function applyMode(row) {
+        if (!row) {
+            return;
+        }
+
         var checked = row.querySelector('input[type="radio"]:checked');
         var mode = checked ? checked.value : 'list';
 
@@ -153,8 +177,8 @@
      * Проставляет полям уникальные имена по порядку строк.
      *
      * Имя обязано быть разным у каждой строки: одинаковое имя у переключателей
-     * превращает их в одну группу, и отметка в новой строке сбрасывает отметку в
-     * предыдущей. Пересобирается всегда, а не только при добавлении.
+     * превращает их в одну группу, и отметка одной гасила отметку в другой.
+     * Пересобирается всегда, а не только при добавлении.
      */
     function renumber(host) {
         var prefix = host.getAttribute('data-generated-prefix') || 'var_';
@@ -204,8 +228,9 @@
         return rowsOf(host).length;
     }
 
-    function syncTable() {
-        var prompt = promptField();
+    /** Таблица одной формы приводится в соответствие с её условием. */
+    function syncTable(form) {
+        var prompt = promptField(form);
 
         if (!prompt) {
             return;
@@ -213,7 +238,7 @@
 
         var wanted = namesIn(prompt.value);
 
-        blocks().forEach(function (host) {
+        form.querySelectorAll('[data-generated-vars]').forEach(function (host) {
             var body = host.querySelector('tbody');
             var prefix = host.getAttribute('data-generated-prefix') || 'var_';
 
@@ -258,32 +283,90 @@
         });
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
-        var host = blocks()[0];
+    /**
+     * Настроить форму вариативной задачи.
+     *
+     * @param {ParentNode} область, где лежит форма: документ либо открытая
+     *        вставка формы в модальном окне
+     */
+    function init(scope) {
+        var root = scope || document;
 
-        if (!host || !promptField()) {
+        Array.prototype.slice.call(root.querySelectorAll('[data-generated-vars]'))
+            .forEach(function (host) {
+                var form = host.closest('form');
+
+                if (!form) {
+                    return;
+                }
+
+                var prompt = promptField(form);
+
+                if (!prompt) {
+                    return;
+                }
+
+                /*
+                 * Привязки к форме ставятся один раз. Редактор условия —
+                 * отдельным шагом и со своей пометкой: скрипт мог запуститься
+                 * раньше, чем ядро создало Quill, и тогда привязка остаётся
+                 * на следующий вызов — а общий флаг вернул бы её в пустоту.
+                 */
+                if (!form.hasAttribute(READY_FLAG)) {
+                    form.setAttribute(READY_FLAG, '');
+
+                    rowsOf(host).forEach(applyMode);
+
+                    /*
+                     * Переключатель «перечислением / диапазоном» живёт внутри
+                     * строки, и подпись события вешается на форму: строки
+                     * добавляются и убираются сами, и слушатель на каждой из них
+                     * протёк бы вместе с ней.
+                     */
+                    form.addEventListener('change', function (event) {
+                        if (event.target.matches('input[type="radio"]')) {
+                            applyMode(event.target.closest('[data-generated-row]'));
+                        }
+                    });
+
+                    form.addEventListener('submit', function () {
+                        syncTable(form);
+                    });
+
+                    prompt.addEventListener('input', function () {
+                        syncTable(form);
+                    });
+                }
+
+                bindPromptEditor(form, prompt);
+                syncTable(form);
+            });
+    }
+
+    /*
+     * Привязка к визуальному редактору — отдельной пометкой, а не той же,
+     * что у формы.
+     *
+     * Порядок скриптов не одинаков в двух способах открытия: при полной
+     * загрузке редактор текста настраивается раньше, чем сюда доходит очередь,
+     * а при открытии из доски скрипт плагина подключается вместе с формой и
+     * может обогнать ядро. Форма при этом уже помечена настроенной, и общий
+     * флаг оставил бы редактор без синхронизации: условие набиралось бы, а
+     * таблица переменных осталась бы пустой до сохранения.
+     */
+    function bindPromptEditor(form, prompt) {
+        if (form.hasAttribute(QUILL_FLAG)) {
             return;
         }
 
-        blocks().forEach(function (one) {
-            rowsOf(one).forEach(applyMode);
+        var editorHost = form.querySelector('.ql-editor-host');
+        var quill = editorHost && window.Quill ? window.Quill.find(editorHost) : null;
 
-            one.addEventListener('change', function (event) {
-                if (event.target.matches('input[type="radio"]')) {
-                    applyMode(event.target.closest('[data-generated-row]'));
-                }
-            });
-        });
-
-        var form = host.closest('form');
-
-        if (form) {
-            form.addEventListener('submit', syncTable);
+        if (!quill) {
+            return;
         }
 
-        var prompt = promptField();
-
-        prompt.addEventListener('input', syncTable);
+        form.setAttribute(QUILL_FLAG, '');
 
         /*
          * Quill синхронизирует скрытое поле только перед отправкой формы, а до
@@ -291,23 +374,38 @@
          * сохранения. Поэтому читаем редактор напрямую и держим поле в текущем
          * состоянии: тогда строки появляются сразу, ещё до сохранения.
          */
-        var editorHost = document.querySelector('.ql-editor-host');
+        quill.on('text-change', function () {
+            var text = quill.getText();
 
-        if (editorHost && window.Quill) {
-            var quill = window.Quill.find(editorHost);
-
-            if (quill) {
-                quill.on('text-change', function () {
-                    var text = quill.getText();
-
-                    if (prompt.value !== text) {
-                        prompt.value = text;
-                        syncTable();
-                    }
-                });
+            if (prompt.value !== text) {
+                prompt.value = text;
+                syncTable(form);
             }
-        }
+        });
+    }
 
-        syncTable();
-    });
+    /*
+     * Подпись для ядра и собственный запуск.
+     *
+     * Ядро зовёт `init()` там же, где настраивает остальные формы, — после
+     * визуального редактора, то есть когда Quill уже создан. Свой запуск нужен
+     * только когда форма лежит в разметке сразу (путь `?edit=`): окно вставляет
+     * форму уже после загрузки страницы и зовёт хуки само, а здесь в этот
+     * момент инициализация всё равно безвредна — привязки помечены.
+     *
+     * Готовность документа проверяется по `complete`, а не по `loading`:
+     * отложенные скрипты выполняются в состоянии `interactive`, и проверка на
+     * `loading` пропустила бы их — форма осталась бы без переключателя режима
+     * и без синхронизации условия.
+     */
+    window.MyEduFormInits = window.MyEduFormInits || [];
+    window.MyEduFormInits.push(init);
+
+    if (document.readyState === 'complete') {
+        init(document);
+    } else {
+        document.addEventListener('DOMContentLoaded', function () {
+            init(document);
+        });
+    }
 })();

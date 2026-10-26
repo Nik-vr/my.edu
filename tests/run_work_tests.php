@@ -1112,7 +1112,13 @@ $t->is($manualItem !== null, 'позиция второго задания со�
 $manualTestId = (int) ($manualItem['task_id'] ?? 0);
 $t->is($manualTestId > 0 && $manualTestId !== $testId, 'это отдельное задание, а не копия первого');
 
-// Наполняем его текстовым вопросом с ручной проверкой.
+/*
+ * Наполняем его текстовым вопросом.
+ *
+ * Проверка теперь одна — сравнение со списком допустимых ответов (задача 4
+ * ручного тестирования, 26.10.2026): комбобокс «Как проверять» убран, и форма
+ * присылает только список.
+ */
 $manualEditor = $openEditor($manualTestId);
 
 $t->is($manualEditor['status'] === 200, 'редактор текстового задания открыт');
@@ -1128,15 +1134,29 @@ $teacher->post('/tests/task/' . $manualTestId, [
     'prompt'      => 'Объясните, зачем растению хлорофилл',
     'weight'      => '1',
     'is_required' => '1',
-    'strategy'    => 'manual',
+    'variants[]'  => ['фотосинтез', 'световой синтез'],
     'rows'        => '4',
 ]);
 
-$t->contains(
-    (string) $db->value('SELECT config FROM questions WHERE id = :id', ['id' => $manualQuestionId]),
-    'manual',
-    'выбрана ручная проверка'
-);
+$manualConfig = (string) $db->value('SELECT config FROM questions WHERE id = :id', ['id' => $manualQuestionId]);
+
+$t->contains($manualConfig, '"exact"', 'проверка сохранена по списку допустимых ответов');
+$t->contains($manualConfig, 'световой синтез', 'второй допустимый ответ сохранён');
+
+/*
+ * Позиция, ожидающая учителя.
+ *
+ * Ручной проверки в редакторе больше нет — её заменил список допустимых
+ * ответов, а балл вручную учитель ставит уже на экране проверки. Но вопросы
+ * со старой настройкой остаются в базе и продолжают ждать учителя, и на них
+ * держится вся проверка ниже: непроверенная позиция, экран проверки с оценкой
+ * и комментарием, итог по весам. Настройка пишется прямо в базу — так же,
+ * как её получил бы импорт или работа, сохранённая до этой правки.
+ */
+$db->run('UPDATE questions SET config = :config WHERE id = :id', [
+    'config' => json_encode(['strategy' => 'manual', 'rows' => 4], JSON_UNESCAPED_UNICODE),
+    'id'     => $manualQuestionId,
+]);
 
 $manualEditor = $openTaskEditor($teacher, $assignmentId, $manualTestId);
 
@@ -1147,6 +1167,28 @@ $manualEditor = $openTaskEditor($teacher, $assignmentId, $manualTestId);
  */
 $t->equals('draft', (string) $db->value('SELECT status FROM tests WHERE id = :id', ['id' => $manualTestId]),
     'второе задание осталось черновиком до публикации работы');
+
+/*
+ * Комбобокс «Как проверять» убран (задача 4 ручного тестирования, 26.10.2026).
+ *
+ * Проверка теперь одна — сравнение со списком допустимых ответов, по одному в
+ * строке, — и форма спрашивает только этот список. Поля, которые держали
+ * прежние способы (ключевые слова, отдельный эталон, частичный балл), ушли
+ * вместе с выбором: оставлены они были бы обещанием, которое больше не
+ * выполняется.
+ */
+$t->notContains($manualEditor['body'], 'Как проверять',
+    'комбобокса «Как проверять» в форме текстового ответа нет');
+$t->notContains($manualEditor['body'], 'name="required_keywords"',
+    'поле ключевых слов убрано');
+$t->notContains($manualEditor['body'], 'id="text-expected"',
+    'поле эталонного ответа убрано');
+$t->notContains($manualEditor['body'], 'id="text-partial"',
+    'галочка частичного балла убрана — у сравнения со списком его нет');
+$t->contains($manualEditor['body'], 'name="variants[]"',
+    'поле допустимых ответов на месте');
+$t->contains($manualEditor['body'], 'Допустимые ответы, по одному в строке',
+    'поле подписано так, как проверяет система');
 
 /*
  * Третье задание — снова одиночный выбор, но проверяемый полностью
@@ -1374,6 +1416,142 @@ $t->equals('draft', (string) $db->value('SELECT status FROM assignments WHERE id
     'работа с незаполненным заданием осталась черновиком');
 
 /*
+ * Публикация идёт тем же запросом, что и сохранение настроек (задача 2
+ * ручного тестирования, 26.10.2026).
+ *
+ * Раньше переключатель в шапке уходил отдельной формой: страница
+ * перезагружалась, и введённые на вкладках значения пропадали — ровно тогда,
+ * когда экран показывал отказ в публикации. Теперь настройки пишутся до того,
+ * как сервер решает, можно ли публиковать, и отказ возвращает автора к уже
+ * сохранённому, а не к пустой форме.
+ *
+ * Здесь отказ даёт плагин: задание есть, но вопрос в нём пустой. Шкала при
+ * этом валидна — иначе форма остановилась бы на проверке границ и до решения
+ * о публикации дело бы не дошло.
+ */
+$t->group('Публикация сохраняет введённые настройки');
+
+$intentStep = $teacher->get($emptyTaskEditorUrl);
+
+$t->contains($intentStep['body'], 'name="publish_intent"',
+    'общая форма редактора несёт намерение публикации');
+
+$intentPublish = $teacher->post('/panel/assignments/' . $emptyTaskWork . '/edit/save', [
+    '_token'         => $teacher->tokenFrom($intentStep) ?? '',
+    'description'    => 'Настройки, введённые перед публикацией',
+    'publish_intent' => 'publish',
+    'criteria_mode'  => 'percent',
+    'criteria_min[]' => ['85', '70', '50', '0'],
+    'color[]'        => ['success', 'primary', 'warning', 'danger'],
+    'grade_mode'     => 'weighted',
+    'show_results'   => '1',
+]);
+
+$t->is($intentPublish['status'] === 302, 'попытка публикации отвечает переходом');
+$t->contains((string) $intentPublish['location'], $emptyTaskEditorUrl,
+    'отказ возвращает на ту же страницу редактора, где вводили');
+$t->equals('Настройки, введённые перед публикацией',
+    (string) $db->value('SELECT description FROM assignments WHERE id = :id', ['id' => $emptyTaskWork]),
+    'настройки записаны, хотя в публикации отказано');
+$t->equals('draft', (string) $db->value('SELECT status FROM assignments WHERE id = :id', ['id' => $emptyTaskWork]),
+    'работа не опубликована: плагин сообщил препятствие');
+$t->contains($teacher->get($emptyTaskEditorUrl)['body'], 'В задании не заполнен вопрос',
+    'препятствие показано на той же странице, где остались настройки');
+
+/*
+ * Соответствие: строка редактора и есть верная пара (задача 5 ручного
+ * тестирования, 26.10.2026).
+ *
+ * Чекбокс «верная пара» убран: он спрашивал ровно то, что видно в строке, и
+ * часть пар оставалась неотмеченной по забывчивости. Проверяется, что пары
+ * строятся по строкам, а галочка перемешивания включается сама — автор мог
+ * прислать её снятой, и сервер обязана включить.
+ */
+$t->group('Соответствие: строка есть верная пара');
+
+$matchWork = (int) $db->insert('assignments', [
+    'author_id'     => $teacherId,
+    'title'         => 'Соответствие: проверка строки',
+    'status'        => 'draft',
+    'grade_mode'    => 'weighted',
+    'criteria_mode' => 'percent',
+    'criteria'      => json_encode([
+        ['grade' => 5, 'min_percent' => 85.0, 'color' => 'success'],
+        ['grade' => 4, 'min_percent' => 70.0, 'color' => 'primary'],
+        ['grade' => 3, 'min_percent' => 50.0, 'color' => 'warning'],
+        ['grade' => 2, 'min_percent' => 0.0,  'color' => 'danger'],
+    ], JSON_UNESCAPED_UNICODE),
+    'show_results'  => 1,
+    'created_at'    => date('Y-m-d H:i:s'),
+    'updated_at'    => date('Y-m-d H:i:s'),
+]);
+
+$matchStep = $teacher->get('/panel/assignments/' . $matchWork);
+
+$teacher->post('/panel/assignments/' . $matchWork . '/tasks/new', [
+    '_token'    => $teacher->tokenFrom($matchStep) ?? '',
+    'plugin_id' => 'test',
+    'task_kind' => 'matching',
+    'title'     => 'Соотнесите понятия',
+    'weight'    => '2',
+]);
+
+$matchTaskId = (int) $db->value(
+    'SELECT task_id FROM assignment_items WHERE assignment_id = :id ORDER BY id DESC LIMIT 1',
+    ['id' => $matchWork]
+);
+
+$t->is($matchTaskId > 0, 'задание соответствия добавлено в работу');
+
+$matchEditor = $openTaskEditor($teacher, $matchWork, $matchTaskId);
+$matchQuestionId = (int) $db->value('SELECT id FROM questions WHERE test_id = :id ORDER BY id LIMIT 1', ['id' => $matchTaskId]);
+
+$t->notContains($matchEditor['body'], 'name="correct_pair',
+    'чекбоксов «верная пара» в форме нет');
+$t->contains($matchEditor['body'], 'name="left_text[]"', 'в форме есть левая колонка');
+$t->contains($matchEditor['body'], 'name="right_text[]"', 'в форме есть правая колонка');
+
+$saveMatch = $teacher->post('/tests/task/' . $matchTaskId, [
+    '_token'          => $teacher->tokenFrom($matchEditor) ?? '',
+    'action'          => 'save_task',
+    'question_id'     => (string) $matchQuestionId,
+    'type'            => 'matching',
+    'title'           => 'Соотнесите понятия',
+    'prompt'          => 'Соотнесите понятие и его определение',
+    'weight'          => '2',
+    'is_required'     => '1',
+    'left_text[]'     => ['Фотосинтез', 'Хлорофилл', 'Углекислый газ'],
+    'right_text[]'    => ['Процесс образования органических веществ', 'Зелёный пигмент листа', 'Газ, который поглощает растение'],
+    'partial'         => '1',
+    'shuffle_options' => '0',
+]);
+
+$t->is($saveMatch['status'] === 302, 'соответствие сохраняется без ошибки');
+
+$matchConfig = json_decode(
+    (string) $db->value('SELECT config FROM questions WHERE id = :id', ['id' => $matchQuestionId]),
+    true
+);
+
+$t->equals(
+    ['l1' => 'r1', 'l2' => 'r2', 'l3' => 'r3'],
+    is_array($matchConfig['pairs'] ?? null) ? $matchConfig['pairs'] : null,
+    'пары построены по строкам: строка автора есть верная пара'
+);
+$t->equals(
+    1,
+    (int) $db->value('SELECT shuffle_options FROM tests WHERE id = :id', ['id' => $matchTaskId]),
+    'перемешивание включено само, несмотря на присланный ноль'
+);
+
+$matchSettings = $teacher->get('/panel/assignments/' . $matchWork . '/edit/items?edit=' . $matchTaskId);
+preg_match('/<input[^>]*name="shuffle_options"[^>]*>/', $matchSettings['body'], $shuffleTag);
+
+$t->is($shuffleTag !== [], 'галочка перемешивания есть в настройках');
+$t->is(str_contains((string) ($shuffleTag[0] ?? ''), 'checked'), 'галочка отмечена');
+$t->is(str_contains((string) ($shuffleTag[0] ?? ''), 'disabled'), 'галочка неактивна — выключить её нельзя');
+
+/*
  * Тот же плагин, то же задание, вопрос добавлен — и блокер снимается. Без этой
  * второй половины проверки можно было бы закрыть публикацию навсегда и ничего
  * не заметить: отказ-то был бы всегда.
@@ -1392,7 +1570,7 @@ $teacher->post('/tests/task/' . $emptyTestId, [
     'prompt'      => 'В чём, по-вашему, смысл жизни',
     'weight'      => '1',
     'is_required' => '1',
-    'strategy'    => 'manual',
+    'variants[]'  => ['смысл в смысле'],
     'rows'        => '4',
 ]);
 
@@ -1888,6 +2066,75 @@ $t->is($result['status'] === 200, 'результат работы открыт'
 $t->contains($result['body'], 'итог пока не окончательный', 'ученику сказано, что итог не окончательный');
 $t->contains($result['body'], 'ждёт проверки', 'в таблице позиций видно ожидающее задание');
 $t->contains($result['body'], 'За разные задания может быть начислено разное количество баллов', 'ученику объяснено правило подсчёта');
+
+/*
+ * Комментарий автора к правильному ответу — только после последней попытки
+ * (задача 1 ручного тестирования, 26.10.2026).
+ *
+ * Комментарий объясняет, почему ответ верный, и до последней попытки это
+ * готовый ответ: его прочитают и берут следующую попытку с преимуществом,
+ * которого у остальных нет. При неограниченном числе попыток комментарий не
+ * показывается вовсе — иначе первой же попыткой ограничение перестаёт быть
+ * ограничением.
+ *
+ * Комментарий живёт в снимке, который проверка положила в базу: правка
+ * вопроса не меняет того, что ученик уже получил. Поэтому он вносится в
+ * снимок, а лимит меняется на выдаче — и одна и та же попытка считается то
+ * непоследней, то последней, то одной из неограниченных.
+ */
+$t->group('Комментарий к правильному ответу');
+
+$explanationText = 'Хлорофилл — зелёный пигмент листа, он и улавливает свет.';
+$injected = 0;
+
+foreach ($db->all('SELECT id, snapshot FROM assignment_item_results WHERE attempt_id = :id', ['id' => $attemptId]) as $row) {
+    $snapshot = json_decode((string) $row['snapshot'], true);
+
+    if (!is_array($snapshot) || !is_array($snapshot['result']['items'] ?? null)) {
+        continue;
+    }
+
+    foreach ($snapshot['result']['items'] as $index => $item) {
+        $snapshot['result']['items'][$index]['explanation'] = $explanationText;
+        $injected++;
+    }
+
+    $db->run('UPDATE assignment_item_results SET snapshot = :snapshot WHERE id = :id', [
+        'snapshot' => json_encode($snapshot, JSON_UNESCAPED_UNICODE),
+        'id'       => (int) $row['id'],
+    ]);
+}
+
+$t->is($injected > 0, 'комментарий внесён в снимок разбора');
+
+$issueId = (int) $db->value(
+    'SELECT id FROM assignment_issues WHERE assignment_id = :id ORDER BY id LIMIT 1',
+    ['id' => $assignmentId]
+);
+$oldLimit = (int) $db->value('SELECT max_attempts FROM assignment_issues WHERE id = :id', ['id' => $issueId]);
+
+$t->is($issueId > 0, 'выдача работы найдена');
+
+$setLimit = static function (int $limit) use ($db, $issueId): void {
+    $db->run('UPDATE assignment_issues SET max_attempts = :limit WHERE id = :id', ['limit' => $limit, 'id' => $issueId]);
+};
+
+// Лимит два, попытка ученика первая — комментария ещё быть не может.
+$setLimit(2);
+$beforeLast = $student->get('/work/' . $attemptId . '/result?t=' . $attemptToken);
+$t->notContains($beforeLast['body'], $explanationText, 'до последней попытки комментарий не показан');
+
+// Лимит один — эта попытка и есть последняя.
+$setLimit(1);
+$lastAttempt = $student->get('/work/' . $attemptId . '/result?t=' . $attemptToken);
+$t->contains($lastAttempt['body'], $explanationText, 'после последней попытки комментарий показан');
+
+// Без ограничения числа попыток комментарий не показывается вовсе.
+$setLimit(0);
+$withoutLimit = $student->get('/work/' . $attemptId . '/result?t=' . $attemptToken);
+$t->notContains($withoutLimit['body'], $explanationText, 'при неограниченных попытках комментарий не показан');
+
+$setLimit($oldLimit);
 
 /*
  * Вид оценки — дуга-шкала, как показано владельцу (решение от 24.10.2026,
@@ -10985,7 +11232,9 @@ $t->group('Пропущенное задание не уходит на ручн
  * ожидания учителя, а сама попытка — не помечаться ручной.
  *
  * Ручная проверка при этом не исчезает: она остаётся у текстовых вопросов
- * со стратегией manual — её проверяет группа «Итог по весам» выше.
+ * со старой стратегией manual — в редакторе её больше нет (задача 4
+ * ручного тестирования, 26.10.2026), но такие вопросы из прежних работ
+ * живут в базе, и их проверяет группа «Итог по весам» выше.
  */
 $skippedWorkId = (int) $db->insert('assignments', [
     'title'         => 'Пропуск не ждёт учителя',

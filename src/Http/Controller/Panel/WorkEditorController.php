@@ -337,9 +337,61 @@ public function saveNewStart(Request $request): Response
 
         $this->saveCriteria($request, $submission, $id);
 
+        /*
+         * Публикация приходит той же отправкой, что и сохранение настроек
+         * (задача 2 ручного тестирования, 26.10.2026).
+         *
+         * Раньше переключатель «Опубликовать» в шапке уходил отдельной формой,
+         * и страница перезагружалась без введённых на вкладках значений:
+         * автор терял их при отказе публикации — ровно в тот момент, когда
+         * экран показывал список препятствий, а не сохранённое. Теперь
+         * настройки сначала пишутся этим же запросом, и отказ публикации
+         * возвращает человека к уже сохранённым значениям.
+         */
+        $intent = (string) $request->postParam('publish_intent', '');
+
+        if ($intent === 'publish' || $intent === 'draft') {
+            return $this->applyPublishIntent($request, $id, $intent);
+        }
+
         $this->session->set('flash_notice', 'Работа сохранена');
 
         return $this->redirect('panel/assignments/' . $id . '/edit?tab=' . $this->postTab($request));
+    }
+
+    /**
+     * Публикация или возврат в черновик после сохранения настроек.
+     *
+     * @param 'publish'|'draft' $intent
+     */
+    private function applyPublishIntent(Request $request, int $id, string $intent): Response
+    {
+        $tab = $this->postTab($request);
+
+        if ($intent === 'draft') {
+            $this->session->set('flash_notice', $this->assignments->toDraft($id));
+
+            return $this->redirect('panel/assignments/' . $id . '/edit?tab=' . $tab);
+        }
+
+        $assignment = $this->assignments->find($id);
+        $blockers = $assignment === null ? [] : $this->publishBlockers($id, $assignment);
+
+        if ($blockers !== []) {
+            /*
+             * Настройки уже сохранены — их видно на странице, которая
+             * открывается дальше. В окно идут только препятствия: автор
+             * должен увидеть, чего не хватает, а не потерять введённое.
+             */
+            $this->session->set('publish_blocked', $blockers);
+            $this->session->set('flash_error', 'Опубликовать нельзя: ' . implode('; ', $blockers));
+
+            return $this->redirect('panel/assignments/' . $id . '/edit?tab=' . $tab);
+        }
+
+        $this->session->set('flash_notice', $this->assignments->publish($id));
+
+        return $this->redirect('panel/assignments/' . $id . '/edit?tab=' . $tab);
     }
     public function saveStart(Request $request, array $params): Response
     {
