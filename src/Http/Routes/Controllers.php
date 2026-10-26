@@ -26,6 +26,7 @@ use MyEdu\Core\View;
 use MyEdu\Http\Controller\AuthController;
 use MyEdu\Http\Controller\HealthController;
 use MyEdu\Http\Controller\Panel\AssignmentController;
+use MyEdu\Http\Controller\Panel\WorkEditorController;
 use MyEdu\Http\Controller\Panel\AttemptReviewController;
 use MyEdu\Http\Controller\Panel\ClassController;
 use MyEdu\Http\Controller\Panel\EditorAssetController;
@@ -73,6 +74,7 @@ final class Controllers
     public readonly PluginController $plugins;
     public readonly WorkController $works;
     public readonly AssignmentController $assignments;
+    public readonly WorkEditorController $workEditor;
     public readonly EditorAssetController $editorAssets;
     public readonly WorkTransferController $transfer;
     public readonly OtpImportController $otpImport;
@@ -129,6 +131,10 @@ final class Controllers
         );
 
         $this->assignments = new AssignmentController(
+            $view, $session, $csrf, $config, $auth, $db, $assignments, $drafts, $plugins
+        );
+
+        $this->workEditor = new WorkEditorController(
             $view, $session, $csrf, $config, $auth, $db, $assignments, $drafts, $plugins
         );
 

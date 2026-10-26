@@ -100,9 +100,9 @@ final class PanelRoutes implements RouteFile
         $router->post('/panel/editor/image', [$c->editorAssets, 'upload'], Role::TESTS_MANAGE);
 
         $router->get('/panel/assignments', [$c->assignments, 'index'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/new', [$c->assignments, 'create'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/new/start', [$c->assignments, 'editNewStart'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/new/start', [$c->assignments, 'saveNewStart'], Role::TESTS_MANAGE);
+        $router->get('/panel/assignments/new', [$c->workEditor, 'create'], Role::TESTS_MANAGE);
+        $router->get('/panel/assignments/new/start', [$c->workEditor, 'editNewStart'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/new/start', [$c->workEditor, 'saveNewStart'], Role::TESTS_MANAGE);
         $router->get('/panel/assignments/{id}', [$c->assignments, 'show'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}', [$c->assignments, 'update'], Role::TESTS_MANAGE);
         $router->post('/panel/assignments/{id}/status', [$c->assignments, 'status'], Role::TESTS_MANAGE);
@@ -125,22 +125,22 @@ final class PanelRoutes implements RouteFile
          * ним при разборе пути. Слово edit вместо числового шага выбрано потому,
          * что в адресе видно, куда ведёт ссылка, а не просто «куда-то вглубь».
          */
-        $router->get('/panel/assignments/{id}/edit', [$c->assignments, 'edit'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/save', [$c->assignments, 'editSave'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/{id}/edit/start', [$c->assignments, 'editStart'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/start', [$c->assignments, 'saveStart'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/{id}/edit/items', [$c->assignments, 'editItems'], Role::TESTS_MANAGE);
-        $router->get('/panel/assignments/{id}/edit/items/editor', [$c->assignments, 'taskEditorFragment'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/items/add', [$c->assignments, 'addItemToWork'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/items/reorder', [$c->assignments, 'reorderItems'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/items/row/{position}', [$c->assignments, 'moveRowInWork'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/items/{itemId}', [$c->assignments, 'updateItemInWork'], Role::TESTS_MANAGE);
-        $router->post('/panel/assignments/{id}/edit/items/{itemId}/delete', [$c->assignments, 'destroyItemInWork'], Role::TESTS_MANAGE);
-    $router->get('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->assignments, 'itemDraft'], Role::TESTS_MANAGE);
-    $router->post('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->assignments, 'saveItemDraft'], Role::TESTS_MANAGE);
-    $router->get('/panel/assignments/{id}/edit/result', [$c->assignments, 'editResult'], Role::TESTS_MANAGE);
-    $router->post('/panel/assignments/{id}/edit/result', [$c->assignments, 'saveResult'], Role::TESTS_MANAGE);
-    $router->post('/panel/assignments/{id}/edit/publish', [$c->assignments, 'publish'], Role::TESTS_MANAGE);
+        $router->get('/panel/assignments/{id}/edit', [$c->workEditor, 'edit'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/save', [$c->workEditor, 'editSave'], Role::TESTS_MANAGE);
+        $router->get('/panel/assignments/{id}/edit/start', [$c->workEditor, 'editStart'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/start', [$c->workEditor, 'saveStart'], Role::TESTS_MANAGE);
+        $router->get('/panel/assignments/{id}/edit/items', [$c->workEditor, 'editItems'], Role::TESTS_MANAGE);
+        $router->get('/panel/assignments/{id}/edit/items/editor', [$c->workEditor, 'taskEditorFragment'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/items/add', [$c->workEditor, 'addItemToWork'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/items/reorder', [$c->workEditor, 'reorderItems'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/items/row/{position}', [$c->workEditor, 'moveRowInWork'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/items/{itemId}', [$c->workEditor, 'updateItemInWork'], Role::TESTS_MANAGE);
+        $router->post('/panel/assignments/{id}/edit/items/{itemId}/delete', [$c->workEditor, 'destroyItemInWork'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->workEditor, 'itemDraft'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/edit/items/{itemId}/draft', [$c->workEditor, 'saveItemDraft'], Role::TESTS_MANAGE);
+    $router->get('/panel/assignments/{id}/edit/result', [$c->workEditor, 'editResult'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/edit/result', [$c->workEditor, 'saveResult'], Role::TESTS_MANAGE);
+    $router->post('/panel/assignments/{id}/edit/publish', [$c->workEditor, 'publish'], Role::TESTS_MANAGE);
     $router->get('/panel/assignments/{id}/attempts/{attemptId}', [$c->attemptsReview, 'show'], Role::TESTS_MANAGE);
     $router->post('/panel/assignments/{id}/attempts/{attemptId}', [$c->attemptsReview, 'save'], Role::TESTS_MANAGE);
 
